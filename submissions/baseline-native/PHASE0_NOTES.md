@@ -534,3 +534,108 @@ byte tamper at scale rejected.
 
 Per-norm cost: ~9 s prove / ~7 s verify, plus the chained zkob_rescale run on
 W.i64; the manifest determines the number of rmsnorm sites per forward.
+
+## 15. zkob_softmax — attention softmax obligation driver: SELFTEST ALL PASS (122/122) + independent audit (SOUND)
+
+Covers manifest id `layer{l}.attn.softmax.h{hh}`: binds, per head, the B×NCOL
+int32 score grid z_ (scale 2⁹, chained from scores_rescale stage 2) to the
+softmax output P = round_half_up(2¹⁶·MK·E/S) with P[masked] = 0, where
+E[i,j] = X_E[z_[i,j] − LOW_E] is the registered integer exp table and
+S[i] = Σ_{j≤i} E[i,j] the causal row-sum. **Zero prover advice — 0-bit covert
+capacity**: every committed tensor (E, S, P, the residual limbs L) is a
+deterministic function of (z_, the public causal mask MK, the registered
+table X_E); the rounding is exact (unique-integer bracket, both sides forced),
+so an accepting proof leaves the prover no freedom anywhere in the head.
+Passed an independent soundness audit (SOFTMAX_REVIEW.md, VERDICT: SOUND — no
+critical/major findings; FS schedules absorb-for-absorb identical; every
+disk value anchored; both bracket directions independently forgery-tested),
+plus a hardening round (audit MINOR-1/MINOR-2; see SOFTMAX_REPORT.md). One FS
+transcript, 16 IPA openings, six sub-obligations:
+
+1. **Exp mapping lookup (R1)** — glu pattern: comb = z_ + r·E vs the combined
+   public table table + r·mapped (r squeezed after ALL base commitments); the
+   verifier forms com_comb = com_z + r·com_E HOMOMORPHICALLY (1-thread
+   h_mul/h_add; no new G1 kernels anywhere — the -dlto rule) and recomputes
+   B_f/T_f from the public table. Also domain-binds z_ ∈ [LOW_E, LOW_E+LEN_E).
+2. **Limb range lookup** — L = 4 planes (r1 lo/hi, r2 lo/hi; 20-bit limbs at
+   real scale, r2 = 2S−1−r1) vs tLookupRange(0, LEN_R), D_L = 4D. Sole
+   enforcer of r1, r2 ∈ [0, LEN_R²) as integers — load-bearing for the
+   bracket, and semantically forgery-tested (evil=6, hardening round).
+3. **Row-sum sumcheck (R2)** — ev_S = S̃(u_b) = Σ W_rs·E·𝟙 with
+   W_rs = bcast_rows(eq(u_b)) ⊙ MK; the verifier rebuilds and folds the
+   public weight ITSELF and REQUIRES U_f2 == 1 (load-bearing).
+4. **Bracket V1** — c1 = MLE(MK⊙E)(u_r), weight eq(u_r)⊙MK recomputed by the
+   verifier; U_f2 == 1 required.
+5. **Bracket V2** — c2 = MLE(P⊙S_bcast)(u_r), pure-eq weight; S_bcast is
+   NEVER committed: its terminal U_f2 opens against com_S at the row-bit
+   suffix of pt2 (broadcast-MLE = row-vector MLE at the row bits; LSB-first
+   columns make the suffix exactly the row coordinates).
+6. **Residual reconstruction** — four Boolean-plane openings of com_L at u_r
+   (v00/v10/v01/v11) + S_id = S̃(u_r rows) vs com_S, then two plain-field
+   identities: I1: 2¹⁷·c1 + S_id − 2·c2 == v00 + LEN_R·v10 ("bracket r1
+   identity"); I2: r̃1 + r̃2 + 1 == 2·S_id ("bracket sum identity"). With the
+   limb lookup (2·LEN_R² = 2⁴¹ < p, 2S < 2⁴⁰) these force r1 ∈ [0, 2S) as an
+   integer ⇒ P is the exact round-half-up, masked entries exactly 0.
+
+FS schedule (seed = run_seed:obligation_id): absorb B, NCOL, LOW_E, LEN_E,
+LEN_R, LOG_OUT, the 7 base commitments (com_z, com_E, com_P, com_S, com_L,
+com_m_E, com_m_L) → r, β_E → com_A_E → α_E, u_E → exp-lookup rounds +
+terminals + 3 openings → β_L → com_A_L → α_L, u_L → limb-lookup rounds +
+terminals + 3 openings → u_b → ev_S → row-sum rounds + 2 openings → u_r → c1
+→ V1 rounds + 1 opening → c2 → V2 rounds + 2 openings → v00..v11 + 4 plane
+openings → S_id + 1 opening → I1, I2 (verifier-only). Audit confirmed
+prove/verify absorb-for-absorb identical; every challenge squeezed only after
+the message it binds.
+
+CLI (LOG_OUT = 16 pinned in-driver):
+```
+zkob_softmax prove  <obdir> <seed> <z-int32.bin> <B> <NCOL> <LOW_E> <LEN_E>
+                    <expmap-int32.bin> <LEN_R> <gen.bin> <q.bin> [P-int32-out.bin]
+zkob_softmax verify <obdir> <seed> <B> <NCOL> <LOW_E> <LEN_E>
+                    <expmap-int32.bin> <LEN_R> <gen.bin> <q.bin>
+zkob_softmax selftest
+```
+Layout: B == NCOL required (both pow2), single generator set gen (size NCOL),
+no padding anywhere. Real scale per head: B = NCOL = 1024, LOW_E = −2¹⁹,
+LEN_E = LEN_R = 2²⁰.
+
+Files in <obdir> (32, all byte-tamper-tested): dims.bin; com_z / com_E /
+com_P / com_S / com_L / com_m_E / com_m_L / com_A_E / com_A_L .bin;
+lookup_E.bin, lookup_L.bin; hp_rs.bin, hp_v1.bin, hp_v2.bin; lvals.bin; 16
+ipa_*.bin (A_E, comb, m_E, A_L, L_lk, m_L, E_rs, S_rs, E_v1, P_v2, S_v2,
+L00, L10, L01, L11, S_id). The driver does NOT mkdir the obdir.
+
+Chain interface: com_z is re-committed from the input score file; the
+obligation is closed in the pipeline by the orchestrator's byte-equality
+**com_z == scores_rescale stage-2 com_Xr.bin**. Downstream,
+**com_P == values-matmul com_X.bin** (byte-identical). [P-int32-out.bin] is
+the UNPADDED B×NCOL int32 chain file at scale 2¹⁶ (real scale: 4,194,304 B);
+the verifier never reads it — P's integer interpretation flows through
+com_P. Sanity at real scale: P ∈ [0, 65536], masked entries exactly 0,
+row 0 = {65536, 0, …}, row sums within ±21 of 65536.
+
+Exp-table registration rule: run `gen_softmax_exp_table.py` ONCE
+(np.rint(65536·exp(v/65536)) for v ∈ [−2¹⁹, 2¹⁹), int32) and register
+`softmax-exp-table.bin` by **sha256** in public.json next to the swiglu
+table. The sha256 registration, not regeneration, is the source of truth —
+the C++ driver never generates the real table (its selftest fallback is
+flagged NON-AUTHORITATIVE).
+
+Real-scale numbers (per head): prove 10.18 s, verify 11.60 s,
+proof+commitments 2,124,988 B (~2.03 MB; serialized G1Jacobian_t is 144 B, so
+commitments dominate — com_L = com_A_L = 576 KB each). Audit reproduced
+10.29 s / 11.81 s / identical bytes. 24 heads ⟹ ≈ 4.1 min prove / 4.6 min
+verify for the softmax obligations proper (score rescales and the two
+matmuls accounted separately).
+
+**Orchestrator obligations pinned by the audit:**
+- **(MINOR-5) The §4.7 chain byte-equalities MUST be enforced by the
+  orchestrator**: com_z == scores_rescale stage-2 com_Xr and com_P ==
+  values-matmul com_X, byte-identical. com_z is only used homomorphically
+  (never opened standalone), so a standalone ACCEPT binds (z_, E, S, P)
+  internally consistently but does NOT pin z_ to the upstream score tensor —
+  the chain check is the defense, by design.
+- **(MINOR-4) Missing-proof-file behavior**: a missing/short proof file makes
+  verify() throw (uncaught) rather than print REJECT — the process exits
+  nonzero, so it is fail-closed (never a false ACCEPT); the orchestrator
+  must treat ANY nonzero exit as reject, not parse for the REJECT line.
