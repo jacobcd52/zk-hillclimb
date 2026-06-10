@@ -53,17 +53,31 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def run_seed_of_bytes(pub_bytes):
+    """run_seed = sha256 of the public.json bytes (the full public statement)."""
+    return hashlib.sha256(pub_bytes).hexdigest()
+
+
 def run_seed_of(run_dir):
     """run_seed = sha256 of the public.json bytes (the full public statement)."""
     return sha256_file(os.path.join(run_dir, "public.json"))
 
 
-def run_driver(cmd, label, expect_reject_ok=False, retries=1, log=print):
+# Per-invocation driver timeout (VERIFIER_REVIEW MINOR-3). The longest single
+# driver run is ~20 s exclusive-GPU; the budget below leaves >40x headroom for
+# contention from other lock-serialized GPU jobs. A wedged driver (or a FIFO
+# planted at a path it opens) must not hold the GPU lock forever.
+DRIVER_TIMEOUT_S = 900
+
+
+def run_driver(cmd, label, expect_reject_ok=False, retries=1, log=print,
+               timeout=DRIVER_TIMEOUT_S):
     """Run one driver invocation, serialized on the shared GPU via a lock file.
 
     Returns (accepted: bool, seconds: float, output: str).
     Exit 0 = ACCEPT/success; exit 1 = REJECT (meaningful for verify modes, not
     retried); anything else = crash (CUDA contention etc.) -> retried once.
+    Timeout = fail (RuntimeError, no retry): liveness hardening, fail-closed.
     """
     attempt = 0
     while True:
@@ -71,7 +85,16 @@ def run_driver(cmd, label, expect_reject_ok=False, retries=1, log=print):
         t0 = time.time()
         with open(GPU_LOCK, "w") as lk:
             fcntl.flock(lk, fcntl.LOCK_EX)
-            r = subprocess.run(cmd, cwd=ZKLLM, capture_output=True, text=True)
+            try:
+                r = subprocess.run(cmd, cwd=ZKLLM, capture_output=True, text=True,
+                                   timeout=timeout)
+            except subprocess.TimeoutExpired as e:
+                # TimeoutExpired captures raw bytes even under text=True
+                parts = [p.decode(errors="replace") if isinstance(p, bytes) else p
+                         for p in (e.stdout, e.stderr) if p]
+                out = "".join(parts)
+                raise RuntimeError(
+                    f"driver TIMEOUT after {timeout}s: {' '.join(cmd)}\n{out[-2000:]}")
         dt = time.time() - t0
         out = (r.stdout or "") + (r.stderr or "")
         if r.returncode == 0:

@@ -7,6 +7,8 @@ never invokes a prove mode, re-derives run_seed = sha256(public.json) itself.
 Checks, in order:
  1. registration hashes (gens, registered weight commitments, input + its
     commitment, swiglu table) vs public.json — mismatch => REJECT and STOP;
+ 1b. structure: every registration/ path the walk consumes is hash-pinned,
+    and proofs/ holds only contained regular files — violation => REJECT and STOP;
  2. every covered obligation's zkob_* verify with registered public inputs;
  3. every chain edge (byte-equality; skip edges via zkob_skip point checks);
  4. statement obligations.
@@ -17,6 +19,7 @@ Run: /root/int-model-env/bin/python verify_walk.py <run_dir> [--out transcript.j
 import argparse
 import json
 import os
+import stat
 import sys
 import time
 
@@ -29,11 +32,16 @@ def main():
     ap.add_argument("run_dir")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
-    run_dir = args.run_dir
+    # MINOR-1: drivers run with cwd=/root/zkllm; absolutize so the hash check,
+    # byte edges and every driver resolve the SAME files regardless of caller cwd.
+    run_dir = os.path.abspath(args.run_dir)
     out_path = args.out or os.path.join(run_dir, "transcript.json")
-    public = json.load(open(os.path.join(run_dir, "public.json")))
+    # MINOR-2: read public.json ONCE; constants/hash dict and run_seed come from
+    # the same bytes (no second open that a swap could decouple).
+    pub_bytes = open(os.path.join(run_dir, "public.json"), "rb").read()
+    public = json.loads(pub_bytes)
     cst = public["constants"]
-    run_seed = C.run_seed_of(run_dir)
+    run_seed = C.run_seed_of_bytes(pub_bytes)
     P = C.reg_paths(run_dir)
     t_start = time.time()
     print(f"== verify_walk {run_dir} ==\n  run_seed (re-derived) = {run_seed}")
@@ -50,6 +58,22 @@ def main():
 
     def note(mid, reason):
         details.setdefault(mid, {"ok": True, "reasons": []})["reasons"].append(reason)
+
+    def stop_reject(why, n_hashes):
+        """Fail-closed STOP before any driver runs (untrusted run structure)."""
+        for d in details.values():
+            d["reason"] = "; ".join(d.pop("reasons"))
+        transcript = {
+            "verdict": "REJECT",
+            "checked": [],
+            "skipped": skipped,
+            "details": details,
+            "registration": {"ok": False, "n_hashes": n_hashes},
+            "note": f"{why}; obligation verifies not run",
+        }
+        json.dump(transcript, open(out_path, "w"), indent=2)
+        print(f"VERDICT: REJECT ({why})")
+        sys.exit(1)
 
     # ---- 1. registration hash checks ------------------------------------
     reg_ok = True
@@ -69,20 +93,69 @@ def main():
              f"{len(checks)} registered files re-hashed and matched public.json")
         print(f"  registration: {len(checks)} hashes OK")
     else:
-        transcript = {
-            "verdict": "REJECT",
-            "checked": [],
-            "skipped": skipped,
-            "details": details,
-            "registration": {"ok": False, "n_hashes": len(checks)},
-            "note": "registration check failed; obligation verifies not run (untrusted registration)",
-        }
-        json.dump(transcript, open(out_path, "w"), indent=2)
-        print("VERDICT: REJECT (registration)")
-        sys.exit(1)
+        stop_reject("registration check failed (untrusted registration)", len(checks))
+
+    # ---- 1b. structural checks (before any driver runs) ------------------
+    spec, edges = C.walk_spec(run_dir)
+
+    # MINOR-5: every registration/ path the walk consumes (driver argv or chain
+    # edge) must have been hash-pinned by the step-1 checks above. Guards
+    # against a future walk addition silently consuming an unpinned file.
+    reg_root = os.path.realpath(P["reg"])
+    pinned = {os.path.realpath(p) for _, p, _ in checks}
+
+    def under_reg(p):
+        rp = os.path.realpath(p)
+        return rp if rp == reg_root or rp.startswith(reg_root + os.sep) else None
+
+    used_reg = set()
+    for subs in spec.values():
+        for s in subs.values():
+            for c in (s["verify"] or []):
+                rp = under_reg(c) if isinstance(c, str) and os.sep in c else None
+                if rp:
+                    used_reg.add(rp)
+    for e in edges:
+        for p in e[3:]:
+            rp = under_reg(p)
+            if rp:
+                used_reg.add(rp)
+    unpinned = sorted(used_reg - pinned)
+    if unpinned:
+        for p in unpinned:
+            fail("statement.registered_weight_hash",
+                 f"registration path consumed by the walk but NOT hash-pinned: {p}")
+        stop_reject("walk consumes unpinned registration path(s)", len(checks))
+    note("statement.registered_weight_hash",
+         f"all {len(used_reg)} registration paths consumed by the walk are hash-pinned")
+
+    # MINOR-6: reject non-regular files (FIFOs, devices, sockets) and symlink
+    # escapes anywhere under proofs/ before the verifier or a driver opens them.
+    proofs_root = os.path.join(run_dir, "proofs")
+    real_proofs = os.path.realpath(proofs_root)
+    fs_bad = []
+    for dirpath, dirnames, filenames in os.walk(proofs_root, followlinks=False):
+        for name, is_dir in [(n, True) for n in dirnames] + [(n, False) for n in filenames]:
+            p = os.path.join(dirpath, name)
+            rp = os.path.realpath(p)
+            if not (rp == real_proofs or rp.startswith(real_proofs + os.sep)):
+                fs_bad.append(f"{p}: resolves outside proofs/ ({rp})")
+                continue
+            try:
+                st = os.stat(p)  # follows symlinks: check the file actually opened
+            except OSError as exc:
+                fs_bad.append(f"{p}: stat failed ({exc})")
+                continue
+            if is_dir and not stat.S_ISDIR(st.st_mode):
+                fs_bad.append(f"{p}: not a directory")
+            elif not is_dir and not stat.S_ISREG(st.st_mode):
+                fs_bad.append(f"{p}: not a regular file")
+    if fs_bad:
+        for b in fs_bad:
+            fail("statement.registered_weight_hash", f"proofs/ filesystem hygiene: {b}")
+        stop_reject("non-regular or escaping file under proofs/", len(checks))
 
     # ---- 2. per-obligation driver verifies -------------------------------
-    spec, edges = C.walk_spec(run_dir)
     for mid, subs in spec.items():
         for sub, s in subs.items():
             if s["verify"] is None:
@@ -100,17 +173,6 @@ def main():
             else:
                 tail = [ln for ln in out.splitlines() if "REJECT" in ln][-1:] or [out[-200:]]
                 fail(mid, f"{sub}: driver verify REJECT ({tail[0].strip()})")
-
-    # commitment_opening ids are discharged by the same fc proof as the matmul
-    # (IPA(W) against the REGISTERED commitment, absorbed into the transcript)
-    for mid in list(C.covered_ids()):
-        if mid.endswith(".commitment_opening"):
-            mm = mid.replace(".commitment_opening", ".matmul")
-            ok = details.get(mm, {}).get("ok", False)
-            d = details.setdefault(mid, {"ok": True, "reasons": []})
-            d["ok"] = ok
-            d["reasons"].append(f"discharged by {mm}: IPA(W) vs registered commitment "
-                                f"({'ACCEPT' if ok else 'REJECT'})")
 
     # ---- 3. chain edges ---------------------------------------------------
     edge_results = []
@@ -138,6 +200,19 @@ def main():
         if ok:
             note(owner, f"edge OK: {label}")
         edge_results.append({"edge": label, "ok": ok})
+
+    # commitment_opening ids are discharged by the same fc proof as the matmul
+    # (IPA(W) against the REGISTERED commitment, absorbed into the transcript).
+    # Discharged AFTER the edge phase (MINOR-4) so a matmul whose driver passed
+    # but whose chain edge failed also drags its opening id out of `checked`.
+    for mid in list(C.covered_ids()):
+        if mid.endswith(".commitment_opening"):
+            mm = mid.replace(".commitment_opening", ".matmul")
+            ok = details.get(mm, {}).get("ok", False)
+            d = details.setdefault(mid, {"ok": True, "reasons": []})
+            d["ok"] = ok
+            d["reasons"].append(f"discharged by {mm}: IPA(W) vs registered commitment "
+                                f"({'ACCEPT' if ok else 'REJECT'})")
 
     # ---- 4. statement obligations ----------------------------------------
     drivers_ok = all(details.get(m, {}).get("ok", False) for m in C.covered_ids()

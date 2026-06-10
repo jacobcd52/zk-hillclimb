@@ -126,3 +126,17 @@ each 2^20-rescale ~0.6 MiB.
 - Composed sub-obligations (wrescale/yrescale/hrescale) are recorded
   per-sub-run in both prove_manifest.json and transcript details; nothing is
   silently merged.
+
+## Hardening round (2026-06-10, post-audit)
+
+All six VERIFIER_REVIEW MINOR findings applied (verify_walk.py +127/-28, common.py +27/-1;
+diff reviewed line-by-line by the coordinator):
+- MINOR-1: run_dir absolutized (hash check, edges, drivers resolve identical paths).
+- MINOR-2: public.json read ONCE; constants and run_seed derived from the same bytes.
+- MINOR-3: 900s timeout on every driver subprocess; timeout = fail-closed RuntimeError.
+- MINOR-4: commitment_opening discharge moved AFTER the chain-edge phase, so a failed
+  edge drags the opening id out of `checked`.
+- MINOR-5: structural assertion that every registration/ path consumed by the walk is
+  hash-pinned; violation = REJECT-and-STOP before any driver runs.
+- MINOR-6: proofs/ hygiene walk — symlink escapes and non-regular files = REJECT-and-STOP.
+Re-validated: selftest.sh 9/9 ALL PASS (run selftest-20260610-230433, coordinator-run).
