@@ -1,0 +1,547 @@
+{
+  "model": "JackFram/llama-68m",
+  "seq_len": 1024,
+  "input_quant_obligations": false,
+  "n_obligations": 66,
+  "n_waived": 10,
+  "obligations": [
+    {
+      "id": "embedding.lookup",
+      "kind": "table_lookup",
+      "rows": 1024,
+      "waived": "zkLLM pipeline starts at layer 0 input; embedding table lookup not yet proven"
+    },
+    {
+      "id": "layer0.input_norm.rmsnorm",
+      "kind": "rmsnorm",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.q_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.q_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.q_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.k_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.k_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.k_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.v_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.v_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.v_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.scores_matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        64,
+        1024
+      ],
+      "per_head": 12,
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.softmax",
+      "kind": "zkattn_softmax",
+      "rows": 1048576,
+      "note": "incl. causal-mask + padding constraints (forgery D6)",
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.values_matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        1024,
+        64
+      ],
+      "per_head": 12,
+      "waived": null
+    },
+    {
+      "id": "layer0.attn.o_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        768
+      ],
+      "waived": "zkLLM upstream omits o_proj"
+    },
+    {
+      "id": "layer0.attn.o_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        768
+      ],
+      "waived": "zkLLM upstream omits o_proj (documented caveat)"
+    },
+    {
+      "id": "layer0.attn.o_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": "zkLLM upstream omits o_proj"
+    },
+    {
+      "id": "layer0.attn_skip.add",
+      "kind": "skip_connection",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer0.post_attn_norm.rmsnorm",
+      "kind": "rmsnorm",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.gate_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        3072,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.gate_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        3072
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.gate_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 3145728,
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.up_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        3072,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.up_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        3072
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.up_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 3145728,
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.down_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        3072
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.down_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        3072,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.down_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp.swiglu",
+      "kind": "nonlinearity_lookup",
+      "rows": 3145728,
+      "waived": null
+    },
+    {
+      "id": "layer0.mlp_skip.add",
+      "kind": "skip_connection",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer1.input_norm.rmsnorm",
+      "kind": "rmsnorm",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.q_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.q_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.q_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.k_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.k_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.k_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.v_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.v_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.v_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.scores_matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        64,
+        1024
+      ],
+      "per_head": 12,
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.softmax",
+      "kind": "zkattn_softmax",
+      "rows": 1048576,
+      "note": "incl. causal-mask + padding constraints (forgery D6)",
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.values_matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        1024,
+        64
+      ],
+      "per_head": 12,
+      "waived": null
+    },
+    {
+      "id": "layer1.attn.o_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        768
+      ],
+      "waived": "zkLLM upstream omits o_proj"
+    },
+    {
+      "id": "layer1.attn.o_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        768
+      ],
+      "waived": "zkLLM upstream omits o_proj (documented caveat)"
+    },
+    {
+      "id": "layer1.attn.o_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": "zkLLM upstream omits o_proj"
+    },
+    {
+      "id": "layer1.attn_skip.add",
+      "kind": "skip_connection",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer1.post_attn_norm.rmsnorm",
+      "kind": "rmsnorm",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.gate_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        3072,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.gate_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        3072
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.gate_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 3145728,
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.up_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        3072,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.up_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        3072
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.up_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 3145728,
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.down_proj.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        768,
+        3072
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.down_proj.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        3072,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.down_proj.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp.swiglu",
+      "kind": "nonlinearity_lookup",
+      "rows": 3145728,
+      "waived": null
+    },
+    {
+      "id": "layer1.mlp_skip.add",
+      "kind": "skip_connection",
+      "rows": 786432,
+      "waived": null
+    },
+    {
+      "id": "final_norm.rmsnorm",
+      "kind": "rmsnorm",
+      "rows": 786432,
+      "waived": "not in current m68 pipeline scope"
+    },
+    {
+      "id": "lm_head.commitment_opening",
+      "kind": "commitment_opening",
+      "binds": "registered public weight commitment",
+      "shape": [
+        32000,
+        768
+      ],
+      "waived": null
+    },
+    {
+      "id": "lm_head.matmul",
+      "kind": "sumcheck_matmul",
+      "shape": [
+        1024,
+        768,
+        32000
+      ],
+      "waived": "zkLLM pipeline proves through final hidden states; lm_head not yet proven"
+    },
+    {
+      "id": "lm_head.rescaling",
+      "kind": "rescaling_lookup",
+      "rows": 32768000,
+      "waived": "follows lm_head.matmul"
+    },
+    {
+      "id": "statement.logit_binding",
+      "kind": "statement",
+      "note": "proof binds FULL per-position logits/committed outputs, not argmax only (forgeries A2/F3)",
+      "waived": null
+    },
+    {
+      "id": "statement.prompt_binding",
+      "kind": "statement",
+      "note": "Fiat-Shamir transcript includes prompt token ids (A3)",
+      "waived": null
+    },
+    {
+      "id": "statement.registered_weight_hash",
+      "kind": "statement",
+      "note": "commitment checked against REGISTERED hash, not proof-supplied (B4)",
+      "waived": null
+    }
+  ]
+}
