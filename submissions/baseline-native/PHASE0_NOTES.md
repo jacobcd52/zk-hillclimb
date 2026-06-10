@@ -435,3 +435,102 @@ Note: the H chain file is the UNPADDED B×C int64 tensor (pad stripped).
 
 Per-layer cost: 2 layers × (11.4 + rescale 9s-ish) — swiglu is the priciest
 obligation so far (D is 4× the matmul/rescale D).
+
+## 14. zkob_rmsnorm — inverse-RMS obligation driver: SELFTEST ALL PASS (48/48) + independent audit (SOUND)
+
+Covers the rmsnorm obligation: binds the inverse-RMS advice R to the committed
+activation X within ±1 integer tolerance, closing the unbound `rms_inv_temp`
+covert channel (residual freedom ≤ log2(3) ≈ 1.6 bits/row — the documented
+floor, ~6.5 Kbit/forward over 4 norms). With M[s] = Σ_j X[s,j]² + C_eps
+(C_eps = round(eps·C·2³²), u64 CLI arg), the verifier forces
+(R−1)²·M ≤ 2⁶⁴·C ≤ (R+1)²·M per row. Implementation passed an independent
+soundness audit (RMSNORM_REVIEW.md, VERDICT: SOUND — no critical/major
+findings), plus a hardening round adding the audit's three requested semantic
+evil modes (see below). One FS transcript, 17 IPA openings, seven
+sub-obligations:
+
+1. **Limb range lookup** — P1 = 2⁶⁴C − (R−1)²M and P2 = (R+1)²M − 2⁶⁴C
+   decomposed into 5×16-bit limbs each, packed into the limb matrix L
+   (max(16, 65536/B_pad) rows × B_pad cols, gen_B), logUp vs
+   tLookupRange(0, 65536) (§9 algebra); B_f/T_f recomputed by the verifier
+   from the public table.
+2. **Homomorphic affine limb links** — com_P1 == Σ_{i<5} 2^{16i}·com_L_row[i]
+   (and com_P2 vs rows 5–9), checked with the proven 1-thread helpers
+   (h_mul/h_add/g1_eq). No new G1 kernels anywhere in the driver (-dlto rule).
+3. **SS sumcheck** binding M to X: M̃(u_b) − C_eps = Σ eq·X·X over logD vars;
+   eq factor only for the logB row rounds; S_f2 == U_f2 REQUIRED
+   (load-bearing). Openings: X at the terminal point, M̃(u_b) vs com_M.
+4. **Bracket quartics** (Lagrange-5, tags "q1"/"q2"): claim_q1 =
+   2⁶⁴C − P̃1(u_b2) over (eq, R−1, R−1, M); claim_q2 = P̃2(u_b2) + 2⁶⁴C over
+   (eq, R+1, R+1, M). No commitment for R∓1: R opens at pt1 expecting
+   q1.A_f + 1 and at pt2 expecting q2.A_f − 1; A_f == B_f REQUIRED
+   (load-bearing). Together with 1+2 (P1, P2 ∈ [0, 2⁸⁰) as integers), any
+   integer R off by ≥2 makes one bracket negative → no in-range limb
+   decomposition of the true value (affine link fails) and no consistent
+   in-range substitute (quartic round chain fails) — both directions
+   forgery-tested.
+5. **Outer product** W = R×g via single-point MLE factorization:
+   val_W == val_R·val_g at fresh (u_b3, u_c3); val_g opens against the
+   REGISTERED com_g path (discharging the norm-weight commitment_opening id).
+   B == B_pad required in BOTH prove and verify.
+6. **Internal rescale** W_ = rescale(W, 2¹⁶) — committed here (com_W_), proven
+   by a SEPARATE zkob_rescale run (chain interface below).
+7. **Hadamard** Y = W_ ⊙ X. Openings: Y@u_h, W_@pt, X@pt.
+
+FS schedule: absorb B, C, C_eps(lo,hi), com_X, com_g, com_R, com_M, com_P1,
+com_P2, com_L, com_m_L, com_W, com_W_, com_Y → β → com_A_L → α → u_L →
+lookup rounds + terminals + 3 openings → u_b → ev_M → SS rounds + 2 openings
+→ u_b2 → ev_P1, ev_P2 → q1/q2 rounds + 6 openings → u_b3, u_c3 →
+val_R/val_g/val_W + 3 openings → u_h → claim_Y → hadamard rounds + 3 openings.
+Audit confirmed prove/verify schedules absorb-for-absorb identical, every
+challenge squeezed only after the message it binds.
+
+CLI:
+```
+zkob_rmsnorm prove  <obdir> <seed> <X-int32> <R-int32> <g-int32> <B> <C>
+                    <C_eps-u64> <gen_C> <gen_B> <q> [W-i64-out Y-i64-out]
+zkob_rmsnorm verify <obdir> <seed> <B> <C> <C_eps> <com_g-path>
+                    <gen_C> <gen_B> <q>
+zkob_rmsnorm selftest
+```
+
+Files in <obdir> (36, all byte-tamper-tested): dims.bin; lookup.bin, hpss.bin,
+qp1.bin, qp2.bin, outer.bin, hp.bin; com_X / com_g / com_R / com_M / com_P1 /
+com_P2 / com_L / com_m_L / com_A_L / com_W / **com_Wr** / com_Y .bin; 17
+ipa_*.bin (AL, L, mL, X_ss, M, P1, P2, R_q1, M_q1, R_q2, M_q2, R_o, g, W, Y,
+Wr, X_h). **NOTE: the spec's com_W_ is saved as `com_Wr.bin`** (the transcript
+label stays "com_W_"); the orchestrator's manifest must use the on-disk name.
+
+Chain interface: writes W.i64 and Y.i64 (both UNPADDED B×C int64; W from the
+exact host ints, Y via save_long + column-pad strip). The internal rescale is
+closed by a separate zkob_rescale run on W.i64, with commitment byte-equality
+com_W (here) == com_X (rescale) and com_W_ (here, file com_Wr.bin) == com_Xr
+(rescale). com_Y chains downstream; eps must match the pipeline (llama-68m:
+rms_norm_eps = 1e-6 → C_eps = 3298535 at C=768, NOT 1e-5).
+
+**Two orchestrator obligations pinned by the audit:**
+- **(MINOR-5) com_X here MUST be chained byte-identical to the upstream
+  activation commitment.** The ±1 bound on R relies on M being the honest
+  bounded integer derived from a chained X; with a prover-chosen X the prover
+  can craft M tiny and the two 2⁸⁰-wide windows admit ~2³⁹ integer values of
+  R — a wide-open covert channel. A standalone ACCEPT of this obligation
+  proves much less than the chained one.
+- **(MINOR-7) The com_W_ byte-equality check against zkob_rescale must look
+  for `com_Wr.bin`** — wiring the manifest with the spec name com_W_.bin will
+  fail to find the file.
+
+Selftest (after the hardening round): **48 PASS / 0 FAIL, exit 0**. Small case
+(B=8, C=5): honest ACCEPT; EIGHT semantic evil modes, each rejected by exactly
+the named check (R+2 mod-p P1 → affine link P1; R+2 limb-reconstruction P1 →
+q1 round 0; M+1 → SS round 0; Y+1 → hadamard round 0; W+1 → outer product;
+and from the audit's MINOR-1/2: R−2 mod-p P2 → affine link P2; R−2
+limb-reconstruction P2 → q2 round 0; out-of-range limb L[0,s] += 2¹⁶ with a
+compensating borrow — affine links, quartics and all other commitments stay
+consistent — → limb lookup round 0, proving the range lookup itself is
+load-bearing); 36 byte tampers (every file the verifier reads) + restored
+ACCEPT. Real scale (B=1024, C=768, C_eps=3298535): honest ACCEPT,
+**prove 9.1 s, verify 7.0 s, proof+commitments 678,876 bytes (~663 KB)**;
+byte tamper at scale rejected.
+
+Per-norm cost: ~9 s prove / ~7 s verify, plus the chained zkob_rescale run on
+W.i64; the manifest determines the number of rmsnorm sites per forward.
