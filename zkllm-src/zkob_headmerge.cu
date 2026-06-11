@@ -31,10 +31,18 @@
 // Files in <obdir>: dims.bin, com_O2.bin, com_O{hh}.bin, ev.bin (1 Fr_t, raw),
 //   hp{hh}.bin, ipa_O{hh}.bin, ipa_O2.bin
 //
+// PERM mode (STAGE3_FAITHFUL_DESIGN.md section 4.2): positional <perm> after
+// <HD>, literal pi157 (0) | concat (1). pi157 keeps the formulas above
+// verbatim; concat uses the identity layout (the faithful-arch line-157 fix):
+//   Wm_h[t*HD+d] = E_u[t*C_pad + (HD*h+d)];  O2[t, HD*h+d] = out_h[t,d].
+// PERM is recorded in dims.bin (u32, 4th field) and absorbed into the
+// transcript ("PERM", immediately after "HD") -- REQUIRED, else a proof made
+// in one mode could be replayed against a verifier in the other.
+//
 // Usage:
-//   zkob_headmerge prove   <obdir> <seed> <Oh-prefix> <B> <C> <HD>
+//   zkob_headmerge prove   <obdir> <seed> <Oh-prefix> <B> <C> <HD> <perm>
 //                          <gen_big.bin> <gen_small.bin> <q.bin> [O2-int32-out.bin]
-//   zkob_headmerge verify  <obdir> <seed> <B> <C> <HD>
+//   zkob_headmerge verify  <obdir> <seed> <B> <C> <HD> <perm>
 //                          <gen_big.bin> <gen_small.bin> <q.bin>
 //   zkob_headmerge selftest
 // <Oh-prefix>{hh}.i32.bin is read for hh = 00..NH-1 (file sizes exact).
@@ -80,19 +88,26 @@ static vector<int> load_i32_exact(const string& path, uint expect) {
     return buf;
 }
 
-// pi^-1 gather of the host eq tensor into head h's weight (the pinned formula;
-// gather_h = h is the honest case, evil=3 passes h+1)
+// gather of the host eq tensor into head h's weight (the pinned formulas;
+// gather_h = h is the honest case, evil=3 passes h+1). perm = 0 (pi157): the
+// section-1.3 pi^-1; perm = 1 (concat): the identity layout (section 4.2).
 static vector<Fr_t> gather_Wm(const vector<Fr_t>& Eh, uint B, uint C, uint C_pad,
-                              uint HD, uint gather_h) {
+                              uint HD, uint gather_h, uint perm) {
     vector<Fr_t> Wm((size_t)B * HD);
     for (uint t = 0; t < B; t++)
         for (uint d = 0; d < HD; d++) {
             const size_t e = (size_t)HD * gather_h + d;
-            const size_t m = e * B + t;
-            const size_t i = m / C, j = m % C;
+            size_t i, j;
+            if (perm == 0) { const size_t m = e * B + t; i = m / C; j = m % C; }
+            else           { i = t; j = e; }
             Wm[(size_t)t * HD + d] = Eh[i * C_pad + j];
         }
     return Wm;
+}
+static uint parse_perm(const string& s) {
+    if (s == "pi157") return 0;
+    if (s == "concat") return 1;
+    throw runtime_error("perm must be 'pi157' or 'concat'");
 }
 
 // fold a public device tensor over the round challenges (k_fr_fold chain)
@@ -127,8 +142,12 @@ static Fr_t fold_public(const FrTensor& W, const vector<Fr_t>& ws) {
 //     -> "merge hadamard {hh} terminal" (verifier-rebuilt Wm fold differs).
 //  4: ones-buffer bump in head evil_h's hadamard, c computed from it
 //     -> "merge hadamard {hh} U_f2 != 1".
+//  5: O2 assembled with the WRONG mode's layout (concat-mode run with the
+//     pi157 gather and vice versa -- the exact regression the perm flag could
+//     introduce), ev honest from the evil O2 -> "sum of head claims != ev".
 static void prove(const string& obdir, const string& seed,
                   const vector<vector<int>>& outs, uint B, uint C, uint HD,
+                  uint perm,
                   const Commitment& gen_big, const Commitment& gen_small,
                   const G1Jacobian_t& Q, const string& o2_out,
                   int evil = 0, uint evil_h = 0) {
@@ -139,18 +158,27 @@ static void prove(const string& obdir, const string& seed,
     if (outs.size() != NH) throw runtime_error("head count");
     for (auto& o : outs) if (o.size() != (size_t)DH) throw runtime_error("out_h dims");
 
-    // ---- O2 = pi(concat) on the padded grid (host integer gather) ----
+    // ---- O2 on the padded grid (host integer gather): pi157 = pi(concat),
+    //      concat = plain head-concat M (evil 5 swaps the two layouts) ----
+    const uint asm_perm = (evil == 5) ? 1 - perm : perm;
     vector<int> O2g(D, 0);
-    for (uint i = 0; i < B; i++)
-        for (uint j = 0; j < C; j++) {
-            const size_t m = (size_t)i * C + j;
-            const uint t = (uint)(m % B), e = (uint)(m / B);
-            O2g[(size_t)i * C_pad + j] = outs[e / HD][(size_t)t * HD + (e % HD)];
-        }
-    if (evil == 1)          // identity layout: O2 := M (no pi)
+    if (asm_perm == 0)
+        for (uint i = 0; i < B; i++)
+            for (uint j = 0; j < C; j++) {
+                const size_t m = (size_t)i * C + j;
+                const uint t = (uint)(m % B), e = (uint)(m / B);
+                O2g[(size_t)i * C_pad + j] = outs[e / HD][(size_t)t * HD + (e % HD)];
+            }
+    else
         for (uint i = 0; i < B; i++)
             for (uint j = 0; j < C; j++)
                 O2g[(size_t)i * C_pad + j] = outs[j / HD][(size_t)i * HD + (j % HD)];
+    if (evil == 1) {        // identity layout: O2 := M (no pi); pi157-mode only
+        if (perm != 0) throw runtime_error("evil 1 setup: pi157 mode only (vacuous in concat)");
+        for (uint i = 0; i < B; i++)
+            for (uint j = 0; j < C; j++)
+                O2g[(size_t)i * C_pad + j] = outs[j / HD][(size_t)i * HD + (j % HD)];
+    }
     if (evil == 2) {        // junk in a padding column (requires C_pad > C)
         if (C_pad <= C) throw runtime_error("evil 2 setup: no padding columns");
         O2g[(size_t)0 * C_pad + C] = 17;
@@ -175,11 +203,12 @@ static void prove(const string& obdir, const string& seed,
         com_O[h].save(obdir + "/com_O" + hh2(h) + ".bin");
     }
     { FILE* f = open_or_die(obdir + "/dims.bin", "wb");
-      uint32_t d[3] = {B, C, HD}; fwrite(d, sizeof(uint32_t), 3, f); fclose(f); }
+      uint32_t d[4] = {B, C, HD, perm}; fwrite(d, sizeof(uint32_t), 4, f); fclose(f); }
 
     // ---- transcript ----
     fs::Transcript tr(seed);
     absorb_u32(tr, "B", B); absorb_u32(tr, "C", C); absorb_u32(tr, "HD", HD);
+    absorb_u32(tr, "PERM", perm);
     absorb_g1_tensor(tr, "com_O2", com_O2);
     for (uint h = 0; h < NH; h++) absorb_g1_tensor(tr, "com_O" + hh2(h), com_O[h]);
     auto u = fs_challenge_vec(tr, logB + logCp);
@@ -201,7 +230,7 @@ static void prove(const string& obdir, const string& seed,
     Fr_t csum = F_ZERO;
     for (uint h = 0; h < NH; h++) {
         const uint gather_h = (evil == 3 && h == evil_h) ? h + 1 : h;
-        vector<Fr_t> Wm = gather_Wm(Eh, B, C, C_pad, HD, gather_h);
+        vector<Fr_t> Wm = gather_Wm(Eh, B, C, C_pad, HD, gather_h, perm);
         FrTensor Wm_t(DH, Wm.data());
         vector<int> uh(onesh);
         if (evil == 4 && h == evil_h) uh[1] += 1;
@@ -239,7 +268,7 @@ static void prove(const string& obdir, const string& seed,
     if (reason) *reason = oss_.str(); return false; } while (0)
 
 static bool verify(const string& obdir, const string& seed,
-                   uint B, uint C, uint HD,
+                   uint B, uint C, uint HD, uint perm,
                    const Commitment& gen_big, const Commitment& gen_small,
                    const G1Jacobian_t& Q, string* reason = nullptr) {
     const uint C_pad = 1u << ceilLog2(C);
@@ -251,10 +280,10 @@ static bool verify(const string& obdir, const string& seed,
         gen_big.size != C_pad || gen_small.size != HD)
         RJ("bad layout params");
     { FILE* f = open_or_die(obdir + "/dims.bin", "rb");
-      uint32_t d[3];
-      if (fread(d, sizeof(uint32_t), 3, f) != 3) { fclose(f); RJ("dims.bin short read"); }
+      uint32_t d[4];
+      if (fread(d, sizeof(uint32_t), 4, f) != 4) { fclose(f); RJ("dims.bin short read"); }
       fclose(f);
-      if (d[0] != B || d[1] != C || d[2] != HD) RJ("dims.bin mismatch"); }
+      if (d[0] != B || d[1] != C || d[2] != HD || d[3] != perm) RJ("dims.bin mismatch"); }
 
     G1TensorJacobian com_O2(obdir + "/com_O2.bin");
     if (com_O2.size != B) RJ("com_O2 row count");
@@ -274,6 +303,7 @@ static bool verify(const string& obdir, const string& seed,
     // ---- transcript replay ----
     fs::Transcript tr(seed);
     absorb_u32(tr, "B", B); absorb_u32(tr, "C", C); absorb_u32(tr, "HD", HD);
+    absorb_u32(tr, "PERM", perm);
     absorb_g1_tensor(tr, "com_O2", com_O2);
     for (uint h = 0; h < NH; h++) absorb_g1_tensor(tr, "com_O" + hh2(h), com_O[h]);
     auto u = fs_challenge_vec(tr, logB + logCp);
@@ -303,7 +333,7 @@ static bool verify(const string& obdir, const string& seed,
         }
         if (!fr_eq(hps[h].U_f2, F_ONE)) RJ("merge hadamard " << hh2(h) << " U_f2 != 1");
         {
-            vector<Fr_t> Wm = gather_Wm(Eh, B, C, C_pad, HD, h);
+            vector<Fr_t> Wm = gather_Wm(Eh, B, C, C_pad, HD, h, perm);
             FrTensor Wm_t(DH, Wm.data());
             Fr_t W_f = fold_public(Wm_t, ws);
             if (!fr_eq(cur, h_scalar(W_f, h_scalar(hps[h].S_f2, hps[h].U_f2, 2), 2)))
@@ -353,9 +383,10 @@ static long tamper_offset(const string& f) {
     return 36;                                      // hp: claim_H 0-31, count 32-35
 }
 
-static bool selftest_case(uint B, uint C, uint HD) {
+static bool selftest_case(uint B, uint C, uint HD, uint perm) {
     const uint NH = C / HD, C_pad = 1u << ceilLog2(C);
     cout << "==== selftest case B=" << B << " C=" << C << " HD=" << HD
+         << " perm=" << (perm ? "concat" : "pi157")
          << " (NH=" << NH << ", C_pad=" << C_pad
          << (B == C ? ", pi = plain transpose" : "") << ") ====" << endl;
     srand(31337 + B * 100 + C * 10 + HD);
@@ -373,13 +404,14 @@ static bool selftest_case(uint B, uint C, uint HD) {
     string seed = "selftest:merge";
     bool all = true;
 
-    prove(obdir, seed, outs, B, C, HD, gen_big, gen_small, Q, "/tmp/zkob_merge_O2.i32.bin");
-    bool honest = verify(obdir, seed, B, C, HD, gen_big, gen_small, Q);
+    prove(obdir, seed, outs, B, C, HD, perm, gen_big, gen_small, Q, "/tmp/zkob_merge_O2.i32.bin");
+    bool honest = verify(obdir, seed, B, C, HD, perm, gen_big, gen_small, Q);
     cout << (honest ? "PASS" : "FAIL") << ": honest case "
          << (honest ? "ACCEPT" : "REJECT(!!)") << endl;
     all = all && honest;
 
-    // chain-file sanity via the INVERSE formula: O2[pi^-1(t,e)] == M[t,e]
+    // chain-file sanity via the INVERSE formula: pi157: O2[pi^-1(t,e)] == M[t,e];
+    // concat: O2[t,e] == M[t,e]
     {
         vector<int> oo((size_t)B * C);
         FILE* f = open_or_die("/tmp/zkob_merge_O2.i32.bin", "rb");
@@ -389,11 +421,13 @@ static bool selftest_case(uint B, uint C, uint HD) {
         bool ok = true;
         for (uint t = 0; t < B && ok; t++)
             for (uint e = 0; e < C && ok; e++) {
-                const size_t m = (size_t)e * B + t;
-                const size_t i = m / C, j = m % C;
+                size_t i, j;
+                if (perm == 0) { const size_t m = (size_t)e * B + t; i = m / C; j = m % C; }
+                else           { i = t; j = e; }
                 ok = (oo[i * C + j] == outs[e / HD][(size_t)t * HD + (e % HD)]);
             }
-        cout << (ok ? "PASS" : "FAIL") << ": O2 chain file matches pi (checked via pi^-1)" << endl;
+        cout << (ok ? "PASS" : "FAIL") << ": O2 chain file matches "
+             << (perm ? "concat" : "pi (checked via pi^-1)") << endl;
         all = all && ok;
     }
 
@@ -403,24 +437,29 @@ static bool selftest_case(uint B, uint C, uint HD) {
     const uint eh4 = min(7u, NH - 1);
     struct Evil { int mode; uint h; string expect; const char* what; };
     vector<Evil> evils = {
-        {1, 0, "sum of head claims != ev",
-            "O2 := M (no line-157 permutation), ev honest from evil O2"},
         {3, eh3, "merge hadamard " + hh2(eh3) + " terminal",
             "Wm gathered with h off by one, hadamard honest on it"},
         {4, eh4, "merge hadamard " + hh2(eh4) + " U_f2 != 1",
             "ones-buffer bump, c computed from it"},
+        {5, 0, "sum of head claims != ev",
+            "O2 assembled with the WRONG mode's layout, ev honest from evil O2"},
     };
+    if (perm == 0)
+        evils.insert(evils.begin(), Evil{1, 0, "sum of head claims != ev",
+            "O2 := M (no line-157 permutation), ev honest from evil O2"});
+    else
+        cout << "(evil=1 skipped: O2 := M IS the honest concat layout)" << endl;
     if (C_pad > C)
-        evils.insert(evils.begin() + 1, Evil{2, 0, "sum of head claims != ev",
+        evils.insert(evils.begin(), Evil{2, 0, "sum of head claims != ev",
             "junk in a padding column, ev honest from it"});
     else
         cout << "(evil=2 skipped: C == C_pad, no padding columns)" << endl;
     string evdir = "/tmp/zkob_headmerge_evil";
     mkdir(evdir.c_str(), 0755);
     for (auto& ev : evils) {
-        prove(evdir, seed, outs, B, C, HD, gen_big, gen_small, Q, "", ev.mode, ev.h);
+        prove(evdir, seed, outs, B, C, HD, perm, gen_big, gen_small, Q, "", ev.mode, ev.h);
         string reason;
-        bool rejected = !verify(evdir, seed, B, C, HD, gen_big, gen_small, Q, &reason);
+        bool rejected = !verify(evdir, seed, B, C, HD, perm, gen_big, gen_small, Q, &reason);
         bool right = rejected && reason.find(ev.expect) != string::npos;
         cout << (right ? "PASS" : "FAIL") << ": evil=" << ev.mode << " (" << ev.what
              << ") rejected by [" << (rejected ? reason : string("NOT REJECTED"))
@@ -432,13 +471,13 @@ static bool selftest_case(uint B, uint C, uint HD) {
     for (const string& fn : proof_files(NH)) {
         long off = tamper_offset(fn);
         tamper_byte(obdir + "/" + fn, off, +1);
-        bool rejected = !verify(obdir, seed, B, C, HD, gen_big, gen_small, Q);
+        bool rejected = !verify(obdir, seed, B, C, HD, perm, gen_big, gen_small, Q);
         tamper_byte(obdir + "/" + fn, off, -1);
         cout << (rejected ? "PASS" : "FAIL") << ": byte tamper " << fn << "@" << off
              << " rejected: " << (rejected ? "YES" : "NO(!!)") << endl;
         all = all && rejected;
     }
-    bool restored = verify(obdir, seed, B, C, HD, gen_big, gen_small, Q);
+    bool restored = verify(obdir, seed, B, C, HD, perm, gen_big, gen_small, Q);
     cout << (restored ? "PASS" : "FAIL") << ": restored verify "
          << (restored ? "ACCEPT" : "REJECT(!!)") << endl;
     all = all && restored;
@@ -446,9 +485,10 @@ static bool selftest_case(uint B, uint C, uint HD) {
     return all;
 }
 
-static bool selftest_real() {
+static bool selftest_real(uint perm) {
     const uint B = 1024, C = 768, HD = 64, NH = C / HD;
-    cout << "==== selftest real-scale case B=1024 C=768 HD=64 (NH=12) ====" << endl;
+    cout << "==== selftest real-scale case B=1024 C=768 HD=64 (NH=12) perm="
+         << (perm ? "concat" : "pi157") << " ====" << endl;
     mt19937_64 rng(20260612);
     normal_distribution<double> nd(0.0, 262144.0);
     vector<vector<int>> outs(NH);
@@ -476,9 +516,9 @@ static bool selftest_real() {
     bool all = true;
 
     auto t0 = chrono::steady_clock::now();
-    prove(obdir, seed, outs, B, C, HD, gen_big, gen_small, Q, "/tmp/zkob_merge_real_O2.i32.bin");
+    prove(obdir, seed, outs, B, C, HD, perm, gen_big, gen_small, Q, "/tmp/zkob_merge_real_O2.i32.bin");
     auto t1 = chrono::steady_clock::now();
-    bool honest = verify(obdir, seed, B, C, HD, gen_big, gen_small, Q);
+    bool honest = verify(obdir, seed, B, C, HD, perm, gen_big, gen_small, Q);
     auto t2 = chrono::steady_clock::now();
     double prove_s = chrono::duration<double>(t1 - t0).count();
     double verify_s = chrono::duration<double>(t2 - t1).count();
@@ -491,7 +531,7 @@ static bool selftest_real() {
     all = all && honest;
 
     tamper_byte(obdir + "/hp07.bin", 36, +1);
-    bool rejected = !verify(obdir, seed, B, C, HD, gen_big, gen_small, Q);
+    bool rejected = !verify(obdir, seed, B, C, HD, perm, gen_big, gen_small, Q);
     tamper_byte(obdir + "/hp07.bin", 36, -1);
     cout << (rejected ? "PASS" : "FAIL") << ": real-scale byte tamper rejected: "
          << (rejected ? "YES" : "NO(!!)") << endl;
@@ -500,43 +540,109 @@ static bool selftest_real() {
     return all;
 }
 
+// cross-mode splice (design 4.2): an honest proof made in one mode presented
+// to a verifier running the other mode must REJECT -- first at the dims.bin
+// PERM cross-check, and, with dims.bin forged to match, at the "PERM" absorb
+// (transcript divergence). Both directions, both layers.
+static bool selftest_splice() {
+    const uint B = 8, C = 6, HD = 2, NH = C / HD, C_pad = 8;
+    cout << "==== selftest cross-mode splice B=" << B << " C=" << C
+         << " HD=" << HD << " ====" << endl;
+    srand(424242);
+    vector<vector<int>> outs(NH);
+    for (uint h = 0; h < NH; h++) {
+        outs[h].resize((size_t)B * HD);
+        for (auto& x : outs[h]) x = rand() % 257 - 128;
+    }
+    Commitment gen_big = Commitment::random(C_pad);
+    Commitment gen_small = Commitment::random(HD);
+    Commitment qg = Commitment::random(1);
+    G1Jacobian_t Q = qg(0);
+    string seed = "selftest:merge:splice";
+    bool all = true;
+    for (uint pv = 0; pv < 2; pv++) {           // pv = prover's mode
+        const uint other = 1 - pv;
+        string obdir = "/tmp/zkob_headmerge_splice" + to_string(pv);
+        mkdir(obdir.c_str(), 0755);
+        prove(obdir, seed, outs, B, C, HD, pv, gen_big, gen_small, Q, "");
+        string reason;
+        // layer 1: the dims.bin cross-check
+        bool rej1 = !verify(obdir, seed, B, C, HD, other, gen_big, gen_small, Q, &reason);
+        bool ok1 = rej1 && reason.find("dims.bin mismatch") != string::npos;
+        cout << (ok1 ? "PASS" : "FAIL") << ": splice " << (pv ? "concat" : "pi157")
+             << " proof vs " << (other ? "concat" : "pi157") << " verifier rejected by ["
+             << (rej1 ? reason : string("NOT REJECTED")) << "], expected [dims.bin mismatch]"
+             << endl;
+        all = all && ok1;
+        // layer 2: forge dims.bin's PERM field to match the verifier; the
+        // "PERM" absorb must still diverge the transcript
+        { FILE* f = open_or_die(obdir + "/dims.bin", "rb+");
+          fseek(f, 12, SEEK_SET); uint32_t o = other;
+          fwrite(&o, sizeof(uint32_t), 1, f); fclose(f); }
+        reason.clear();
+        bool rej2 = !verify(obdir, seed, B, C, HD, other, gen_big, gen_small, Q, &reason);
+        bool ok2 = rej2 && reason.find("dims.bin") == string::npos;
+        cout << (ok2 ? "PASS" : "FAIL") << ": splice with forged dims PERM rejected by ["
+             << (rej2 ? reason : string("NOT REJECTED"))
+             << "] (transcript divergence, not the dims guard)" << endl;
+        all = all && ok2;
+        // restore and re-verify honestly
+        { FILE* f = open_or_die(obdir + "/dims.bin", "rb+");
+          fseek(f, 12, SEEK_SET); uint32_t o = pv;
+          fwrite(&o, sizeof(uint32_t), 1, f); fclose(f); }
+        bool restored = verify(obdir, seed, B, C, HD, pv, gen_big, gen_small, Q);
+        cout << (restored ? "PASS" : "FAIL") << ": restored splice dir verify "
+             << (restored ? "ACCEPT" : "REJECT(!!)") << endl;
+        all = all && restored;
+    }
+    cout << (all ? "SPLICE PASS" : "SPLICE FAIL") << endl;
+    return all;
+}
+
 int main(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     if (mode == "selftest") {
-        bool a = selftest_case(8, 6, 2);     // generic pi, padded grid
-        bool b = selftest_case(4, 4, 2);     // B == C: pi = plain transpose
-        bool c = selftest_case(16, 12, 4);   // generic pi, padded 16x16 grid
-        bool e = selftest_case(16, 6, 2);    // B != C_pad (audit MINOR-2): a
-                                             // B<->C_pad symbol confusion in the
-                                             // pi^-1 gather is non-vacuous here
-        bool d = selftest_real();
-        bool ok = a && b && c && e && d;
+        bool ok = true;
+        for (uint perm = 0; perm < 2; perm++) {
+            ok = selftest_case(8, 6, 2, perm) && ok;   // generic pi, padded grid
+            ok = selftest_case(4, 4, 2, perm) && ok;   // B == C: pi = plain transpose
+            ok = selftest_case(16, 12, 4, perm) && ok; // generic pi, padded 16x16 grid
+            ok = selftest_case(16, 6, 2, perm) && ok;  // B != C_pad (audit MINOR-2): a
+                                                       // B<->C_pad symbol confusion in
+                                                       // the gather is non-vacuous here
+        }
+        ok = selftest_splice() && ok;
+        ok = selftest_real(0) && ok;
+        ok = selftest_real(1) && ok;
         cout << (ok ? "ZKOB-HEADMERGE SELFTEST: ALL PASS"
                     : "ZKOB-HEADMERGE SELFTEST: FAIL") << endl;
         return ok ? 0 : 1;
     }
-    if (mode == "prove" && (argc == 11 || argc == 12)) {
+    if (mode == "prove" && (argc == 12 || argc == 13)) {
         string obdir = argv[2], seed = argv[3], prefix = argv[4];
         uint B = stoi(argv[5]), C = stoi(argv[6]), HD = stoi(argv[7]);
+        uint perm = parse_perm(argv[8]);
         if (HD == 0 || C % HD) throw runtime_error("HD must divide C");
         const uint NH = C / HD;
         vector<vector<int>> outs(NH);
         for (uint h = 0; h < NH; h++)
             outs[h] = load_i32_exact(prefix + hh2(h) + ".i32.bin", B * HD);
-        Commitment gen_big(argv[8]), gen_small(argv[9]), qg(argv[10]);
-        prove(obdir, seed, outs, B, C, HD, gen_big, gen_small, qg(0),
-              argc == 12 ? argv[11] : "");
+        Commitment gen_big(argv[9]), gen_small(argv[10]), qg(argv[11]);
+        prove(obdir, seed, outs, B, C, HD, perm, gen_big, gen_small, qg(0),
+              argc == 13 ? argv[12] : "");
         return 0;
     }
-    if (mode == "verify" && argc == 10) {
+    if (mode == "verify" && argc == 11) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[4]), C = stoi(argv[5]), HD = stoi(argv[6]);
-        Commitment gen_big(argv[7]), gen_small(argv[8]), qg(argv[9]);
-        return verify(obdir, seed, B, C, HD, gen_big, gen_small, qg(0)) ? 0 : 1;
+        uint perm = parse_perm(argv[7]);
+        Commitment gen_big(argv[8]), gen_small(argv[9]), qg(argv[10]);
+        return verify(obdir, seed, B, C, HD, perm, gen_big, gen_small, qg(0)) ? 0 : 1;
     }
     cerr << "usage: zkob_headmerge selftest\n"
-         << "       zkob_headmerge prove  <obdir> <seed> <Oh-prefix> <B> <C> <HD> <gen_big> <gen_small> <q> [O2-int32-out]\n"
-         << "       zkob_headmerge verify <obdir> <seed> <B> <C> <HD> <gen_big> <gen_small> <q>" << endl;
+         << "       zkob_headmerge prove  <obdir> <seed> <Oh-prefix> <B> <C> <HD> <perm> <gen_big> <gen_small> <q> [O2-int32-out]\n"
+         << "       zkob_headmerge verify <obdir> <seed> <B> <C> <HD> <perm> <gen_big> <gen_small> <q>\n"
+         << "       <perm> = pi157 | concat" << endl;
     return 2;
 }
