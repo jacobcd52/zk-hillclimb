@@ -639,3 +639,161 @@ matmuls accounted separately).
   verify() throw (uncaught) rather than print REJECT — the process exits
   nonzero, so it is fail-closed (never a false ACCEPT); the orchestrator
   must treat ANY nonzero exit as reject, not parse for the REJECT line.
+
+## 19. zkob_rowmax — row-max (argmax-binding) obligation driver: SELFTEST ALL PASS (170/170) + independent audit (SOUND)
+
+Covers STAGE3_FAITHFUL_DESIGN §2 Part A — the row-max obligation, in both
+masking regimes. Proves, **with zero advice freedom on the value**, that a
+committed per-row scalar mx[i] equals the max over the *allowed* set of a
+committed B×NCOL int32 grid z:
+
+- **causal**: AL = lower triangle, B == NCOL, V = 0 — per-head attention
+  row-max (com_mx feeds softmax8's mx input).
+- **vpad**: AL = first V columns, 0 < V ≤ NCOL — the logit-binding statement,
+  zero-padding z columns V→NCOL before commitment (the |z| < 2²⁵ envelope
+  guard); when `tstar-int32.bin` is supplied, **T-BIND** additionally proves
+  S[i, t*[i]] = 1, i.e. each served token t*[i] is an actual row maximizer.
+
+The only protocol freedom is the **selector tie channel** (§2.4): all witness
+tensors are deterministic functions of (z, mx, S, AL) — the limbs are the
+unique base-LEN_R digits of Df, m_L is logUp-forced at random β, A_L = 1/(L+β)
+elementwise — *except* which tied argmax position carries the 1 (and a tied
+t*). The honest prover uses the canonical **lowest-index** witness
+(strictly-greater scan on an ascending j loop, np.argmax convention;
+`host_tstar` is the same scan). Visible only in com_S/its openings; the
+per-row duty of this channel is the measured-gate quantity the orchestrator
+reports (tie-count reporting, below). Passed an independent soundness audit
+(ROWMAX_REVIEW.md, 2026-06-11, **VERDICT: SOUND — 0 CRITICAL / 0 MAJOR**; FS
+schedules absorb-for-absorb identical; every disk value anchored; the
+memory-fix byte-identity reproduced from preserved artifacts), plus a
+hardening round dispositioning all 9 MINORs (ROWMAX_REPORT.md §8). One FS
+transcript, 12 (causal) / 14 (vpad+t*) IPA openings, seven sub-obligations:
+
+1. **LIMB** — logUp range lookup of the NPL·B·NCOL limb tensor L (base-LEN_R
+   digits of the dominance gap Df) vs tLookupRange(0, LEN_R), com_A_L
+   committed AFTER β_L; the verbatim-softmax logUp terminal, table rebuilt
+   verifier-side. Sole enforcer of Df ∈ [0, LEN_Rᴺᴾᴸ) as integers.
+2. **BIN** — S binary on the whole padded grid; claim 0; the verifier
+   **REQUIRES `U_f2 == S_f2 − 1`** (load-bearing — this binds the
+   never-committed U = S−𝟙 to com_S). Kills the fractional-selector forgery
+   (evil=3) that passes SUM/MASK/ATT/DOM by construction.
+3. **SUM** (one-hot over allowed, claim 1) / 4. **MASK** (nothing outside
+   allowed, claim 0): weights `bcast(eq(u_s))⊙AL` / `bcast(eq(u_m))⊙(𝟙−AL)`
+   rebuilt verifier-side from its own AL; `U_f2 == 1` forced. In vpad, MASK's
+   support is exactly the pad columns, so S's pads are forced to 0.
+5. **ATT** (attainment) — ev_mx absorbed at u_a; pure-column-broadcast eq_acc
+   shortcut (row-bits-only accumulator) on the verifier; all three openings
+   (S, z at pt_a; ev_mx vs com_mx at u_a). Forces ⟨S-row, z-row⟩ = mx rowwise.
+6. **DOM** — the c1/c2 bracket: each forced by its round chain to the
+   verifier's own eq(u_r)⊙AL weight fold × an anchored terminal (z̃(pt_c1) vs
+   com_z; the **never-committed mx broadcast pinned to com_mx at pt_c2's
+   row-bit suffix** pt_c2[logC..logD)); NPL plane openings of L at (u_r‖plane);
+   plain-field identity `c2 − c1 == v0 [+ LEN_R·v1]`. With LIMB ⟹ mx ≥ every
+   allowed z entry.
+7. **T-BIND** (vpad+t* only) — W_t gathered from the verifier's OWN t*, every
+   t*[i] range-forced into [0, V); claim 1 ⟹ S[i, t*[i]] = 1.
+
+**Constant-claim discipline** (the found-and-fixed evil=3 gap, audited complete
+at ALL FOUR instances): BIN 0, SUM 1, MASK 0, T-BIND 1 are protocol constants —
+imposed by the verifier at round 0 AND required equal to the serialized claim_H
+(both halves; the imposition is load-bearing per evil=3, the equality is
+belt-and-suspenders, negatively exercised since the hardening round). ev_mx,
+c1, c2 are data-dependent, absorbed per §2.6, each independently anchored.
+
+**The ONE new kernel (§2.8)** — `k_pp_expand` (zkob_rowmax.cu:71–78), Fr-only,
+driver-local, generalizing k_eq_expand's (1−c, c) doubling to arbitrary (a, b)
+pairs; powers `fast_me_weights`/`fast_s_vector` so the gen-32768 IPAs avoid the
+me_weights 1-thread host-loop hot spot (ROPE §9.1). No other new kernels; no G1
+kernels (the -dlto rule). `crosscheck_fast_helpers` runs in EVERY honest prove
+(toy + gen-1024 real), element-exact vs the slow header path, STOP on mismatch.
+
+FS schedule (seed = run_seed:obligation_id): absorb B, NCOL, MODE, V, LEN_R,
+NPL [, "TSTAR" (raw int32) in vpad+t*] → com_z, com_S, com_mx, com_L, com_m_L
+→ β_L → com_A_L → α_L, u_L → LIMB rounds + terminals + 3 openings → u_bin →
+BIN rounds + opening (U_f2 == S_f2−1) → u_s → SUM → u_m → MASK → u_a → ev_mx →
+ATT rounds + 3 openings → u_r → c1 → c1 rounds + ipa_z_c1; c2 → c2 rounds +
+ipa_mx_c2 (suffix); v0[,v1] + plane openings → [u_t → ev_mx-style; T-BIND
+rounds + ipa_S_tbind] → verifier-only U_f2 checks + the `c2 − c1 == v0 [+
+LEN_R·v1]` identity. Audit confirmed prove/verify absorb-for-absorb identical,
+matching §2.6 label-for-label including the TSTAR preamble.
+
+CLI (MODE = literal `causal`/`vpad`):
+```
+zkob_rowmax prove  <obdir> <seed> <z-int32.bin> <B> <NCOL> <MODE> <V> <LEN_R> <NPL>
+                   <gen_grid.bin> <gen_mx.bin> <q.bin> [mx-int32-out.bin] [tstar-int32.bin]
+zkob_rowmax verify <obdir> <seed> <B> <NCOL> <MODE> <V> <LEN_R> <NPL>
+                   <gen_grid.bin> <gen_mx.bin> <q.bin> [tstar-int32.bin]
+zkob_rowmax selftest
+```
+Layout: B/NCOL/LEN_R pow2, NPL ∈ {1,2}, NCOL ≤ LEN_R ≤ NPL·D with LEN_R | NPL·D;
+gen_grid size NCOL, gen_mx size B; the driver does NOT mkdir the obdir.
+`[mx-int32-out.bin]` is the UNPADDED B int32 chain file (causal: softmax8's mx
+input, same scale as z; `-` / omit to skip). `[tstar-int32.bin]` is taken by
+BOTH prove and verify (the verifier loads its own registered, hash-pinned copy
+— §3.4); supplying it in causal mode is a guarded throw.
+
+Files in <obdir> — **27 causal / 30 vpad+t*** (design §2.7's 26/29 headline is
+a counting slip; its own file LIST and this driver both yield 27/30 — see
+report §8 MINOR-1; all byte-tamper-tested): dims.bin; com_z, com_S, com_mx,
+com_L, com_m_L, com_A_L (.bin); lookup_L.bin; hp_bin, hp_sum, hp_mask, hp_att
+(claim_H = ev_mx), hp_c1, hp_c2 [, hp_tbind] .bin; lvals.bin (NPL Fr_t: v0
+[, v1]); ipa_A_L, ipa_L_lk, ipa_m_L, ipa_S_bin, ipa_S_sum, ipa_S_mask,
+ipa_S_att, ipa_z_att, ipa_mx_att, ipa_z_c1, ipa_mx_c2, ipa_L_p0 [, ipa_L_p1]
+[, ipa_S_tbind] .bin.
+
+Chain edges (§2.7; orchestrator byte-equalities ≡):
+- **causal** (per layer l, head hh — Part C §4.3):
+  `RM1.hh: rescale10.h{hh}/com_Xr.bin ≡ rowmax.h{hh}/com_z.bin`;
+  `RM2.hh: rowmax.h{hh}/com_mx.bin ≡ softmax8.h{hh}/com_mx.bin`.
+- **vpad** (Part B logit-binding §3.4):
+  `L1: lm_head.rescaling/com_Xr.bin ≡ statement.logit_binding/rowmax/com_z.bin`
+  (lm_head commits the zero-padded 1024×32768 grid with gen32768; the rowmax
+  prover pads identically — byte-identity for honest runs, §12 mechanism);
+  `L2: registration hash over tstar.i32.bin` (t* is a registered artifact,
+  served_tokens in public.json; public.json hash count 26 → 31).
+
+Real-scale numbers (gen1024 grid / gen32768 vpad):
+
+| case | prove | verify | proof+commitments | GPU peak |
+|---|---|---|---|---|
+| causal 1024×1024, LEN_R=2²⁰, NPL=1 | 5.28 s | 1.92 s | 791,140 B | 0.70 GiB |
+| vpad 1024×32768, V=32000, NPL=2, +t* | 44.19 s | 3.99 s | 974,264 B | **10.99 GiB** |
+
+The vpad peak is **WITHIN the ~18 GiB §6.3 gate** (≥ 2.2× headroom on a 24 GiB
+RTX 4090; the §6.3 column-block fallback is NOT needed). It required a
+memory-discipline pass (driver-local, no header edits, no protocol change,
+byte-identity reproduced): the first implementation peaked at 18.21–18.24 GiB
+in the shared header `fs_hadamard`/`fs_phase1` frames; an iterative
+`lean_hadamard` clone (same kernels/labels/challenges/terminals, only buffer
+lifetime differs) + raw `k_pp_expand` eq builds + commit-then-free/re-upload of
+z, S, L brought it to 10.5–11 GiB (ROWMAX_REPORT.md §4; the 10.99 full-selftest
+vs 10.48 standalone-profile peak is the documented fragmentation delta). The
+residual is the header `fs_phase1` frame-0 burst, irreducible without editing
+`zkob_lookup.cuh`/`tlookup.cu` (out of scope, unnecessary at this headroom).
+
+Selftest (after the hardening round): **170 PASS / 0 FAIL, exit 0**
+(`/root/zkllm/rowmax_selftest_hardened.log`; up from the audit's 160 — the +10
+are the four audit coverage findings). Four toy shapes (causal 8×8 n1=1,
+vpad 8×16 V=11 NPL=2 +t* n1=3, causal 16×16 n1=2, vpad 4×8 V=NCOL=8 MASK
+weight≡0 n1=1); EIGHT evil modes each rejected by exactly the named check
+(evil=3 → "BIN round 0", the certifying fractional-selector forgery; evil=2 →
+"DOM bracket identity" at the very last check; etc.); byte tampers on every
+proof file + restored ACCEPT; all 15 §2.1 guard throws; the chunked-vs-unchunked
+commit byte test; both real-scale runs.
+
+**Orchestrator obligations pinned by the audit:**
+- **(MINOR-7) Standalone-ACCEPT caveat (inherited, by design).** A standalone
+  rowmax ACCEPT binds (z, S, mx, L, t*) **internally** only; it does NOT pin z
+  to the upstream logits/scores nor mx downstream. The orchestrator MUST
+  enforce the §2.7 byte-edges — **RM1/RM2** (causal) and **L1** (vpad) — and
+  the t* registration hash (**L2**, §3.4). The §2.1 field-wrap reliance (X4
+  reads Df field values as small integers; mx inherits the chained z's range)
+  is part of the same scoped assumption and is documented in the file header.
+  Same posture as softmax's com_z (§15 MINOR-5) and rope MINOR-6.
+- **Tie-count reporting (§2.4 ii–iii).** The selector tie channel — which tied
+  argmax position carries the 1, and tied t* — is the only protocol freedom
+  and is **out of this driver's scope by design**. The orchestrator's tie
+  measurement hook reports the per-row duty (the measured-gate quantity); the
+  driver emits the canonical lowest-index witness deterministically.
+- **(MINOR-8) Fail-closed on missing/short files** (`open_or_die` etc. throw,
+  nonzero exit, never false ACCEPT): treat ANY nonzero exit as reject.

@@ -54,6 +54,7 @@
 #include <cmath>
 #include <random>
 #include <climits>
+#include <cstring>
 #include <thread>
 #include <atomic>
 #include <functional>
@@ -1523,6 +1524,38 @@ static bool selftest_case(uint B, uint NCOL, uint MODE, uint V, uint LEN_R, uint
              << " rejected: " << (rejected ? "YES" : "NO(!!)") << endl;
         all = all && rejected;
     }
+    {   // serialized-claim_H forgery (audit MINOR-3): tamper hp_bin.bin@0
+        // (inside claim_H, bytes 0-31) -- must be rejected by the EQUALITY half
+        // of the constant-claim discipline, the exact named check
+        tamper_byte(obdir + "/hp_bin.bin", 0, +1);
+        string reason;
+        bool rejected;
+        try {
+            rejected = !verify(obdir, seed, B, NCOL, MODE, V, LEN_R, NPL,
+                               gen, genmx, Q, with_tstar ? &tst : nullptr, &reason);
+        } catch (const exception& e) { rejected = true; reason = e.what(); }
+        tamper_byte(obdir + "/hp_bin.bin", 0, -1);
+        const char* expect = "BIN claim_H != protocol constant 0";
+        bool right = rejected && reason.find(expect) != string::npos;
+        cout << (right ? "PASS" : "FAIL") << ": claim_H forgery hp_bin.bin@0 rejected by ["
+             << (rejected ? reason : string("NOT REJECTED")) << "], expected ["
+             << expect << "]" << endl;
+        all = all && right;
+    }
+    if (NPL == 2) {                                // v1 tamper (audit MINOR-4):
+        // lvals.bin@36 is inside v1 (bytes 32-63), mirroring the v0@4 tamper
+        tamper_byte(obdir + "/lvals.bin", 32 + 4, +1);
+        string reason;
+        bool rejected;
+        try {
+            rejected = !verify(obdir, seed, B, NCOL, MODE, V, LEN_R, NPL,
+                               gen, genmx, Q, with_tstar ? &tst : nullptr, &reason);
+        } catch (const exception& e) { rejected = true; reason = e.what(); }
+        tamper_byte(obdir + "/lvals.bin", 32 + 4, -1);
+        cout << (rejected ? "PASS" : "FAIL") << ": byte tamper lvals.bin@36 (v1)"
+             << " rejected: " << (rejected ? "YES [" + reason + "]" : "NO(!!)") << endl;
+        all = all && rejected;
+    }
     bool restored = verify(obdir, seed, B, NCOL, MODE, V, LEN_R, NPL, gen, genmx, Q,
                            with_tstar ? &tst : nullptr);
     cout << (restored ? "PASS" : "FAIL") << ": restored verify "
@@ -1561,6 +1594,10 @@ static bool selftest_guards() {
                                   prove(obdir, "g", zv, 8, 8, 1, 8, 32, 2, g8, g8b, Q, "", nullptr); }},
         {"LEN_R not pow2",   [&]{ prove(obdir, "g", z64, 8, 8, 0, 0, 33, 1, g8, g8b, Q, "", nullptr); }},
         {"NCOL > LEN_R",     [&]{ prove(obdir, "g", z64, 8, 8, 0, 0, 4, 1, g8, g8b, Q, "", nullptr); }},
+        // audit MINOR-5: the three previously unexercised §2.1 guards
+        {"B not pow2",       [&]{ prove(obdir, "g", z64, 6, 8, 0, 0, 32, 1, g8, g8b, Q, "", nullptr); }},
+        {"NCOL not pow2",    [&]{ prove(obdir, "g", z64, 8, 12, 0, 0, 32, 1, g8, g8b, Q, "", nullptr); }},
+        {"NPL not in {1,2}", [&]{ prove(obdir, "g", z64, 8, 8, 0, 0, 32, 3, g8, g8b, Q, "", nullptr); }},
     };
     bool all = true;
     for (auto& g : gs) {
@@ -1572,6 +1609,34 @@ static bool selftest_guards() {
         all = all && threw;
     }
     return all;
+}
+
+// chunked-commit byte test (audit MINOR-6): the toy proof shapes all take
+// commit_chunked's fall-through gen.commit() branch, so the §4 byte-identity
+// diff never exercised the CHUNKED branch at byte level. Here rows is pushed
+// just past CHUNK_ROWS (2^22/G = 1024 at G = 4096), forcing the chunked path
+// with a full chunk plus a partial tail chunk, and the output buffer is
+// compared byte-for-byte against the unchunked upstream Commitment::commit
+// on the same tensor.
+static bool selftest_chunked_commit() {
+    const uint G = 4096, rows = 1025;              // CHUNK_ROWS = 1024 -> chunked
+    cout << "==== selftest chunked-vs-unchunked commit byte test (G=" << G
+         << ", rows=" << rows << ") ====" << endl;
+    Commitment gen = Commitment::random(G);
+    vector<long> vals((size_t)rows * G);
+    mt19937_64 rng(20260611);
+    for (auto& v : vals) v = (long)(rng() % 1000001) - 500000;
+    FrTensor t((uint)vals.size(), vals.data());
+    G1TensorJacobian a = commit_chunked(gen, t);
+    G1TensorJacobian b = gen.commit(t);
+    vector<unsigned char> ha((size_t)rows * sizeof(G1Jacobian_t));
+    vector<unsigned char> hb((size_t)rows * sizeof(G1Jacobian_t));
+    cudaMemcpy(ha.data(), a.gpu_data, ha.size(), cudaMemcpyDeviceToHost);
+    cudaMemcpy(hb.data(), b.gpu_data, hb.size(), cudaMemcpyDeviceToHost);
+    bool ok = (memcmp(ha.data(), hb.data(), ha.size()) == 0);
+    cout << (ok ? "PASS" : "FAIL") << ": chunked commit bytes "
+         << (ok ? "IDENTICAL to unchunked" : "DIFFER from unchunked(!!)") << endl;
+    return ok;
 }
 
 static bool selftest_real_causal() {
@@ -1718,9 +1783,10 @@ int main(int argc, char* argv[]) {
         bool c = selftest_case(16, 16, 0, 0,  64, 1, false);  // bigger causal grid
         bool d = selftest_case(4,  8,  1, 8,  32, 2, false);  // V == NCOL: MASK weight == 0
         bool g = selftest_guards();
+        bool cc = selftest_chunked_commit();       // audit MINOR-6
         bool r1 = selftest_real_causal();
         bool r2 = selftest_real_vpad();
-        bool ok = a && b && c && d && g && r1 && r2;
+        bool ok = a && b && c && d && g && cc && r1 && r2;
         cout << (ok ? "ZKOB-ROWMAX SELFTEST: ALL PASS"
                     : "ZKOB-ROWMAX SELFTEST: FAIL") << endl;
         return ok ? 0 : 1;

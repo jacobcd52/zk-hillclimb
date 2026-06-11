@@ -33,9 +33,11 @@ grid z, exactly per design §2:
   generalizing k_eq_expand's (1−c, c) doubling to arbitrary (a, b) pairs;
   powers `fast_me_weights` / `fast_s_vector` so the gen-32768 IPAs avoid the
   me_weights host-loop hot spot. No other new kernels; no G1 kernels.
-- **CLI/files (§2.7)** — prove/verify/selftest; 26 (causal) / 29 (vpad+t*)
-  proof files; dims.bin cross-checked against argv; driver does not mkdir;
-  unpadded mx-int32 chain output (`-` to skip).
+- **CLI/files (§2.7)** — prove/verify/selftest; 27 (causal) / 30 (vpad+t*)
+  proof files (the design §2.7 headline says 26/29, but its own file LIST
+  enumerates 27/30 — see the MINOR-1 erratum in §8); dims.bin cross-checked
+  against argv; driver does not mkdir; unpadded mx-int32 chain output
+  (`-` to skip).
 
 ## 2. Selftest summary (final run: ALL PASS, 160 PASS / 0 FAIL)
 
@@ -209,3 +211,77 @@ the source (the fix from the earlier session, validated here):
   this is the gate's own metric and consistent across before/after runs.
   (iii) The argmax tie-freedom measurement hook (§2.4) remains an orchestrator
   task, unchanged by this driver.
+
+## 8. Hardening round (audit ROWMAX_REVIEW.md — VERDICT SOUND; all 9 MINORs dispositioned)
+
+The independent audit (ROWMAX_REVIEW.md, 2026-06-11) returned **SOUND — 0
+CRITICAL / 0 MAJOR**, accepting the file. The nine MINOR findings are all
+coverage/documentation notes; none is a soundness gap. Disposition below. The
+four code findings are **selftest-harness coverage only** — no protocol, value,
+FS-schedule, kernel, or commitment change — so the §4 byte-identity guarantee
+is untouched (prove()/verify() bytes are unchanged; the new tests only tamper
+and restore). Pre-hardening file 1767 lines → hardened 1833 lines (+66), the
+only non-test delta being one `#include`.
+
+### Code changes (4 coverage findings)
+
+| finding | what changed | file:line (hardened) | new checks |
+|---|---|---|---|
+| **MINOR-3** | negative test of the **equality** half of the constant-claim discipline: tamper `hp_bin.bin@0` (inside claim_H, bytes 0–31), expect the exact named reject `"BIN claim_H != protocol constant 0"`. The verifier check it exercises (`if (!fr_eq(hp_bin.claim_H, F_ZERO)) RJ(...)`) **pre-existed** at zkob_rowmax.cu:1039 (was :1038 pre-edit) — only the negative exercise was missing. | zkob_rowmax.cu:1527–1543 | +4 (one per toy case) |
+| **MINOR-4** | v1 byte tamper: `lvals.bin@36` (inside v1, bytes 32–63), mirroring the existing v0@4 tamper; rejects via the L-plane IPA. | zkob_rowmax.cu:1545–1558 | +2 (the two NPL=2 cases) |
+| **MINOR-5** | the three previously-unexercised §2.1 honest-prover guards: `B not pow2`, `NCOL not pow2`, `NPL not in {1,2}` (the guards in `layout_guards` already existed and the verifier already re-checks the predicates in RJ form). | zkob_rowmax.cu:1597–1600 | +3 |
+| **MINOR-6** | `selftest_chunked_commit()`: pushes rows past `CHUNK_ROWS` (G=4096, rows=1025 → one full chunk + partial tail) and `memcmp`s `commit_chunked` output byte-for-byte against the unchunked `gen.commit()`. Closes the gap that toy shapes take only the fall-through branch (the §4 byte-diff never exercised the chunked branch). Required `#include <cstring>` (zkob_rowmax.cu:57). | zkob_rowmax.cu:1614–1641, called :1786, ANDed into the verdict :1789 | +1 |
+
+Result: `PASS: chunked commit bytes IDENTICAL to unchunked` — the chunked
+branch is now byte-validated at toy scale, no longer resting solely on the
+source walk + real-vpad functional ACCEPT.
+
+### Doc-errata for the coordinator (MINOR-1/2/9 — corrections to STAGE3_FAITHFUL_DESIGN.md / this report; no code)
+
+- **MINOR-1 — file-count headline 26/29 is wrong.** Design §2.7 headline and
+  this report §1 say 26/29; the **actual file count is 27 (causal) / 30
+  (vpad+t*)**, which is what the implementation produces, what §4's byte-diff
+  enumerates ("all 27 files" / "all 30 files"), and what the design §2.7 file
+  **LIST** itself enumerates. The headline number is a counting slip
+  propagated from the design. Fix the design §2.7 headline to 27/30.
+- **MINOR-2 — design §2.9 toy n1 annotations are internally inconsistent.**
+  §2.9 annotates case a "n1=0" and case b "n1=1", but its own §2.5 formula
+  `n1 = logDL − log LEN_R` gives **1 and 3**. The implementation computes n1
+  correctly; the actual toy values are **1 / 3 / 2 / 1** (cases a/b/c/d), as
+  §2 of this report records. Consequence: no toy-scale pure-phase-2 (n1=0)
+  case exists — but **real-causal IS n1=0 and is selftested**, so the path is
+  covered. Correct the §2.9 annotations to the formula values.
+- **MINOR-9 — two self-explained labels, no action.** This report §2's
+  "(n1=1)" label on causal 8×8 is correct (the formula value). The §3 vpad GPU
+  peak 10.99 GiB (full-selftest) vs the audit's 10.48 GiB (standalone profile)
+  is the documented fragmentation delta (§4, line 88) — same allocations,
+  different post-toy fragmentation; both WITHIN the ~18 GiB gate. Re-runs
+  match. No change.
+
+### Wiring obligations carried to the orchestrator (MINOR-7/8 — pinned in PHASE0_NOTES §19)
+
+- **MINOR-7 — standalone-ACCEPT caveat (inherited, by design).** A standalone
+  rowmax ACCEPT binds (z, S, mx, L, t*) **internally**; it does NOT pin z to
+  the upstream logits or mx downstream. The orchestrator MUST enforce the
+  §2.7 byte-edges — **RM1** (`rescale10.h{hh}/com_Xr ≡ rowmax.h{hh}/com_z`) /
+  **RM2** (`rowmax.h{hh}/com_mx ≡ softmax8.h{hh}/com_mx`) causal, **L1**
+  (`lm_head.rescaling/com_Xr ≡ logit_binding/rowmax/com_z`) vpad — and the t*
+  registration hash over `tstar.i32.bin` (**L2**, §3.4). The §2.1 field-wrap
+  reliance is part of the same scoped assumption and is documented in the file
+  header. (Softmax MINOR-5 / rope MINOR-6 precedent.)
+- **MINOR-8 — fail-closed on missing/short files.** A missing/short proof file
+  makes verify() throw (`open_or_die`/`read_pod_vec`/G1 ctor) rather than print
+  REJECT; the process exits nonzero, never a false ACCEPT (the tamper harness
+  already counts throws as rejects). The orchestrator must treat **any nonzero
+  exit as reject**, not parse for the REJECT line.
+
+### New selftest totals
+
+`/root/zkllm/rowmax_selftest_hardened.log`: **ALL PASS, 170 PASS / 0 FAIL,
+exit 0** (up from the audit's 160 — the +10 are the 4 code findings: claim_H@0
+×4 toy cases, lvals@36(v1) ×2 NPL=2 cases, +3 guards, +1 chunked-commit test).
+Real-scale unchanged within noise: causal 1024×1024 5.28 s prove / 1.92 s
+verify / 791,140 B / 0.70 GiB peak; vpad 1024×32768 +t* 44.19 s prove /
+3.99 s verify / 974,264 B / **10.49 GiB peak — WITHIN the ~18 GiB §6.3 gate**.
+The §4 byte-identity across the memory fix still holds (these edits never
+touch the prove/verify byte paths).
