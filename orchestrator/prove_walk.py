@@ -1,6 +1,9 @@
-"""Prover walk over the stage-2 covered subgraph: the FULL forward pass of
-both layers (rmsnorm sites, complete attention chain, MLP path, skips) on real
-llama-68m weights + the registered run input.
+"""Prover walk over the stage-3 covered subgraph: the FULL forward pass of
+both layers (rmsnorm sites, complete attention chain, MLP path, skips) PLUS
+the stage-3 head (STAGE3_FAITHFUL_DESIGN §3: final_norm trio with exact-R
+authority, lm_head fc + rescale on the registered 768x32000 weight, and the
+statement.logit_binding zkob_rowmax vpad instance binding the registered
+served tokens t*) on real llama-68m weights + the registered run input.
 
 Witness authority (ORCHESTRATOR_DESIGN.md §3, extended by ROPE_ATTENTION_DESIGN
 §1.5/§7.3):
@@ -179,14 +182,19 @@ def attention_chain(run_dir, l, attn_in_path, run_seed, cst, log=print):
     os.makedirs(C.ob(run_dir, VM, "merge"), exist_ok=True)
     prove(VM, "merge", f"layer{l}.attn.merge",
           [C.drv("zkob_headmerge"), "prove", C.ob(run_dir, VM, "merge"), None,
-           os.path.join(values_dir, "out"), B, Cw, HD,
+           os.path.join(values_dir, "out"), B, Cw, HD, "pi157",
            P["gen1024"], P["gen64"], P["q"], attn_path], run_seed)
     return np.fromfile(attn_path, dtype=np.int32).reshape(C.SEQ, C.EMBED)
 
 
 def rmsnorm_site(run_dir, l, site, X_i32, run_seed, c_eps, log=print):
-    """rmsnorm + wrescale + yrescale; returns the rescaled output activation."""
-    mid = f"layer{l}.{site}.rmsnorm"
+    """rmsnorm + wrescale + yrescale; returns the rescaled output activation.
+    l=None, site='final_norm' = the stage-3 final-norm site (STAGE3 §3.1:
+    same trio, same C_eps, exact-R advice — the witness-authority switch)."""
+    if l is None:
+        mid, gwid = "final_norm.rmsnorm", "final_norm.g"
+    else:
+        mid, gwid = f"layer{l}.{site}.rmsnorm", f"layer{l}.{site}.g"
     P = C.reg_paths(run_dir)
     d = os.path.join(run_dir, "data")
     xp = os.path.join(d, f"{mid}.X.i32.bin")
@@ -202,7 +210,7 @@ def rmsnorm_site(run_dir, l, site, X_i32, run_seed, c_eps, log=print):
         os.makedirs(C.ob(run_dir, mid, sub), exist_ok=True)
     prove(mid, "rmsnorm", mid,
           [C.drv("zkob_rmsnorm"), "prove", C.ob(run_dir, mid, "rmsnorm"), None,
-           xp, rp, C.wpath(run_dir, f"layer{l}.{site}.g", "int"),
+           xp, rp, C.wpath(run_dir, gwid, "int"),
            str(C.SEQ), str(C.EMBED), str(c_eps), P["gen1024"], P["gen1024"], P["q"], wp, yp],
           run_seed)
     prove(mid, "wrescale", mid + ".wrescale",
@@ -302,14 +310,68 @@ def main():
         m_skip = f"layer{l}.mlp_skip.add"
         os.makedirs(C.ob(run_dir, m_skip), exist_ok=True)
         if l + 1 == C.N_LAYERS:
-            # terminal output commitment: homomorphic sum (zkob_skip add)
-            prove(m_skip, "skip-add", m_skip,
-                  [C.drv("zkob_skip"), "add",
-                   os.path.join(C.ob(run_dir, f"layer{l}.post_attn_norm.rmsnorm"), "rmsnorm/com_X.bin"),
-                   os.path.join(C.ob(run_dir, f"layer{l}.mlp.down_proj.rescaling"), "com_Xr.bin"),
-                   os.path.join(C.ob(run_dir, m_skip), "com_Z.bin")], run_seed)
-            z2.tofile(os.path.join(d, "final_output.i32.bin"))
+            # terminal output commitment: FRESH gen1024 commitment of z2.
+            # Stage 3's edge F0 byte-chains the final-norm com_X to this file,
+            # so it must be a fresh commitment (stage 2 used a homomorphic
+            # zkob_skip sum here — Jacobian bytes, not byte-comparable). The S2
+            # point check (zkob_skip verify) validates the same file unchanged:
+            # commitment linearity makes the fresh com of z1+ffn_out point-equal
+            # to com_z1 + com_ffn_out.
+            fo = os.path.join(d, "final_output.i32.bin")
+            z2.tofile(fo)
+            prove(m_skip, "commit-Z", m_skip,
+                  [C.drv("zkob_fc"), "commit", fo, str(C.SEQ), str(C.EMBED),
+                   P["gen1024"], os.path.join(C.ob(run_dir, m_skip), "com_Z.bin")],
+                  run_seed)
         resid = z2
+
+    # ---- stage-3 head (STAGE3 §3.4 walk order) ---------------------------
+    print("== head: final_norm -> lm_head -> statement.logit_binding ==")
+    rmsnorm_site(run_dir, None, "final_norm", resid, run_seed, c_eps)
+    normed_path = os.path.join(d, "final_norm.rmsnorm.out.i32.bin")
+
+    MM, RS, LB = "lm_head.matmul", "lm_head.rescaling", "statement.logit_binding"
+    logits64 = os.path.join(d, "lm_head.logits64.i64.bin")
+    logits_p = os.path.join(d, "lm_head.logits.i32.bin")
+    for mid, sub in ((MM, None), (RS, None), (LB, "rowmax")):
+        os.makedirs(C.ob(run_dir, mid, sub), exist_ok=True)
+    prove(MM, "fc", MM,
+          [C.drv("zkob_fc"), "prove", C.ob(run_dir, MM), None, normed_path,
+           C.wpath(run_dir, "lm_head", "int"), str(C.SEQ), str(C.EMBED),
+           str(C.VOCAB), P["gen1024"], P["gen32768"], P["q"], logits64], run_seed)
+    prove(RS, "rescale", RS,
+          [C.drv("zkob_rescale"), "prove", C.ob(run_dir, RS), None, logits64,
+           str(C.SEQ), str(C.VOCAB), str(C.LM_RESCALE_LOG), P["gen32768"], P["q"],
+           logits_p], run_seed)
+
+    logits = np.fromfile(logits_p, dtype=np.int32).reshape(C.SEQ, C.VOCAB)
+    if np.abs(logits).max() >= (1 << 25):
+        raise RuntimeError(f"logits leave the rowmax vpad envelope |z| < 2^25 "
+                           f"(max |logit| = {np.abs(logits).max()}) — completeness "
+                           "failure, report honestly")
+    # §3.3 completeness guard: the driver-emitted logits must reproduce the
+    # registered t* (a mismatch means chain and head pass diverged — a BUG,
+    # never a soundness event).
+    tstar = np.fromfile(P["tstar"], dtype=np.int32)
+    tstar_drv = np.argmax(logits, axis=1).astype(np.int32)
+    if not np.array_equal(tstar, tstar_drv):
+        bad = np.flatnonzero(tstar != tstar_drv)
+        raise RuntimeError(f"argmax(driver logits) != registered t* at rows "
+                           f"{bad[:8].tolist()} — head pass / chain divergence (bug)")
+    # tie-count duty (STAGE3 §2.4(ii) / PHASE0 §19): sum over rows of
+    # log2(#row maximizers) — the selector tie channel, proof-bytes-only.
+    mxv = logits.max(axis=1)
+    kmax = (logits == mxv[:, None]).sum(axis=1)
+    tie_bits = float(np.log2(kmax.astype(np.float64)).sum())
+    tie_rows = int((kmax > 1).sum())
+    print(f"  rowmax selector ties: {tie_rows}/{C.SEQ} rows tied, "
+          f"sum log2(#maximizers) = {tie_bits:.3f} bits")
+
+    prove(LB, "rowmax", LB,
+          [C.drv("zkob_rowmax"), "prove", C.ob(run_dir, LB, "rowmax"), None,
+           logits_p, str(C.SEQ), str(C.VOCAB_PAD), "vpad", str(C.VOCAB),
+           str(C.LOGIT_LEN_R), str(C.LOGIT_NPL), P["gen32768"], P["gen1024"],
+           P["q"], "-", P["tstar"]], run_seed)
 
     # prove manifest + totals
     proof_bytes = 0
@@ -319,6 +381,15 @@ def main():
         "run_seed": run_seed,
         "covered_ids": C.covered_ids(),
         "skipped_ids": C.skipped_ids(),
+        "rowmax_selector_ties": {
+            "note": "covert selector tie channel duty (STAGE3 §2.4(ii)): per rowmax "
+                    "instance, sum over rows of log2(#allowed maximizers); observable "
+                    "in proof bytes (com_S + openings) only, never in served tensors",
+            "statement.logit_binding": {
+                "rows": C.SEQ, "rows_with_ties": tie_rows,
+                "sum_log2_maximizers_bits": round(tie_bits, 4)},
+            "total_bits": round(tie_bits, 4),
+        },
         "runs": RUNS,
         "totals": {
             "prove_wall_s": round(time.time() - t_start, 2),

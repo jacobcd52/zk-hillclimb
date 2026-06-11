@@ -1,9 +1,14 @@
 """Shared definitions for the zk-hillclimb orchestrator.
 
-Stage 1 covered the MLP subgraph; stage 2 adds the full attention chain
-(ROPE_ATTENTION_DESIGN.md §7.3/§7.4) so both layers verify end-to-end and the
-only remaining non-waived gaps are lm_head.commitment_opening +
-statement.logit_binding.
+Stage 1 covered the MLP subgraph; stage 2 added the full attention chain
+(ROPE_ATTENTION_DESIGN.md §7.3/§7.4). Stage 3 (STAGE3_FAITHFUL_DESIGN.md §3,
+Part B) closes the manifest: final_norm.rmsnorm (the validated trio at the
+final-norm site, exact-R authority), lm_head.matmul + .rescaling +
+.commitment_opening (registered 768x32000 weight, gen32768), and
+statement.logit_binding (one zkob_rowmax vpad instance binding the registered
+served tokens t* = argmax(logits) at all 1024 positions). 56/56 non-waived
+checked + 3 covered-waived; the only waived-and-uncovered id left is
+embedding.lookup.
 
 The walk specification (which driver runs cover which manifest id, with which
 public constants, and which chain edges bind them) is defined ONCE here and
@@ -48,7 +53,15 @@ VALUES_RESCALE_LOG = 16
 SOFTMAX_LOW_E, SOFTMAX_LEN_E = -(1 << 19), 1 << 20
 SOFTMAX_LEN_R = 1 << 20
 
-GEN_FOR = {64: "gen64.bin", 1024: "gen1024.bin", 4096: "gen4096.bin"}
+# Stage 3 head (STAGE3_FAITHFUL_DESIGN §3.2/§3.3)
+VOCAB = 32000                                # real lm_head width (padded to 32768)
+VOCAB_PAD = 32768                            # gen32768; NCOL of the rowmax vpad grid
+LM_RESCALE_LOG = 16                          # logits 2^32 -> 2^16
+LOGIT_LEN_R = 1 << 20                        # rowmax limb table (two 20-bit limbs)
+LOGIT_NPL = 2
+
+GEN_FOR = {64: "gen64.bin", 1024: "gen1024.bin", 4096: "gen4096.bin",
+           32768: "gen32768.bin"}
 
 
 def pad2(n):
@@ -148,6 +161,16 @@ def weight_specs():
     return specs
 
 
+def head_weight_specs():
+    """Stage-3 registered weights: (wid, IN, OUT, gen size). Exported by
+    register.export_head (the pipeline never dumps model.norm / lm_head — its
+    commit loop only iterates model.model.layers[*] — so the provenance guard
+    for these two is re-export comparison only, a documented deviation,
+    STAGE3_FAITHFUL_DESIGN §3.1/§3.2)."""
+    return [("final_norm.g", 1, EMBED, 1024),
+            ("lm_head", EMBED, VOCAB, 32768)]
+
+
 def reg_paths(run_dir):
     reg = os.path.join(run_dir, "registration")
     return {
@@ -155,6 +178,8 @@ def reg_paths(run_dir):
         "gen64": os.path.join(reg, "gen64.bin"),
         "gen1024": os.path.join(reg, "gen1024.bin"),
         "gen4096": os.path.join(reg, "gen4096.bin"),
+        "gen32768": os.path.join(reg, "gen32768.bin"),
+        "tstar": os.path.join(reg, "tstar.i32.bin"),
         "q": os.path.join(reg, "q.bin"),
         "weights": os.path.join(reg, "weights"),
         "input": os.path.join(reg, "input.i32.bin"),
@@ -208,31 +233,41 @@ def covered_ids():
             f"layer{l}.mlp.down_proj.rescaling",
             f"layer{l}.mlp_skip.add",
         ]
+    # stage 3 (§3.4 walk order): final norm -> lm_head -> logit binding.
+    # final_norm.rmsnorm / lm_head.matmul / lm_head.rescaling are WAIVED in the
+    # frozen manifest but genuinely covered here (check_transcript's
+    # covered-waived NOTE path, §3.5); the opening + logit_binding ids are the
+    # last two non-waived ids.
+    ids += [
+        "final_norm.rmsnorm",
+        "lm_head.commitment_opening",
+        "lm_head.matmul",
+        "lm_head.rescaling",
+        "statement.logit_binding",
+    ]
     ids += ["statement.registered_weight_hash", "statement.prompt_binding"]
     return ids
 
 
 def skipped_ids():
-    """Stage 2: the ONLY non-waived manifest ids not covered. (embedding.lookup,
-    o_proj.*, final_norm, lm_head.matmul/rescaling are waived in the FROZEN
-    manifest itself and need no entry here.)"""
-    return {
-        "lm_head.commitment_opening": (
-            "stage2: lm_head not proven; a standalone opening with no matmul claim "
-            "to discharge would be vacuous — deferred with lm_head.matmul "
-            "(gen32768 not yet registered)"),
-        "statement.logit_binding": (
-            "stage2: no proven logits exist (lm_head skipped); reserved slot — will also "
-            "carry served-token == argmax binding (THREAT_MODEL_NOTES §1)"),
-    }
+    """Stage 3: nothing is stage-skipped. All 56 non-waived manifest ids are
+    covered (plus 3 covered-waived ids); the only waived-and-uncovered id,
+    embedding.lookup, is waived in the FROZEN manifest itself and needs no
+    entry here (no integer path exists for the random-input pipeline; prompt
+    binding remains the input digest via run_seed — STAGE3 §3.5)."""
+    return {}
 
 
 def rmsnorm_site(run_dir, l, site):
-    """site in {'input_norm', 'post_attn_norm'} -> (manifest_id, sub specs)."""
-    mid = f"layer{l}.{site}.rmsnorm"
+    """site in {'input_norm', 'post_attn_norm'} (per-layer) or 'final_norm'
+    with l=None (stage 3, §3.1) -> (manifest_id, sub specs)."""
+    if l is None:
+        mid, gwid = "final_norm.rmsnorm", "final_norm.g"
+    else:
+        mid, gwid = f"layer{l}.{site}.rmsnorm", f"layer{l}.{site}.g"
     P = reg_paths(run_dir)
     gC = str(EMBED)
-    com_g = wpath(run_dir, f"layer{l}.{site}.g", "com")
+    com_g = wpath(run_dir, gwid, "com")
     subs = {
         "rmsnorm": {
             "obdir": ob(run_dir, mid, "rmsnorm"), "seed_id": mid,
@@ -382,7 +417,7 @@ def attention_spec(run_dir, l):
     spec[VM]["merge"] = {
         "obdir": ob(run_dir, VM, "merge"), "seed_id": f"layer{l}.attn.merge",
         "verify": [drv("zkob_headmerge"), "verify", ob(run_dir, VM, "merge"), None,
-                   B, C_, HD, P["gen1024"], P["gen64"], P["q"]],
+                   B, C_, HD, "pi157", P["gen1024"], P["gen64"], P["q"]],
     }
 
     # -- §7.4 edges ----------------------------------------------------------
@@ -434,6 +469,69 @@ def attention_spec(run_dir, l):
                               "(closes edge S1's former OPEN BOUNDARY)",
                   os.path.join(vmd, "merge/com_O2.bin"),
                   os.path.join(ob(run_dir, f"layer{l}.attn_skip.add"), "com_attn_out.bin")))
+    return spec, edges
+
+
+def head_spec(run_dir):
+    """Stage-3 head (§3.4): final_norm trio -> lm_head fc + rescale ->
+    statement.logit_binding (zkob_rowmax vpad + registered t*).
+
+    Returns (spec_update, edges). Edge F0 chains the final-norm input to the
+    terminal residual commitment (layer1.mlp_skip com_Z — a FRESH gen1024
+    commitment of the same int32 tensor, so byte-equality applies; the skip
+    point check S2 validates the same file). L1 chains the committed logits
+    grid into the rowmax instance; the registered tstar.i32.bin is passed to
+    the rowmax verify as argv (hash-pinned via public.json — edge L2 is the
+    registration hash check itself, enforced fail-closed before any driver).
+    """
+    P = reg_paths(run_dir)
+    FN, MM, RS, LB = ("final_norm.rmsnorm", "lm_head.matmul",
+                      "lm_head.rescaling", "statement.logit_binding")
+    _, fn_subs = rmsnorm_site(run_dir, None, "final_norm")
+    spec = {
+        FN: fn_subs,
+        MM: {"fc": {
+            "obdir": ob(run_dir, MM), "seed_id": MM,
+            "verify": [drv("zkob_fc"), "verify", ob(run_dir, MM), None,
+                       str(SEQ), str(EMBED), str(VOCAB),
+                       wpath(run_dir, "lm_head", "com"),
+                       P["gen1024"], P["gen32768"], P["q"]],
+        }},
+        RS: {"rescale": {
+            "obdir": ob(run_dir, RS), "seed_id": RS,
+            "verify": [drv("zkob_rescale"), "verify", ob(run_dir, RS), None,
+                       str(SEQ), str(VOCAB), str(LM_RESCALE_LOG),
+                       P["gen32768"], P["q"]],
+        }},
+        LB: {"rowmax": {
+            "obdir": ob(run_dir, LB, "rowmax"), "seed_id": LB,
+            "verify": [drv("zkob_rowmax"), "verify", ob(run_dir, LB, "rowmax"), None,
+                       str(SEQ), str(VOCAB_PAD), "vpad", str(VOCAB),
+                       str(LOGIT_LEN_R), str(LOGIT_NPL),
+                       P["gen32768"], P["gen1024"], P["q"], P["tstar"]],
+        }},
+    }
+    fnd = ob(run_dir, FN)
+    edges = [
+        ("byte", FN, "F0: final_norm rmsnorm com_X == layer1.mlp_skip com_Z (terminal residual)",
+         os.path.join(fnd, "rmsnorm/com_X.bin"),
+         os.path.join(ob(run_dir, f"layer{N_LAYERS-1}.mlp_skip.add"), "com_Z.bin")),
+        ("byte", FN, "F1: final_norm com_g == registered final_norm.g-com",
+         os.path.join(fnd, "rmsnorm/com_g.bin"), wpath(run_dir, "final_norm.g", "com")),
+        ("byte", FN, "F2: final_norm com_W == wrescale com_X",
+         os.path.join(fnd, "rmsnorm/com_W.bin"), os.path.join(fnd, "wrescale/com_X.bin")),
+        ("byte", FN, "F3: final_norm com_Wr == wrescale com_Xr",
+         os.path.join(fnd, "rmsnorm/com_Wr.bin"), os.path.join(fnd, "wrescale/com_Xr.bin")),
+        ("byte", FN, "F4: final_norm com_Y == yrescale com_X",
+         os.path.join(fnd, "rmsnorm/com_Y.bin"), os.path.join(fnd, "yrescale/com_X.bin")),
+        ("byte", MM, "F5: final_norm yrescale com_Xr == lm_head fc com_X",
+         os.path.join(fnd, "yrescale/com_Xr.bin"), os.path.join(ob(run_dir, MM), "com_X.bin")),
+        ("byte", RS, "F6: lm_head fc com_Y == lm_head rescale com_X",
+         os.path.join(ob(run_dir, MM), "com_Y.bin"), os.path.join(ob(run_dir, RS), "com_X.bin")),
+        ("byte", LB, "L1: lm_head rescale com_Xr == logit_binding rowmax com_z (committed logits grid)",
+         os.path.join(ob(run_dir, RS), "com_Xr.bin"),
+         os.path.join(ob(run_dir, LB, "rowmax"), "com_z.bin")),
+    ]
     return spec, edges
 
 
@@ -526,5 +624,10 @@ def walk_spec(run_dir):
         edges.append(("skip", m_skip, f"{m_skip}: com_X(post_attn_norm) + com_Xr(down_rescale) == next com_X",
                       os.path.join(ob(run_dir, pid), "rmsnorm/com_X.bin"),
                       os.path.join(drs, "com_Xr.bin"), z_com))
+
+    # stage-3 head: final norm -> lm_head -> logit binding (§3.4)
+    h_spec, h_edges = head_spec(run_dir)
+    spec.update(h_spec)
+    edges += h_edges
 
     return spec, edges

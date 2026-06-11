@@ -1,8 +1,14 @@
-"""One-time registration for a ZK-verified llama-68m run (stage 2).
+"""One-time registration for a ZK-verified llama-68m run (stage 3).
 
-Produces <run>/registration/ (gens incl. gen64, integer weights + registered
-commitments, public input + its commitment, swiglu table, rope cos/sin tables,
-softmax exp table) and <run>/public.json whose sha256 IS the run seed.
+Produces <run>/registration/ (gens incl. gen64 + gen32768, integer weights +
+registered commitments incl. final_norm.g and lm_head, public input + its
+commitment, swiglu table, rope cos/sin tables, softmax exp table) and
+<run>/public.json whose sha256 IS the run seed. Stage 3 (STAGE3_FAITHFUL_DESIGN
+§3.2-§3.4) adds Phase B: the deterministic integer-chain head pass from the
+registered input through the registered weights to integer logits, whose
+argmax t* is written to registration/tstar.i32.bin and sha256-pinned INSIDE
+public.json BEFORE sealing — so run_seed = sha256(public.json) binds the
+served tokens into every FS transcript.
 See ORCHESTRATOR_DESIGN.md §2 + ROPE_ATTENTION_DESIGN.md §2.1/§4.5.
 
 Run with the pipeline env: /root/int-model-env/bin/python register.py [--run-id X]
@@ -57,7 +63,64 @@ def export_weights(run_dir, log=print):
             log(f"  exported {wid} ({IN}x{OUT}) [matches pipeline dump]")
         else:
             log(f"  exported {wid} ({IN}x{OUT}) [no pipeline dump to compare]")
-    return eps
+    return eps, model
+
+
+def export_head(run_dir, model, log=print):
+    """Stage-3 head weights (STAGE3 §3.1/§3.2): final_norm.g and lm_head with
+    the same pipeline export semantics. The pipeline never dumps model.norm or
+    lm_head (its commit loop only iterates model.model.layers[*]), so the
+    provenance guard here is re-export comparison only — documented deviation
+    from the byte-compare-vs-pipeline-dump rule."""
+    import torch
+    sf = 1 << C.LOG_SF
+    # PINNED assert (§3.1): do NOT silently inherit the per-layer eps value.
+    fin_eps = float(model.model.norm.variance_epsilon)
+    if fin_eps != 1e-6:
+        raise RuntimeError(f"model.model.norm.variance_epsilon = {fin_eps} != 1e-6 "
+                           "(STAGE3 §3.1 pins C_eps=3298535 for the final-norm site)")
+    g = torch.round(model.model.norm.weight.float() * sf).to(torch.int32)
+    g.cpu().numpy().astype(np.int32).tofile(C.wpath(run_dir, "final_norm.g", "int"))
+    log(f"  exported final_norm.g (1x{C.EMBED}) [no pipeline dump exists: re-export guard only]")
+    # llama-68m may tie lm_head to the embedding; HF materializes
+    # model.lm_head.weight either way — semantics identical, flag recorded (§6.8).
+    tied = bool(getattr(model.config, "tie_word_embeddings", False))
+    w = torch.round(model.lm_head.weight.float().T * sf).to(torch.int32).cpu().numpy()
+    assert w.shape == (C.EMBED, C.VOCAB), f"lm_head shape {w.shape} != ({C.EMBED},{C.VOCAB})"
+    w.astype(np.int32).tofile(C.wpath(run_dir, "lm_head", "int"))
+    log(f"  exported lm_head ({C.EMBED}x{C.VOCAB}) [tie_word_embeddings={tied}; "
+        "no pipeline dump exists: re-export guard only]")
+    return tied
+
+
+def head_pass(run_dir, c_eps, log=print):
+    """Phase B (STAGE3 §3.4): deterministic integer-chain head pass — the
+    validated numpy forward (measure/int_chain.py semantics) from the
+    registered input through the registered weights to integer logits, with
+    the final-norm advice R SWITCHED to the integer-exact bracket (§3.1; the
+    same witness-authority rule as the four per-layer sites). t*[i] =
+    np.argmax(logits[i, :V]) — lowest-index tie-break, matching zkob_rowmax's
+    canonical witness. Writes registration/tstar.i32.bin."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "measure"))
+    from int_chain import IntChain, imatmul, rescale
+    from prove_walk import compute_R
+    P = C.reg_paths(run_dir)
+    chain = IntChain(P["reg"])
+    chain.g_final = chain.w["final_norm.g"].astype(np.int64)
+    chain.w_lm = chain.w["lm_head"].reshape(C.EMBED, C.VOCAB)
+    x0 = np.fromfile(P["input"], dtype=np.int32).reshape(C.SEQ, C.EMBED)
+    t0 = time.time()
+    resid = chain.forward(x0)
+    R = compute_R(resid, c_eps).astype(np.int64)        # exact-R switch (§3.1)
+    normed = chain._rmsnorm_body(resid, R, gain=chain.g_final)
+    logits = rescale(imatmul(normed, chain.w_lm), C.LOG_SF)   # int @2^16
+    assert logits.shape == (C.SEQ, C.VOCAB)
+    tstar = np.argmax(logits, axis=1).astype(np.int32)  # lowest-index tie-break
+    tstar.tofile(P["tstar"])
+    log(f"  head pass: {time.time()-t0:.1f}s; logits in [{logits.min()}, {logits.max()}] "
+        f"@2^{C.LOG_SF}; t* -> {P['tstar']}")
+    return P["tstar"]
 
 
 def gen_input(run_dir, run_id, log=print):
@@ -127,16 +190,23 @@ def main():
     print(f"== register: {run_dir} ==")
 
     print("-- gens (ppgen) --")
-    for n, key in ((64, "gen64"), (1024, "gen1024"), (4096, "gen4096"), (1, "q")):
+    for n, key in ((64, "gen64"), (1024, "gen1024"), (4096, "gen4096"),
+                   (32768, "gen32768"), (1, "q")):
         C.run_driver([C.drv("ppgen"), str(n), P[key]], f"ppgen {n}")
 
     print("-- weights (pipeline semantics) --")
-    eps = export_weights(run_dir)
+    eps, model = export_weights(run_dir)
     c_eps = round(eps * C.EMBED * (1 << 32))
     print(f"  rms_norm_eps={eps} -> C_eps={c_eps}")
+    lm_head_tied = export_head(run_dir, model)
+    del model
 
     print("-- registered commitments (zkob_fc commit) --")
     for wid, _stem, IN, OUT, gen in C.weight_specs():
+        C.run_driver([C.drv("zkob_fc"), "commit", C.wpath(run_dir, wid, "int"),
+                      str(IN), str(OUT), P[C.GEN_FOR[gen].split(".")[0]],
+                      C.wpath(run_dir, wid, "com")], f"commit {wid}")
+    for wid, IN, OUT, gen in C.head_weight_specs():
         C.run_driver([C.drv("zkob_fc"), "commit", C.wpath(run_dir, wid, "int"),
                       str(IN), str(OUT), P[C.GEN_FOR[gen].split(".")[0]],
                       C.wpath(run_dir, wid, "com")], f"commit {wid}")
@@ -151,6 +221,9 @@ def main():
 
     print("-- attention tables (rope cos/sin + softmax exp) --")
     gen_attention_tables(run_dir)
+
+    print("-- phase B: head pass -> registered served tokens t* (STAGE3 §3.4) --")
+    head_pass(run_dir, c_eps)
 
     print("-- public.json --")
     public = {
@@ -173,10 +246,25 @@ def main():
             "VALUES_RESCALE_LOG": C.VALUES_RESCALE_LOG,
             "SOFTMAX_LOW_E": C.SOFTMAX_LOW_E, "SOFTMAX_LEN_E": C.SOFTMAX_LEN_E,
             "SOFTMAX_LEN_R": C.SOFTMAX_LEN_R,
+            # stage-3 head (STAGE3 §3.2/§3.3)
+            "VOCAB": C.VOCAB, "VOCAB_PAD": C.VOCAB_PAD,
+            "LM_RESCALE_LOG": C.LM_RESCALE_LOG,
+            "LOGIT_LEN_R": C.LOGIT_LEN_R, "LOGIT_NPL": C.LOGIT_NPL,
         },
-        "gens": {k: C.sha256_file(P[k]) for k in ("gen64", "gen1024", "gen4096", "q")},
+        "lm_head_tied": lm_head_tied,
+        "gens": {k: C.sha256_file(P[k])
+                 for k in ("gen64", "gen1024", "gen4096", "gen32768", "q")},
         "registered_weight_commitments": {
-            wid: C.sha256_file(C.wpath(run_dir, wid, "com")) for wid, *_ in C.weight_specs()
+            wid: C.sha256_file(C.wpath(run_dir, wid, "com"))
+            for wid in ([w for w, *_ in C.weight_specs()]
+                        + [w for w, *_ in C.head_weight_specs()])
+        },
+        "served_tokens": {
+            "file": "registration/tstar.i32.bin", "sha256": C.sha256_file(P["tstar"]),
+            "note": "t*[i] = argmax_v logits[i, v<32000] of the registered random input's "
+                    "logits (lowest-index tie-break), bound by statement.logit_binding "
+                    "(zkob_rowmax vpad + T-BIND) at all 1024 positions; for random-input "
+                    "runs these are the served tokens of the registered input (STAGE3 §3.3)",
         },
         "input": {"file": "registration/input.i32.bin", "sha256": C.sha256_file(P["input"]),
                   "commitment_sha256": C.sha256_file(P["com_input"])},
@@ -186,13 +274,9 @@ def main():
             "rope-sin-table.bin": C.sha256_file(P["rope_sin"]),
             "softmax-exp-table.bin": C.sha256_file(P["exp_table"]),
         },
-        "covered_subgraph": "stage2-full-forward (MLP + rmsnorm + skips + complete attention "
-                            "chain incl. rope/headslice/softmax/headmerge; lm_head pending)",
-        "future_slots": {
-            "statement.final_argmax": "reserved: served token == argmax(logits) within DiFR tolerance "
-                                      "(THREAT_MODEL_NOTES §1); lands with lm_head",
-            "lm_head.commitment_opening": "reserved: needs gen32768 registration; lands with lm_head.matmul",
-        },
+        "covered_subgraph": "stage3-full-statement (MLP + rmsnorm + skips + complete attention "
+                            "chain + final_norm + lm_head + served-token argmax binding; "
+                            "the only waived-and-uncovered manifest id is embedding.lookup)",
     }
     pj = os.path.join(run_dir, "public.json")
     with open(pj, "w") as f:

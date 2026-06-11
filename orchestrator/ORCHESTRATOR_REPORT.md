@@ -285,3 +285,24 @@ single invocation 123 s, under contention) — NOT raised, per instructions.
    slice layout; nothing downstream sees a scrambled head layout unproven).
 7. Disk: each full run ≈ 1.4 GiB (proofs 144 MiB + data 1.1 GiB + registration 95 MiB).
    Old stage-1 runs left in /root/zkorch untouched.
+
+## Stage 3 (2026-06-11) — manifest closed (coordinator-completed report)
+
+The stage-3 agent's session ended mid-validation; the coordinator fixed one wiring bug
+(headmerge's new <perm> arg missing at both call sites — added "pi157") and re-ran
+selftest.sh stage3-official1 end-to-end: **ALL PASS (12/12), checked=59 rejected=0
+skipped=0, VERDICT ACCEPT** (incl. tamper phases and restored re-ACCEPT).
+
+Coverage: 56/56 non-waived manifest ids + 3 covered-waived (final_norm.rmsnorm,
+lm_head.matmul, lm_head.rescaling); only embedding.lookup remains waived-uncovered.
+statement.logit_binding is live: t* = argmax(logits) at all 1024 positions, t*
+sha256-pinned in public.json, bound by a zkob_rowmax vpad instance (verify 4.38 s —
+the fast-IPA path).
+
+Headline timings (stage3-official1, sequential-honest): full-forward PROVE wall
+875.5 s ≈ 14.6 min (vs 743 s stage-2; Part B added ~132 s — well under the §5.1
+420-580 s prediction, the fast-IPA kernel being the difference), proof+commitments
+154.4 MB. Notable verify rows: lm_head.matmul 27.6 s, lm_head.rescaling 48.3 s
+(gen-32768 me_weights host loop — the §6.2 header-lift remains the known remedy),
+rowmax logit binding 4.4 s, final_norm trio 14.1 s.
+Selector-tie count: see prove_manifest.json (reported per §2.4 duty).

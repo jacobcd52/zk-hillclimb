@@ -1,24 +1,32 @@
-"""SEPARATE verifier process for a stage-2 run (full forward pass).
+"""SEPARATE verifier process for a stage-3 run (full forward pass + head).
 
 Reads ONLY: public.json, registration/ (hash-checked against public.json),
 proofs/, and the frozen harness manifest. NEVER reads data/ (witness files),
 never invokes a prove mode, re-derives run_seed = sha256(public.json) itself.
 
 Checks, in order:
- 1. registration hashes (gens incl. gen64, registered weight commitments,
-    input + its commitment, ALL public tables: swiglu, rope cos/sin, softmax
-    exp) vs public.json — mismatch => REJECT and STOP;
+ 1. registration hashes (gens incl. gen64 + gen32768, registered weight
+    commitments incl. final_norm.g + lm_head, input + its commitment, the
+    registered served tokens tstar.i32.bin — edge L2 of STAGE3 §3.4 — and ALL
+    public tables: swiglu, rope cos/sin, softmax exp) vs public.json —
+    mismatch => REJECT and STOP (fail-closed: a tampered t* never reaches a
+    driver);
  1b. structure: every registration/ path the walk consumes is hash-pinned,
     and proofs/ holds only contained regular files — violation => REJECT and STOP;
  2. every covered obligation's zkob_* verify with registered public inputs
     (incl. the attention chain: rope/headslice/headmerge + per-head fc,
     rescale, softmax — com_W for the per-head matmuls = the headslice's slice
-    commitment files, passed as path args and absorbed by the driver);
+    commitment files, passed as path args and absorbed by the driver; and the
+    stage-3 head: final_norm trio, lm_head fc vs the REGISTERED lm_head com,
+    lm_head rescale, zkob_rowmax vpad with the verifier's own registered t*);
  3. every chain edge: byte-equality (incl. ALL of ROPE_ATTENTION_DESIGN §7.4
-    A1..A15 — A15 closes edge S1's former open attention boundary), skip edges
-    via zkob_skip point checks, and com_W path bindings (A7/A12: structural
-    check that the fc verify argv references exactly the slice commitment);
- 4. statement obligations.
+    A1..A15 — A15 closes edge S1's former open attention boundary — and
+    STAGE3 §3.4 F0..F6 + L1), skip edges via zkob_skip point checks, and com_W
+    path bindings (A7/A12: structural check that the fc verify argv references
+    exactly the slice commitment);
+ 4. statement obligations. statement.logit_binding enters `checked` iff the
+    rowmax verify ACCEPTs AND edge L1 holds AND the registration hash check
+    covered tstar.i32.bin (§3.3 — the last is fail-closed in step 1).
 A manifest id enters `checked` only if ALL its composed sub-runs and ALL its
 edges pass (ROPE_ATTENTION_DESIGN §9.5).
 Emits transcript.json (harness format + explicit skipped/details sections).
@@ -91,7 +99,10 @@ def main():
     checks += [(f"weights.{wid}", C.wpath(run_dir, wid, "com"), h)
                for wid, h in public["registered_weight_commitments"].items()]
     checks += [("input.file", P["input"], public["input"]["sha256"]),
-               ("input.commitment", P["com_input"], public["input"]["commitment_sha256"])]
+               ("input.commitment", P["com_input"], public["input"]["commitment_sha256"]),
+               # STAGE3 §3.4 edge L2: the registered served tokens. Fail-closed
+               # here means a tampered t* never reaches the rowmax driver.
+               ("served_tokens.file", P["tstar"], public["served_tokens"]["sha256"])]
     checks += [(f"tables.{fname}", os.path.join(P["reg"], fname), h)
                for fname, h in sorted(public["tables"].items())]  # swiglu + rope cos/sin + exp
     for label, path, want in checks:
@@ -237,8 +248,19 @@ def main():
                                 f"({'ACCEPT' if ok else 'REJECT'})")
 
     # ---- 4. statement obligations ----------------------------------------
+    # statement.logit_binding (§3.3): ok iff its rowmax verify ACCEPTed AND
+    # edge L1 held (both already folded into its details above) AND the
+    # registration hash check covered tstar.i32.bin (fail-closed in step 1 —
+    # reaching this point implies it passed). Record the semantics explicitly.
+    lb = details.setdefault("statement.logit_binding", {"ok": True, "reasons": []})
+    lb["reasons"].append(
+        "t*[i] = argmax_{v<32000} logits[i,v] bound at all 1024 positions "
+        "(zkob_rowmax vpad T-BIND vs the verifier's own registered, hash-pinned "
+        "tstar.i32.bin; logits grid chained by edge L1; t* pinned into run_seed "
+        "via public.json — STAGE3 §3.3)")
+
     drivers_ok = all(details.get(m, {}).get("ok", False) for m in C.covered_ids()
-                     if m.startswith("layer"))
+                     if m.startswith(("layer", "final_norm", "lm_head")))
     d = details.setdefault("statement.prompt_binding", {"ok": True, "reasons": []})
     d["ok"] = drivers_ok
     d["reasons"].append(
@@ -261,6 +283,9 @@ def main():
         "details": details,
         "chain_edges": edge_results,
         "registration": {"ok": True, "n_hashes": len(checks)},
+        # harness-reader echo (§3.3): the registered served tokens this
+        # transcript's logit binding was verified against.
+        "served_tokens_sha256": public["served_tokens"]["sha256"],
         "timing": {**timing, "total_verify_wall_s": round(time.time() - t_start, 2)},
     }
     json.dump(transcript, open(out_path, "w"), indent=2)

@@ -1,10 +1,9 @@
 """Derive a stage-scope manifest from the FROZEN harness manifest: ids the
-current stage skips (common.skipped_ids() — for stage 2 ONLY
-lm_head.commitment_opening + statement.logit_binding; embedding has no
-non-waived manifest id, embedding.lookup is waived in the frozen manifest
-itself) are marked waived with an explicit reason. The harness file is never
-touched. Used to demonstrate exact format/coverage compliance of the declared
-stage scope; the full-manifest gap is reported separately and loudly.
+current stage skips (common.skipped_ids()) are marked waived with an explicit
+reason. The harness file is never touched. STAGE 3 NOTE: skipped_ids() is now
+EMPTY (the manifest is closed), so this script emits a plain copy and the
+selftest no longer uses it — check_transcript runs against the frozen manifest
+directly and must PASS. Kept for stage-1/2 reproducibility.
 
 Usage: python make_stage1_manifest.py <harness_manifest.json> <out.json>
 """
