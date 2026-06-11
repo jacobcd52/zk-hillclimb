@@ -1,17 +1,26 @@
-"""SEPARATE verifier process for a stage-1 run.
+"""SEPARATE verifier process for a stage-2 run (full forward pass).
 
 Reads ONLY: public.json, registration/ (hash-checked against public.json),
 proofs/, and the frozen harness manifest. NEVER reads data/ (witness files),
 never invokes a prove mode, re-derives run_seed = sha256(public.json) itself.
 
 Checks, in order:
- 1. registration hashes (gens, registered weight commitments, input + its
-    commitment, swiglu table) vs public.json — mismatch => REJECT and STOP;
+ 1. registration hashes (gens incl. gen64, registered weight commitments,
+    input + its commitment, ALL public tables: swiglu, rope cos/sin, softmax
+    exp) vs public.json — mismatch => REJECT and STOP;
  1b. structure: every registration/ path the walk consumes is hash-pinned,
     and proofs/ holds only contained regular files — violation => REJECT and STOP;
- 2. every covered obligation's zkob_* verify with registered public inputs;
- 3. every chain edge (byte-equality; skip edges via zkob_skip point checks);
+ 2. every covered obligation's zkob_* verify with registered public inputs
+    (incl. the attention chain: rope/headslice/headmerge + per-head fc,
+    rescale, softmax — com_W for the per-head matmuls = the headslice's slice
+    commitment files, passed as path args and absorbed by the driver);
+ 3. every chain edge: byte-equality (incl. ALL of ROPE_ATTENTION_DESIGN §7.4
+    A1..A15 — A15 closes edge S1's former open attention boundary), skip edges
+    via zkob_skip point checks, and com_W path bindings (A7/A12: structural
+    check that the fc verify argv references exactly the slice commitment);
  4. statement obligations.
+A manifest id enters `checked` only if ALL its composed sub-runs and ALL its
+edges pass (ROPE_ATTENTION_DESIGN §9.5).
 Emits transcript.json (harness format + explicit skipped/details sections).
 
 Run: /root/int-model-env/bin/python verify_walk.py <run_dir> [--out transcript.json]
@@ -77,12 +86,14 @@ def main():
 
     # ---- 1. registration hash checks ------------------------------------
     reg_ok = True
-    checks = [(f"gens.{k}", P[k], public["gens"][k]) for k in ("gen1024", "gen4096", "q")]
+    checks = [(f"gens.{k}", P[k], public["gens"][k])
+              for k in sorted(public["gens"])]                 # gen64/gen1024/gen4096/q
     checks += [(f"weights.{wid}", C.wpath(run_dir, wid, "com"), h)
                for wid, h in public["registered_weight_commitments"].items()]
     checks += [("input.file", P["input"], public["input"]["sha256"]),
-               ("input.commitment", P["com_input"], public["input"]["commitment_sha256"]),
-               ("tables.swiglu", P["table"], public["tables"]["swiglu-table.bin"])]
+               ("input.commitment", P["com_input"], public["input"]["commitment_sha256"])]
+    checks += [(f"tables.{fname}", os.path.join(P["reg"], fname), h)
+               for fname, h in sorted(public["tables"].items())]  # swiglu + rope cos/sin + exp
     for label, path, want in checks:
         got = C.sha256_file(path) if os.path.exists(path) else "<missing>"
         if got != want:
@@ -116,7 +127,8 @@ def main():
                 if rp:
                     used_reg.add(rp)
     for e in edges:
-        for p in e[3:]:
+        # file-path positions per kind: byte (a, b); skip (a, b, z); path (file,)
+        for p in (e[3:5] if e[0] == "byte" else e[3:6] if e[0] == "skip" else e[3:4]):
             rp = under_reg(p)
             if rp:
                 used_reg.add(rp)
@@ -184,6 +196,16 @@ def main():
                   and open(a, "rb").read() == open(b, "rb").read())
             if not ok:
                 fail(owner, f"chain byte-equality FAILED: {label}")
+        elif kind == "path":
+            # com_W path binding (§7.4 A7/A12): the named sub's verify argv must
+            # reference exactly this slice commitment file (and it must exist) —
+            # the driver absorbs the file, so a divergent operand already
+            # rejects at the transcript level; this check pins the wiring.
+            fpath, mid, sub = e[3], e[4], e[5]
+            argv = spec.get(mid, {}).get(sub, {}).get("verify") or []
+            ok = fpath in argv and os.path.exists(fpath)
+            if not ok:
+                fail(owner, f"com_W path binding FAILED: {label}")
         else:  # Pedersen point check: com_Z == com_A + com_B (Jacobian reps differ)
             a, b, z = e[3], e[4], e[5]
             if not (os.path.exists(a) and os.path.exists(b) and os.path.exists(z)):

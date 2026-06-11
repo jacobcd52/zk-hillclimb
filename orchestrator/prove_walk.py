@@ -1,13 +1,18 @@
-"""Prover walk over the stage-1 covered subgraph (MLP path + rmsnorm sites +
-skips, both layers) on real llama-68m weights + the registered run input.
+"""Prover walk over the stage-2 covered subgraph: the FULL forward pass of
+both layers (rmsnorm sites, complete attention chain, MLP path, skips) on real
+llama-68m weights + the registered run input.
 
-Witness authority (ORCHESTRATOR_DESIGN.md §3):
+Witness authority (ORCHESTRATOR_DESIGN.md §3, extended by ROPE_ATTENTION_DESIGN
+§1.5/§7.3):
  - chain data files come from the drivers (fc Y.i64, rescale Xr.i32, glu H.i64,
-   rmsnorm W.i64/Y.i64);
+   rmsnorm W.i64/Y.i64, rope Y64.i64, headslice slice files, softmax P.i32,
+   headmerge O2 = attn_out.i32);
  - the orchestrator computes only: skip sums, the rmsnorm advice R
-   (INTEGER-EXACT bracket, replacing the pipeline's float 1/sqrt), and the
-   unproven attention segment (m68-pipeline.py lines 137-159 replicated
-   verbatim; declared SKIPPED in the transcript).
+   (INTEGER-EXACT bracket), and the int32->int64 widening shim between the two
+   score rescales (lossless; data files are not trust-carrying).
+ - attn_out comes from the INTEGER chain (headmerge O2 output) — the stage-1
+   python-float attention segment is gone; com_attn_out is chained to the
+   merge's com_O2 by edge A15 (edge S1's former open boundary is closed).
 
 Run: /root/int-model-env/bin/python prove_walk.py <run_dir>
 """
@@ -64,62 +69,119 @@ def widen_i32_to_i64(src, dst):
     np.fromfile(src, dtype=np.int32).astype(np.int64).tofile(dst)
 
 
-def rescale_int(y_i64, log_sf):
-    """rescaling_kernel semantics: rem in [-sf/2, sf/2), Xr = (y - rem)/sf."""
-    hsf = 1 << (log_sf - 1)
-    return np.floor_divide(y_i64 + hsf, 1 << log_sf)
+def attention_chain(run_dir, l, attn_in_path, run_seed, cst, log=print):
+    """The §7.3 integer attention chain (ROPE_ATTENTION_DESIGN), fully proven:
 
+      q/k/v fc+rescale -> rope.q/k (+rescales) -> headslice -> per head:
+      scores fc -> rescale13 -> [widen] -> rescale10 -> softmax -> values fc
+      -> values rescale -> headmerge -> attn_out (int32 @2^16)
 
-def rotate_half(x):
-    import torch
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2:]
-    return torch.cat((-x2, x1), dim=-1)
+    Every chain file comes from the driver that proves it; the orchestrator
+    only widens int32->int64 between the two score rescales (lossless shim).
+    Returns the headmerge O2 output — THE attn_out (witness-authority rule:
+    this replaces the pipeline's float attention; com_O2 == com_attn_out, A15).
+    """
+    P = C.reg_paths(run_dir)
+    d = os.path.join(run_dir, "data")
+    B, Cw, HD = str(C.SEQ), str(C.EMBED), str(C.HEAD_DIM)
+    SM = f"layer{l}.attn.scores_matmul"
+    SX = f"layer{l}.attn.softmax"
+    VM = f"layer{l}.attn.values_matmul"
 
-
-def attention_data(run_dir, l, attn_in_i32, rotary, n_heads, head_dim, log=print):
-    """m68-pipeline.py lines 132-159 replicated verbatim (same torch ops/dtypes
-    on GPU), with the upstream self-attn `linear` step (zkFC + Rescaling 2^16)
-    reproduced exactly: int matmul (exact in float64: |prod| < 2^37·768 < 2^53)
-    then the driver rescale. UNPROVEN — attention is SKIPPED in stage 1."""
-    import torch
-    t0 = time.time()
-    seq, embed = C.SEQ, C.EMBED
-    X = torch.from_numpy(attn_in_i32.astype(np.float64)).to(0)
-    qkv = {}
+    # q/k/v projections: zkob_fc (registered weights) + rescale 2^16
+    proj_out = {}
     for pj in ("q_proj", "k_proj", "v_proj"):
-        W = np.fromfile(C.wpath(run_dir, f"layer{l}.attn.{pj}", "int"), dtype=np.int32)
-        Wt = torch.from_numpy(W.astype(np.float64).reshape(embed, embed)).to(0)
-        Y = torch.round(X @ Wt).to(torch.int64)          # exact integer product
-        qkv[pj] = rescale_int(Y.cpu().numpy(), C.LOG_SF).astype(np.int32)
-    # --- lines 137-146 ---
-    Q = torch.from_numpy(qkv["q_proj"]).to(0).reshape(seq, embed) / (1 << 16)
-    K = torch.from_numpy(qkv["k_proj"]).to(0).reshape(seq, embed) / (1 << 16)
-    V = torch.from_numpy(qkv["v_proj"]).to(0).reshape(seq, embed) / (1 << 16)
-    Q = Q.view(seq, n_heads, head_dim).transpose(0, 1)
-    K = K.view(seq, n_heads, head_dim).transpose(0, 1)
-    V = V.view(seq, n_heads, head_dim).transpose(0, 1)
-    pos = torch.arange(seq, device=0).unsqueeze(0)
-    cos, sin = rotary(torch.randn(1, seq, embed, device=0), pos)
-    Q, K = Q * cos + rotate_half(Q) * sin, K * cos + rotate_half(K) * sin
-    Q, K = Q.to(torch.float64), K.to(torch.float64)
-    # --- lines 147-155 (to_int64/to_float of fileio_utils inlined verbatim) ---
-    A = torch.round((Q @ K.transpose(-2, -1)).to(torch.float64) * (1 << 16)).to(torch.int64)
-    mask = torch.triu(torch.ones(seq, seq, device=0, dtype=bool), diagonal=1)
-    A -= torch.max(A * ~mask, dim=-1, keepdim=True).values
-    shift = math.sqrt(head_dim) * torch.log(
-        (torch.exp((A / (1 << 20)).to(torch.float32) / math.sqrt(head_dim)) * ~mask)
-        .sum(axis=-1, keepdim=True))
-    A -= torch.round(shift.to(torch.float64) * (1 << 20)).to(torch.int64)
-    attn = (torch.exp((A / (1 << 20)).to(torch.float64) / math.sqrt(head_dim)).float()) * ~mask
-    av = attn @ V
-    attn = (torch.round(av.to(torch.float64) * (1 << 16)).to(torch.int64) / (1 << 16)).to(torch.float64)
-    # --- lines 156-159 incl. the pipeline's double transpose/reshape quirk ---
-    attn = attn.transpose(0, 1).contiguous().view(seq, embed)
-    attn = attn.transpose(0, 1).reshape(seq, embed)
-    out = torch.round(attn * (1 << 16)).to(torch.int32).cpu().numpy()
-    log(f"  [{time.time()-t0:7.2f}s] attention data layer{l} (python, UNPROVEN)")
-    return out
+        mm, rs = f"layer{l}.attn.{pj}.matmul", f"layer{l}.attn.{pj}.rescaling"
+        y = os.path.join(d, f"{mm}.Y.i64.bin")
+        o = os.path.join(d, f"{rs}.out.i32.bin")
+        os.makedirs(C.ob(run_dir, mm), exist_ok=True)
+        os.makedirs(C.ob(run_dir, rs), exist_ok=True)
+        prove(mm, "fc", mm,
+              [C.drv("zkob_fc"), "prove", C.ob(run_dir, mm), None, attn_in_path,
+               C.wpath(run_dir, f"layer{l}.attn.{pj}", "int"),
+               B, Cw, Cw, P["gen1024"], P["gen1024"], P["q"], y], run_seed)
+        prove(rs, "rescale", rs,
+              [C.drv("zkob_rescale"), "prove", C.ob(run_dir, rs), None, y,
+               B, Cw, str(C.QKV_RESCALE_LOG), P["gen1024"], P["q"], o], run_seed)
+        proj_out[pj] = o
+
+    # RoPE on Q and K (registered cos/sin tables) + rescale 2^16
+    roped = {}
+    for t, pj in (("q", "q_proj"), ("k", "k_proj")):
+        y64 = os.path.join(d, f"layer{l}.attn.rope.{t}.Y64.i64.bin")
+        o = os.path.join(d, f"layer{l}.attn.rope.{t}.out.i32.bin")
+        os.makedirs(C.ob(run_dir, SM, f"rope.{t}"), exist_ok=True)
+        os.makedirs(C.ob(run_dir, SM, f"rope.{t}.rescale"), exist_ok=True)
+        prove(SM, f"rope.{t}", f"layer{l}.attn.rope.{t}",
+              [C.drv("zkob_rope"), "prove", C.ob(run_dir, SM, f"rope.{t}"), None,
+               proj_out[pj], B, Cw, HD, P["rope_cos"], P["rope_sin"],
+               P["gen1024"], P["q"], y64], run_seed)
+        prove(SM, f"rope.{t}.rescale", f"layer{l}.attn.rope.{t}.rescale",
+              [C.drv("zkob_rescale"), "prove", C.ob(run_dir, SM, f"rope.{t}.rescale"), None,
+               y64, B, Cw, str(C.ROPE_RESCALE_LOG), P["gen1024"], P["q"], o], run_seed)
+        roped[t] = o
+
+    # headslice: 12x {Qh, KhT, Vh} slice files + commitments pinned to Qr/Kr/V
+    slice_dir = os.path.join(d, f"layer{l}.attn.slice")
+    os.makedirs(slice_dir, exist_ok=True)
+    os.makedirs(C.ob(run_dir, SM, "slice"), exist_ok=True)
+    prove(SM, "slice", f"layer{l}.attn.slice",
+          [C.drv("zkob_headslice"), "prove", C.ob(run_dir, SM, "slice"), None,
+           roped["q"], roped["k"], proj_out["v_proj"], B, Cw, HD,
+           P["gen1024"], P["gen64"], P["q"], slice_dir + os.sep], run_seed)
+
+    # per head: scores fc -> rescale13 -> widen -> rescale10 -> softmax
+    #           -> values fc -> values rescale
+    values_dir = os.path.join(d, f"layer{l}.attn.values")
+    os.makedirs(values_dir, exist_ok=True)
+    for hh in C.HH:
+        z = os.path.join(d, f"layer{l}.attn.scores.h{hh}.z.i64.bin")
+        z13 = os.path.join(d, f"layer{l}.attn.scores.h{hh}.z13.i32.bin")
+        z13w = os.path.join(d, f"layer{l}.attn.scores.h{hh}.z13.i64.bin")
+        z_ = os.path.join(d, f"layer{l}.attn.scores.h{hh}.z_.i32.bin")
+        pp = os.path.join(d, f"layer{l}.attn.softmax.h{hh}.P.i32.bin")
+        out64 = os.path.join(d, f"layer{l}.attn.values.h{hh}.out64.i64.bin")
+        for mid, sub in ((SM, f"fc.h{hh}"), (SX, f"rescale13.h{hh}"),
+                         (SX, f"rescale10.h{hh}"), (SX, f"softmax.h{hh}"),
+                         (VM, f"fc.h{hh}"), (VM, f"rescale.h{hh}")):
+            os.makedirs(C.ob(run_dir, mid, sub), exist_ok=True)
+        prove(SM, f"fc.h{hh}", f"layer{l}.attn.scores.h{hh}",
+              [C.drv("zkob_fc"), "prove", C.ob(run_dir, SM, f"fc.h{hh}"), None,
+               os.path.join(slice_dir, f"Qh{hh}.i32.bin"),
+               os.path.join(slice_dir, f"KhT{hh}.i32.bin"),
+               B, HD, B, P["gen64"], P["gen1024"], P["q"], z], run_seed)
+        prove(SX, f"rescale13.h{hh}", f"layer{l}.attn.scores_rescale13.h{hh}",
+              [C.drv("zkob_rescale"), "prove", C.ob(run_dir, SX, f"rescale13.h{hh}"), None,
+               z, B, B, str(C.SCORES_RESCALE13_LOG), P["gen1024"], P["q"], z13], run_seed)
+        widen_i32_to_i64(z13, z13w)   # SOFTMAX_DESIGN §7.3 widening shim
+        prove(SX, f"rescale10.h{hh}", f"layer{l}.attn.scores_rescale10.h{hh}",
+              [C.drv("zkob_rescale"), "prove", C.ob(run_dir, SX, f"rescale10.h{hh}"), None,
+               z13w, B, B, str(C.SCORES_RESCALE10_LOG), P["gen1024"], P["q"], z_], run_seed)
+        zv = np.fromfile(z_, dtype=np.int32)
+        if zv.min() < C.SOFTMAX_LOW_E or zv.max() >= C.SOFTMAX_LOW_E + C.SOFTMAX_LEN_E:
+            raise RuntimeError(f"layer{l} h{hh}: scores leave the exp-table domain "
+                               f"[{zv.min()}, {zv.max()}] — completeness failure, report honestly")
+        prove(SX, f"softmax.h{hh}", f"layer{l}.attn.softmax.h{hh}",
+              [C.drv("zkob_softmax"), "prove", C.ob(run_dir, SX, f"softmax.h{hh}"), None,
+               z_, B, B, str(C.SOFTMAX_LOW_E), str(C.SOFTMAX_LEN_E), P["exp_table"],
+               str(C.SOFTMAX_LEN_R), P["gen1024"], P["q"], pp], run_seed)
+        prove(VM, f"fc.h{hh}", f"layer{l}.attn.values.h{hh}",
+              [C.drv("zkob_fc"), "prove", C.ob(run_dir, VM, f"fc.h{hh}"), None,
+               pp, os.path.join(slice_dir, f"Vh{hh}.i32.bin"),
+               B, B, HD, P["gen1024"], P["gen64"], P["q"], out64], run_seed)
+        prove(VM, f"rescale.h{hh}", f"layer{l}.attn.values_rescale.h{hh}",
+              [C.drv("zkob_rescale"), "prove", C.ob(run_dir, VM, f"rescale.h{hh}"), None,
+               out64, B, HD, str(C.VALUES_RESCALE_LOG), P["gen64"], P["q"],
+               os.path.join(values_dir, f"out{hh}.i32.bin")], run_seed)
+
+    # headmerge: concat + the line-157 permutation -> attn_out (com_O2)
+    attn_path = os.path.join(d, f"layer{l}.attn_out.i32.bin")
+    os.makedirs(C.ob(run_dir, VM, "merge"), exist_ok=True)
+    prove(VM, "merge", f"layer{l}.attn.merge",
+          [C.drv("zkob_headmerge"), "prove", C.ob(run_dir, VM, "merge"), None,
+           os.path.join(values_dir, "out"), B, Cw, HD,
+           P["gen1024"], P["gen64"], P["q"], attn_path], run_seed)
+    return np.fromfile(attn_path, dtype=np.int32).reshape(C.SEQ, C.EMBED)
 
 
 def rmsnorm_site(run_dir, l, site, X_i32, run_seed, c_eps, log=print):
@@ -169,24 +231,16 @@ def main():
     print(f"== prove_walk {run_dir} ==\n  run_seed = {run_seed}")
     t_start = time.time()
 
-    import torch  # noqa: F401  (env check before the heavy model load)
-    from transformers import AutoModelForCausalLM
-    model = AutoModelForCausalLM.from_pretrained(public["model"],
-                                                 cache_dir=os.path.join(C.ZKLLM, "model-storage")).to(0)
-    rotary = model.model.rotary_emb
-    n_heads = model.config.num_attention_heads
-    head_dim = C.EMBED // n_heads
-
     resid = np.fromfile(P["input"], dtype=np.int32).reshape(C.SEQ, C.EMBED)
 
     for l in range(C.N_LAYERS):
         print(f"== layer {l} ==")
         # input rmsnorm -> attention input
-        attn_in = rmsnorm_site(run_dir, l, "input_norm", resid, run_seed, c_eps)
+        rmsnorm_site(run_dir, l, "input_norm", resid, run_seed, c_eps)
+        attn_in_path = os.path.join(d, f"layer{l}.input_norm.rmsnorm.out.i32.bin")
 
-        # attention (UNPROVEN data segment) + its skip
-        attn_out = attention_data(run_dir, l, attn_in, rotary, n_heads, head_dim)
-        attn_out.tofile(os.path.join(d, f"layer{l}.attn_out.i32.bin"))
+        # attention: the full §7.3 integer chain; attn_out = headmerge O2
+        attn_out = attention_chain(run_dir, l, attn_in_path, run_seed, cst)
         a_skip = f"layer{l}.attn_skip.add"
         os.makedirs(C.ob(run_dir, a_skip), exist_ok=True)
         prove(a_skip, "commit-attn-out", a_skip,

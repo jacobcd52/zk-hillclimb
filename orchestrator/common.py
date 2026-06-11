@@ -1,4 +1,9 @@
-"""Shared definitions for the zk-hillclimb orchestrator (stage 1: MLP subgraph).
+"""Shared definitions for the zk-hillclimb orchestrator.
+
+Stage 1 covered the MLP subgraph; stage 2 adds the full attention chain
+(ROPE_ATTENTION_DESIGN.md §7.3/§7.4) so both layers verify end-to-end and the
+only remaining non-waived gaps are lm_head.commitment_opening +
+statement.logit_binding.
 
 The walk specification (which driver runs cover which manifest id, with which
 public constants, and which chain edges bind them) is defined ONCE here and
@@ -31,7 +36,19 @@ DOWN_RESCALE_LOG = 16
 SWIGLU_LOW, SWIGLU_LEN = -(1 << 21), 1 << 22
 N_LAYERS = 2
 
-GEN_FOR = {1024: "gen1024.bin", 4096: "gen4096.bin"}
+# Attention chain (ROPE_ATTENTION_DESIGN.md; SOFTMAX_DESIGN.md §1.1/§7.3)
+HEAD_DIM = 64
+N_HEADS = EMBED // HEAD_DIM                  # 12
+HH = [f"{h:02d}" for h in range(N_HEADS)]    # two-digit head labels, 00..11
+QKV_RESCALE_LOG = 16
+ROPE_RESCALE_LOG = 16
+SCORES_RESCALE13_LOG = 13                    # scores 2^32 -> 2^19
+SCORES_RESCALE10_LOG = 10                    # then 2^19 -> 2^9 (widening shim between)
+VALUES_RESCALE_LOG = 16
+SOFTMAX_LOW_E, SOFTMAX_LEN_E = -(1 << 19), 1 << 20
+SOFTMAX_LEN_R = 1 << 20
+
+GEN_FOR = {64: "gen64.bin", 1024: "gen1024.bin", 4096: "gen4096.bin"}
 
 
 def pad2(n):
@@ -135,6 +152,7 @@ def reg_paths(run_dir):
     reg = os.path.join(run_dir, "registration")
     return {
         "reg": reg,
+        "gen64": os.path.join(reg, "gen64.bin"),
         "gen1024": os.path.join(reg, "gen1024.bin"),
         "gen4096": os.path.join(reg, "gen4096.bin"),
         "q": os.path.join(reg, "q.bin"),
@@ -142,6 +160,9 @@ def reg_paths(run_dir):
         "input": os.path.join(reg, "input.i32.bin"),
         "com_input": os.path.join(reg, "com_input.bin"),
         "table": os.path.join(reg, "swiglu-table.bin"),
+        "rope_cos": os.path.join(reg, "rope-cos-table.bin"),
+        "rope_sin": os.path.join(reg, "rope-sin-table.bin"),
+        "exp_table": os.path.join(reg, "softmax-exp-table.bin"),
     }
 
 
@@ -162,8 +183,17 @@ def ob(run_dir, mid, sub=None):
 def covered_ids():
     ids = []
     for l in range(N_LAYERS):
+        ids += [f"layer{l}.input_norm.rmsnorm"]
+        for pj in ("q_proj", "k_proj", "v_proj"):
+            ids += [
+                f"layer{l}.attn.{pj}.commitment_opening",
+                f"layer{l}.attn.{pj}.matmul",
+                f"layer{l}.attn.{pj}.rescaling",
+            ]
         ids += [
-            f"layer{l}.input_norm.rmsnorm",
+            f"layer{l}.attn.scores_matmul",
+            f"layer{l}.attn.softmax",
+            f"layer{l}.attn.values_matmul",
             f"layer{l}.attn_skip.add",
             f"layer{l}.post_attn_norm.rmsnorm",
             f"layer{l}.mlp.gate_proj.commitment_opening",
@@ -183,19 +213,18 @@ def covered_ids():
 
 
 def skipped_ids():
-    sk = {}
-    for l in range(N_LAYERS):
-        for pj in ("q_proj", "k_proj", "v_proj"):
-            for kind in ("commitment_opening", "matmul", "rescaling"):
-                sk[f"layer{l}.attn.{pj}.{kind}"] = "stage1: attention chain pending (zkob_softmax in flight)"
-        sk[f"layer{l}.attn.scores_matmul"] = "stage1: attention chain pending"
-        sk[f"layer{l}.attn.softmax"] = "stage1: zkob_softmax being built by a parallel agent"
-        sk[f"layer{l}.attn.values_matmul"] = "stage1: attention chain pending"
-    sk["lm_head.commitment_opening"] = ("stage1: lm_head not proven; a standalone opening with no "
-                                        "matmul claim to discharge would be vacuous — deferred with lm_head.matmul")
-    sk["statement.logit_binding"] = ("stage1: no proven logits exist (lm_head skipped); reserved slot — will also "
-                                     "carry served-token == argmax binding (THREAT_MODEL_NOTES §1)")
-    return sk
+    """Stage 2: the ONLY non-waived manifest ids not covered. (embedding.lookup,
+    o_proj.*, final_norm, lm_head.matmul/rescaling are waived in the FROZEN
+    manifest itself and need no entry here.)"""
+    return {
+        "lm_head.commitment_opening": (
+            "stage2: lm_head not proven; a standalone opening with no matmul claim "
+            "to discharge would be vacuous — deferred with lm_head.matmul "
+            "(gen32768 not yet registered)"),
+        "statement.logit_binding": (
+            "stage2: no proven logits exist (lm_head skipped); reserved slot — will also "
+            "carry served-token == argmax binding (THREAT_MODEL_NOTES §1)"),
+    }
 
 
 def rmsnorm_site(run_dir, l, site):
@@ -245,6 +274,169 @@ def fc_block(run_dir, l, proj, IN, OUT, rs_log):
     }
 
 
+def attn_proj_block(run_dir, l, pj):
+    """attn q/k/v_proj -> matmul id (fc vs REGISTERED com_W) + rescaling id."""
+    P = reg_paths(run_dir)
+    mid_mm = f"layer{l}.attn.{pj}.matmul"
+    mid_rs = f"layer{l}.attn.{pj}.rescaling"
+    com_W = wpath(run_dir, f"layer{l}.attn.{pj}", "com")
+    return {
+        mid_mm: {"fc": {
+            "obdir": ob(run_dir, mid_mm), "seed_id": mid_mm,
+            "verify": [drv("zkob_fc"), "verify", ob(run_dir, mid_mm), None,
+                       str(SEQ), str(EMBED), str(EMBED), com_W,
+                       P["gen1024"], P["gen1024"], P["q"]],
+        }},
+        mid_rs: {"rescale": {
+            "obdir": ob(run_dir, mid_rs), "seed_id": mid_rs,
+            "verify": [drv("zkob_rescale"), "verify", ob(run_dir, mid_rs), None,
+                       str(SEQ), str(EMBED), str(QKV_RESCALE_LOG), P["gen1024"], P["q"]],
+        }},
+    }
+
+
+def attention_spec(run_dir, l):
+    """The §7.3 integer attention chain for layer l, composed under the frozen
+    manifest ids per ROPE_ATTENTION_DESIGN §4.0:
+
+      scores_matmul  = rope.q/k (+rescales) + headslice + 12 scores fc
+      softmax        = 12 x (rescale13 + rescale10 + softmax)
+      values_matmul  = 12 x (values fc + values rescale) + headmerge
+
+    Returns (spec_update, edges) with EVERY §7.4 edge A1..A15. Edge kinds:
+      ("byte", owner, label, a, b)            byte-equality of commitment files
+      ("path", owner, label, file, mid, sub)  com_W path binding: the named
+        sub's verify argv must reference `file` (structural; the driver absorbs
+        the file so a divergent operand rejects at the transcript level)
+    """
+    P = reg_paths(run_dir)
+    SM = f"layer{l}.attn.scores_matmul"
+    SX = f"layer{l}.attn.softmax"
+    VM = f"layer{l}.attn.values_matmul"
+    B, C_, HD = str(SEQ), str(EMBED), str(HEAD_DIM)
+    spec = {SM: {}, SX: {}, VM: {}}
+    edges = []
+
+    # -- scores_matmul subs: rope.q/k (+rescale), slice, fc.h{hh} -----------
+    for t in ("q", "k"):
+        spec[SM][f"rope.{t}"] = {
+            "obdir": ob(run_dir, SM, f"rope.{t}"), "seed_id": f"layer{l}.attn.rope.{t}",
+            "verify": [drv("zkob_rope"), "verify", ob(run_dir, SM, f"rope.{t}"), None,
+                       B, C_, HD, P["rope_cos"], P["rope_sin"], P["gen1024"], P["q"]],
+        }
+        spec[SM][f"rope.{t}.rescale"] = {
+            "obdir": ob(run_dir, SM, f"rope.{t}.rescale"),
+            "seed_id": f"layer{l}.attn.rope.{t}.rescale",
+            "verify": [drv("zkob_rescale"), "verify", ob(run_dir, SM, f"rope.{t}.rescale"), None,
+                       B, C_, str(ROPE_RESCALE_LOG), P["gen1024"], P["q"]],
+        }
+    spec[SM]["slice"] = {
+        "obdir": ob(run_dir, SM, "slice"), "seed_id": f"layer{l}.attn.slice",
+        "verify": [drv("zkob_headslice"), "verify", ob(run_dir, SM, "slice"), None,
+                   B, C_, HD, P["gen1024"], P["gen64"], P["q"]],
+    }
+    for hh in HH:
+        spec[SM][f"fc.h{hh}"] = {
+            "obdir": ob(run_dir, SM, f"fc.h{hh}"), "seed_id": f"layer{l}.attn.scores.h{hh}",
+            "verify": [drv("zkob_fc"), "verify", ob(run_dir, SM, f"fc.h{hh}"), None,
+                       B, HD, B, os.path.join(ob(run_dir, SM, "slice"), f"com_KhT{hh}.bin"),
+                       P["gen64"], P["gen1024"], P["q"]],
+        }
+
+    # -- softmax subs: rescale13/rescale10/softmax per head (SOFTMAX §4.0) --
+    for hh in HH:
+        spec[SX][f"rescale13.h{hh}"] = {
+            "obdir": ob(run_dir, SX, f"rescale13.h{hh}"),
+            "seed_id": f"layer{l}.attn.scores_rescale13.h{hh}",
+            "verify": [drv("zkob_rescale"), "verify", ob(run_dir, SX, f"rescale13.h{hh}"), None,
+                       B, B, str(SCORES_RESCALE13_LOG), P["gen1024"], P["q"]],
+        }
+        spec[SX][f"rescale10.h{hh}"] = {
+            "obdir": ob(run_dir, SX, f"rescale10.h{hh}"),
+            "seed_id": f"layer{l}.attn.scores_rescale10.h{hh}",
+            "verify": [drv("zkob_rescale"), "verify", ob(run_dir, SX, f"rescale10.h{hh}"), None,
+                       B, B, str(SCORES_RESCALE10_LOG), P["gen1024"], P["q"]],
+        }
+        spec[SX][f"softmax.h{hh}"] = {
+            "obdir": ob(run_dir, SX, f"softmax.h{hh}"),
+            "seed_id": f"layer{l}.attn.softmax.h{hh}",
+            "verify": [drv("zkob_softmax"), "verify", ob(run_dir, SX, f"softmax.h{hh}"), None,
+                       B, B, str(SOFTMAX_LOW_E), str(SOFTMAX_LEN_E), P["exp_table"],
+                       str(SOFTMAX_LEN_R), P["gen1024"], P["q"]],
+        }
+
+    # -- values_matmul subs: fc/rescale per head + merge --------------------
+    for hh in HH:
+        spec[VM][f"fc.h{hh}"] = {
+            "obdir": ob(run_dir, VM, f"fc.h{hh}"), "seed_id": f"layer{l}.attn.values.h{hh}",
+            "verify": [drv("zkob_fc"), "verify", ob(run_dir, VM, f"fc.h{hh}"), None,
+                       B, B, HD, os.path.join(ob(run_dir, SM, "slice"), f"com_Vh{hh}.bin"),
+                       P["gen1024"], P["gen64"], P["q"]],
+        }
+        spec[VM][f"rescale.h{hh}"] = {
+            "obdir": ob(run_dir, VM, f"rescale.h{hh}"),
+            "seed_id": f"layer{l}.attn.values_rescale.h{hh}",
+            "verify": [drv("zkob_rescale"), "verify", ob(run_dir, VM, f"rescale.h{hh}"), None,
+                       B, HD, str(VALUES_RESCALE_LOG), P["gen64"], P["q"]],
+        }
+    spec[VM]["merge"] = {
+        "obdir": ob(run_dir, VM, "merge"), "seed_id": f"layer{l}.attn.merge",
+        "verify": [drv("zkob_headmerge"), "verify", ob(run_dir, VM, "merge"), None,
+                   B, C_, HD, P["gen1024"], P["gen64"], P["q"]],
+    }
+
+    # -- §7.4 edges ----------------------------------------------------------
+    nid = f"layer{l}.input_norm.rmsnorm"
+    attn_in_com = os.path.join(ob(run_dir, nid), "yrescale/com_Xr.bin")
+    smd, sxd, vmd = ob(run_dir, SM), ob(run_dir, SX), ob(run_dir, VM)
+    for pj, t in (("q_proj", "q"), ("k_proj", "k"), ("v_proj", "v")):
+        mm, rs = f"layer{l}.attn.{pj}.matmul", f"layer{l}.attn.{pj}.rescaling"
+        edges += [
+            ("byte", mm, f"A1{t}: layer{l} {pj} fc com_X == input_norm yrescale com_Xr",
+             os.path.join(ob(run_dir, mm), "com_X.bin"), attn_in_com),
+            ("byte", rs, f"A2{t}: layer{l} {pj} fc com_Y == {pj} rescale com_X",
+             os.path.join(ob(run_dir, mm), "com_Y.bin"), os.path.join(ob(run_dir, rs), "com_X.bin")),
+        ]
+        if t in ("q", "k"):
+            edges += [
+                ("byte", SM, f"A3{t}: layer{l} rope.{t} com_T == {pj} rescale com_Xr",
+                 os.path.join(smd, f"rope.{t}/com_T.bin"), os.path.join(ob(run_dir, rs), "com_Xr.bin")),
+                ("byte", SM, f"A4{t}: layer{l} rope.{t} com_Y64 == rope.{t}.rescale com_X",
+                 os.path.join(smd, f"rope.{t}/com_Y64.bin"), os.path.join(smd, f"rope.{t}.rescale/com_X.bin")),
+                ("byte", SM, f"A5{t}: layer{l} slice com_{t.upper()} == rope.{t}.rescale com_Xr",
+                 os.path.join(smd, f"slice/com_{t.upper()}.bin"), os.path.join(smd, f"rope.{t}.rescale/com_Xr.bin")),
+            ]
+        else:
+            edges.append(("byte", SM, f"A3v: layer{l} slice com_V == v_proj rescale com_Xr",
+                          os.path.join(smd, "slice/com_V.bin"), os.path.join(ob(run_dir, rs), "com_Xr.bin")))
+    for hh in HH:
+        edges += [
+            ("byte", SM, f"A6.{hh}: layer{l} slice com_Qh{hh} == scores fc.h{hh} com_X",
+             os.path.join(smd, f"slice/com_Qh{hh}.bin"), os.path.join(smd, f"fc.h{hh}/com_X.bin")),
+            ("path", SM, f"A7.{hh}: layer{l} slice com_KhT{hh} IS scores fc.h{hh} com_W argv",
+             os.path.join(smd, f"slice/com_KhT{hh}.bin"), SM, f"fc.h{hh}"),
+            ("byte", SM, f"A8.{hh}: layer{l} scores fc.h{hh} com_Y == rescale13.h{hh} com_X",
+             os.path.join(smd, f"fc.h{hh}/com_Y.bin"), os.path.join(sxd, f"rescale13.h{hh}/com_X.bin")),
+            ("byte", SX, f"A9.{hh}: layer{l} rescale13.h{hh} com_Xr == rescale10.h{hh} com_X",
+             os.path.join(sxd, f"rescale13.h{hh}/com_Xr.bin"), os.path.join(sxd, f"rescale10.h{hh}/com_X.bin")),
+            ("byte", SX, f"A10.{hh}: layer{l} rescale10.h{hh} com_Xr == softmax.h{hh} com_z",
+             os.path.join(sxd, f"rescale10.h{hh}/com_Xr.bin"), os.path.join(sxd, f"softmax.h{hh}/com_z.bin")),
+            ("byte", SX, f"A11.{hh}: layer{l} softmax.h{hh} com_P == values fc.h{hh} com_X",
+             os.path.join(sxd, f"softmax.h{hh}/com_P.bin"), os.path.join(vmd, f"fc.h{hh}/com_X.bin")),
+            ("path", VM, f"A12.{hh}: layer{l} slice com_Vh{hh} IS values fc.h{hh} com_W argv",
+             os.path.join(smd, f"slice/com_Vh{hh}.bin"), VM, f"fc.h{hh}"),
+            ("byte", VM, f"A13.{hh}: layer{l} values fc.h{hh} com_Y == rescale.h{hh} com_X",
+             os.path.join(vmd, f"fc.h{hh}/com_Y.bin"), os.path.join(vmd, f"rescale.h{hh}/com_X.bin")),
+            ("byte", VM, f"A14.{hh}: layer{l} values rescale.h{hh} com_Xr == merge com_O{hh}",
+             os.path.join(vmd, f"rescale.h{hh}/com_Xr.bin"), os.path.join(vmd, f"merge/com_O{hh}.bin")),
+        ]
+    edges.append(("byte", VM, f"A15: layer{l} merge com_O2 == attn_skip com_attn_out "
+                              "(closes edge S1's former OPEN BOUNDARY)",
+                  os.path.join(vmd, "merge/com_O2.bin"),
+                  os.path.join(ob(run_dir, f"layer{l}.attn_skip.add"), "com_attn_out.bin")))
+    return spec, edges
+
+
 def walk_spec(run_dir):
     """Full covered-subgraph spec: {manifest_id: {sub: spec}}, plus edges.
 
@@ -260,6 +452,12 @@ def walk_spec(run_dir):
         nid, nsubs = rmsnorm_site(run_dir, l, "input_norm")
         pid, psubs = rmsnorm_site(run_dir, l, "post_attn_norm")
         spec[nid] = nsubs
+        # attention chain: q/k/v projections, then scores/softmax/values
+        for pj in ("q_proj", "k_proj", "v_proj"):
+            spec.update(attn_proj_block(run_dir, l, pj))
+        attn_spec, attn_edges = attention_spec(run_dir, l)
+        spec.update(attn_spec)
+        edges += attn_edges
         spec[pid] = psubs
         for sid, site in ((nid, "input_norm"), (pid, "post_attn_norm")):
             o = ob(run_dir, sid)
@@ -279,10 +477,10 @@ def walk_spec(run_dir):
             edges.append(("byte", nid, f"{nid}: com_X == registered com_input",
                           os.path.join(ob(run_dir, nid), "rmsnorm/com_X.bin"), P["com_input"]))
 
-        # attn skip: Z1 = resid + attn_out (com_attn_out is the OPEN attention boundary)
+        # attn skip: Z1 = resid + attn_out (com_attn_out chained to merge com_O2 via A15)
         a_skip = f"layer{l}.attn_skip.add"
         spec[a_skip] = {"skip": {"obdir": ob(run_dir, a_skip), "seed_id": a_skip, "verify": None}}
-        edges.append(("skip", a_skip, f"{a_skip}: com_X(input_norm) + com_attn_out == com_X(post_attn_norm) [attn boundary OPEN]",
+        edges.append(("skip", a_skip, f"{a_skip}: com_X(input_norm) + com_attn_out == com_X(post_attn_norm) [boundary closed by A15]",
                       os.path.join(ob(run_dir, nid), "rmsnorm/com_X.bin"),
                       os.path.join(ob(run_dir, a_skip), "com_attn_out.bin"),
                       os.path.join(ob(run_dir, pid), "rmsnorm/com_X.bin")))

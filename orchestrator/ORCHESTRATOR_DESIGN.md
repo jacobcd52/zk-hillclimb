@@ -1,8 +1,15 @@
 # ORCHESTRATOR_DESIGN — registration → prover walk → separate verifier → transcript.json
 
-Status: 2026-06-10. Stage 1 covered subgraph = full MLP path of both layers + all 4
-rmsnorm sites + both skip connections per layer. Attention (q/k/v, scores, softmax,
-values), embedding, lm_head: SKIPPED (recorded, never silently dropped).
+Status: 2026-06-10 (stage 1); UPDATED 2026-06-11 (stage 2). Stage 1 covered subgraph =
+full MLP path of both layers + all 4 rmsnorm sites + both skip connections per layer,
+attention SKIPPED. **Stage 2 added the complete attention chain** (q/k/v proj, rope,
+headslice, per-head scores/softmax/values, headmerge — composition + edges per
+ROPE_ATTENTION_DESIGN §4.0/§7.3/§7.4; edge S1's open boundary closed by A15): 54 of the
+56 non-waived manifest ids checked; only lm_head.commitment_opening +
+statement.logit_binding remain SKIPPED (recorded, never silently dropped). Sections
+below describe stage 1 and remain accurate for the mechanisms they pin; stage-2 specifics
+(new registration artifacts gen64 + rope/exp tables, the attention walk + edge map) live
+in common.py's attention_spec and ORCHESTRATOR_REPORT.md's Stage 2 section.
 
 Python: `/root/int-model-env/bin/python` (same env the pipeline runs under — torch
 2.7.1+cu128, transformers 4.57.3, numpy 2.4.6). Drivers are the validated binaries in

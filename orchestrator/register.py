@@ -1,8 +1,9 @@
-"""One-time registration for a ZK-verified llama-68m run (stage 1).
+"""One-time registration for a ZK-verified llama-68m run (stage 2).
 
-Produces <run>/registration/ (gens, integer weights + registered commitments,
-public input + its commitment, swiglu table) and <run>/public.json whose
-sha256 IS the run seed. See ORCHESTRATOR_DESIGN.md §2.
+Produces <run>/registration/ (gens incl. gen64, integer weights + registered
+commitments, public input + its commitment, swiglu table, rope cos/sin tables,
+softmax exp table) and <run>/public.json whose sha256 IS the run seed.
+See ORCHESTRATOR_DESIGN.md §2 + ROPE_ATTENTION_DESIGN.md §2.1/§4.5.
 
 Run with the pipeline env: /root/int-model-env/bin/python register.py [--run-id X]
 """
@@ -84,6 +85,35 @@ def gen_swiglu_table(run_dir, log=print):
     return p
 
 
+def gen_attention_tables(run_dir, log=print):
+    """Run the PINNED generator scripts from /root/zkllm (the sole authority
+    for table bytes: gen_rope_tables.py per ROPE_ATTENTION_DESIGN §2.1,
+    gen_softmax_exp_table.py per SOFTMAX_DESIGN §7.4 / PHASE0 §15). The
+    scripts write to cwd, so they run with cwd = registration/ — /root/zkllm
+    is never written. The sha256 registration below, not regeneration, is the
+    source of truth thereafter."""
+    import subprocess
+    P = C.reg_paths(run_dir)
+    for script, outs in (("gen_rope_tables.py", ("rope-cos-table.bin", "rope-sin-table.bin")),
+                         ("gen_softmax_exp_table.py", ("softmax-exp-table.bin",))):
+        spath = os.path.join(C.ZKLLM, script)
+        r = subprocess.run([sys.executable, spath], cwd=P["reg"],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError(f"{script} failed: {r.stdout}{r.stderr}")
+        for o in outs:
+            p = os.path.join(P["reg"], o)
+            if not os.path.exists(p):
+                raise RuntimeError(f"{script} did not produce {o}")
+            log(f"  {o}: {os.path.getsize(p)} bytes (from {spath})")
+    # sanity anchors pinned by the designs: cos(0) = 2^16; exp(0) = 2^16
+    cos0 = np.fromfile(P["rope_cos"], dtype=np.int32, count=1)[0]
+    assert cos0 == (1 << 16), f"rope cos table anchor wrong: cos[0,0]={cos0}"
+    exp = np.fromfile(P["exp_table"], dtype=np.int32)
+    assert exp.size == C.SOFTMAX_LEN_E and exp[-C.SOFTMAX_LOW_E] == (1 << 16), \
+        "softmax exp table anchor wrong (exp(0) != 2^16)"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", default=time.strftime("run-%Y%m%d-%H%M%S"))
@@ -97,7 +127,7 @@ def main():
     print(f"== register: {run_dir} ==")
 
     print("-- gens (ppgen) --")
-    for n, key in ((1024, "gen1024"), (4096, "gen4096"), (1, "q")):
+    for n, key in ((64, "gen64"), (1024, "gen1024"), (4096, "gen4096"), (1, "q")):
         C.run_driver([C.drv("ppgen"), str(n), P[key]], f"ppgen {n}")
 
     print("-- weights (pipeline semantics) --")
@@ -119,6 +149,9 @@ def main():
     print("-- swiglu table --")
     gen_swiglu_table(run_dir)
 
+    print("-- attention tables (rope cos/sin + softmax exp) --")
+    gen_attention_tables(run_dir)
+
     print("-- public.json --")
     public = {
         "model": MODEL_CARD, "seq_len": C.SEQ, "run_id": args.run_id,
@@ -132,15 +165,29 @@ def main():
             "SWIGLU_LOW": C.SWIGLU_LOW, "SWIGLU_LEN": C.SWIGLU_LEN,
             "rms_norm_eps": eps, "C_eps": c_eps,
             "EMBED": C.EMBED, "INTER": C.INTER, "N_LAYERS": C.N_LAYERS,
+            # attention chain (ROPE_ATTENTION_DESIGN §1.5; SOFTMAX_DESIGN §1.1)
+            "HEAD_DIM": C.HEAD_DIM, "N_HEADS": C.N_HEADS,
+            "QKV_RESCALE_LOG": C.QKV_RESCALE_LOG, "ROPE_RESCALE_LOG": C.ROPE_RESCALE_LOG,
+            "SCORES_RESCALE13_LOG": C.SCORES_RESCALE13_LOG,
+            "SCORES_RESCALE10_LOG": C.SCORES_RESCALE10_LOG,
+            "VALUES_RESCALE_LOG": C.VALUES_RESCALE_LOG,
+            "SOFTMAX_LOW_E": C.SOFTMAX_LOW_E, "SOFTMAX_LEN_E": C.SOFTMAX_LEN_E,
+            "SOFTMAX_LEN_R": C.SOFTMAX_LEN_R,
         },
-        "gens": {k: C.sha256_file(P[k]) for k in ("gen1024", "gen4096", "q")},
+        "gens": {k: C.sha256_file(P[k]) for k in ("gen64", "gen1024", "gen4096", "q")},
         "registered_weight_commitments": {
             wid: C.sha256_file(C.wpath(run_dir, wid, "com")) for wid, *_ in C.weight_specs()
         },
         "input": {"file": "registration/input.i32.bin", "sha256": C.sha256_file(P["input"]),
                   "commitment_sha256": C.sha256_file(P["com_input"])},
-        "tables": {"swiglu-table.bin": C.sha256_file(P["table"])},
-        "covered_subgraph": "stage1-mlp (MLP path + rmsnorm sites + skips; attention/softmax/lm_head pending)",
+        "tables": {
+            "swiglu-table.bin": C.sha256_file(P["table"]),
+            "rope-cos-table.bin": C.sha256_file(P["rope_cos"]),
+            "rope-sin-table.bin": C.sha256_file(P["rope_sin"]),
+            "softmax-exp-table.bin": C.sha256_file(P["exp_table"]),
+        },
+        "covered_subgraph": "stage2-full-forward (MLP + rmsnorm + skips + complete attention "
+                            "chain incl. rope/headslice/softmax/headmerge; lm_head pending)",
         "future_slots": {
             "statement.final_argmax": "reserved: served token == argmax(logits) within DiFR tolerance "
                                       "(THREAT_MODEL_NOTES §1); lands with lm_head",
