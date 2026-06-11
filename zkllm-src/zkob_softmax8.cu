@@ -29,6 +29,13 @@
 //        at real scale -- S <= 2^26 so r1, r2 < 2^27 < LEN_R8^2), and
 //          (I1) 2^17*c1 + S_id - 2*c2 == v00 + LEN_R8*v10   "bracket r1 identity"
 //          (I2) r~1 + r~2 + 1 == 2*S_id                     "bracket sum identity"
+// SOUNDNESS INTERLOCK (audit MINOR-3): dropping the MK factor that softmax
+// carried in the row-sum/V1/bracket weights is sound ONLY because masked E is
+// exactly 0, which is enforced by the conjunction of THREE verifier checks --
+// the Dm identity (Dm = SENT at masked), the mapping lookup (E = X_E8[Dm-LOW8])
+// and the sentinel check (table[SENT] = 0; verify()-side, selftest-pinned).
+// Any edit to the Dm block, the table loading, or the registered table
+// semantics must re-establish masked-E=0 before trusting the MK-free weights.
 // Zero prover advice; all committed tensors are deterministic in
 // (z_, mx, MK, X_E8). z_/mx domains are NOT proof-bound here (delta from
 // softmax R1): the chained rowmax instance on the same com_z/com_mx proves
@@ -1167,6 +1174,24 @@ static bool selftest_case(uint B, int LOW8, uint LEN8, uint LEN_R8) {
         cout << (right ? "PASS" : "FAIL") << ": evil=" << ev.mode << " (" << ev.what
              << ") rejected by [" << (rejected ? reason : string("NOT REJECTED"))
              << "], expected [" << ev.expect << "]" << endl;
+        all = all && right;
+    }
+
+    // verify-side sentinel pin (audit MINOR-3 interlock): an HONEST proof dir
+    // verified against a public table whose last entry != 0 must be rejected
+    // by EXACTLY the sentinel check -- masked E = 0 (and hence the MK-free
+    // row-sum/V1/bracket weights) relies on table[SENT] == 0
+    {
+        vector<int> bad(maph); bad[LEN8 - 1] = 5;
+        const char* expect = "table sentinel (last entry) != 0";
+        string reason;
+        bool rejected = !verify(obdir, seed, B, NCOL, LOW8, LEN8, bad, LEN_R8,
+                                gen, Q, &reason);
+        bool right = rejected && reason.find(expect) != string::npos;
+        cout << (right ? "PASS" : "FAIL")
+             << ": sentinel-tampered public table rejected by ["
+             << (rejected ? reason : string("NOT REJECTED"))
+             << "], expected [" << expect << "]" << endl;
         all = all && right;
     }
 

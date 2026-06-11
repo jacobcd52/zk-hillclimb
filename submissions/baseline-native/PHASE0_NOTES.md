@@ -797,3 +797,175 @@ commit byte test; both real-scale runs.
   driver emits the canonical lowest-index witness deterministically.
 - **(MINOR-8) Fail-closed on missing/short files** (`open_or_die` etc. throw,
   nonzero exit, never false ACCEPT): treat ANY nonzero exit as reject.
+
+## 20. zkob_softmax8 — temperature-8 attention softmax obligation driver: SELFTEST ALL PASS (170/170) + independent audit (SOUND)
+
+Covers manifest id `layer{l}.attn.softmax.h{hh}` in the **faithful-arch-v1**
+chain (STAGE3_FAITHFUL_DESIGN.md §4.3; manifest composition:
+`layer{l}.attn.softmax` = 12 × (rescale13 + rescale10 + **rowmax** +
+**softmax8**)). Binds, per head, the B×NCOL int32 score grid z_ (scale 2⁹,
+chained from scores_rescale10) AND the per-row allowed max mx (chained from a
+zkob_rowmax causal instance on the same z_) to the faithful √d = 8 softmax
+P = round_half_up(2¹⁶·E/S) with P[masked] = 0, where
+Dm[i,j] = MK[i,j]·(z_[i,j] − mx[i]) + (1 − MK[i,j])·SENT (SENT = LOW8+LEN8−1 =
++1, the pinned masked-position sentinel), E[i,j] = X_E8[Dm[i,j] − LOW8] from
+the registered temp-8 table (exponent = v/2¹², i.e. scale 2⁹ × temp 8), and
+S[i] = Σ_j E[i,j] (S ≥ 2¹⁶ structurally — the allowed argmax has Dm = 0 ⟹
+E = 2¹⁶). **Zero prover advice — 0-bit covert capacity**: every committed
+tensor (Dm, E, S, P, the 2×14-bit limb planes L) is deterministic in (z_, mx,
+the public causal mask MK, the registered table). Passed an independent
+soundness audit (SOFTMAX8_REVIEW.md, VERDICT: SOUND — 0 critical / 0 major /
+7 MINOR; FS schedules absorb-for-absorb identical and §4.3 label-for-label;
+every disk value anchored; §4.3 arithmetic re-derived independently; zero new
+CUDA kernels) plus a hardening round (SOFTMAX8_REPORT.md). One FS transcript,
+**19 IPA openings**, seven sub-obligations:
+
+1. **Exp mapping lookup (R1)** — glu pattern on comb = Dm + r·E vs the public
+   combined table; verifier forms com_comb = com_Dm + r·com_E homomorphically
+   (1-thread h_mul/h_add) and recomputes B_f/T_f. The lookup forces the index
+   Dm − LOW8 in-domain; the table's sentinel row makes masked E = 0 BY THE
+   TABLE. *(Delta vs softmax: indexes Dm, not z_ — z_ is NOT range-bound here;
+   see the pinned obligations below.)*
+2. **Dm-binding block (NEW)** — at challenge u_d: cD1 = MLE(MK⊙z_)(u_d)
+   (opens com_z), cD2 = MLE(MK⊙mx_bcast)(u_d) (mx_bcast NEVER committed; its
+   terminal opens **com_mx at the row-bit suffix** — the broadcast-pinning
+   mechanism), vDm = D̃m(u_d) (opens com_Dm), and the verifier-computed
+   plain-field **Dm identity**: D̃m(u_d) == cD1 − cD2 + SENT·(1 − k_MK), with
+   k_MK = Σ_b eq(u_d,b)·MK(b) rebuilt by the verifier itself. S-Z ⟹ Dm is
+   exactly the masked-diff-with-sentinel tensor. U_f2 == 1 forced in both
+   sumchecks.
+3. **Limb range lookup** — L = 4 planes (r1 lo/hi, r2 lo/hi, 14-bit limbs;
+   LEN_R8 = 2¹⁴, r1,r2 < 2²⁷ < LEN_R8² since S ≤ 2²⁶) vs tLookupRange(0,2¹⁴);
+   sole integer-range enforcer for the bracket; semantically forgery-tested
+   (evil=8 compensating-borrow limb).
+4. **Row-sum sumcheck (R2)** — ev_S = S̃(u_b) with the PURE broadcast eq
+   weight (no MK factor — rmsnorm eq_acc shortcut, row rounds only);
+   U_f2 == 1 forced. Opens E at pt_rs, S at u_b.
+5. **Bracket V1** — c1 = Ẽ(u_r), pure eq weight, U_f2 == 1 forced.
+6. **Bracket V2** — c2 = MLE(P⊙S_bcast)(u_r); S_bcast never committed, its
+   U_f2 opens against com_S at the row-bit suffix of pt2.
+7. **Residual reconstruction** — 4 plane openings of com_L + S_id, then
+   I1: 2¹⁷·c1 + S_id − 2·c2 == v00 + 2¹⁴·v10; I2: r̃1 + r̃2 + 1 == 2·S_id.
+   With the limb lookup (2·LEN_R8² = 2²⁹ < p, 2S ≤ 2²⁷) these force r1 ∈
+   [0, 2S) as an integer ⟹ P exact round-half-up, masked P = 0.
+
+**SOUNDNESS INTERLOCK (audit MINOR-3, pinned for future editors):** the MK
+factor softmax carried in row-sum/V1/bracket is DROPPED here; that is sound
+only because masked E is exactly 0, enforced by the conjunction of three
+verifier checks — the Dm identity (Dm = SENT at masked) + the mapping lookup
+(E = X_E8[Dm − LOW8]) + the sentinel check (table[SENT] == 0, rejected
+verify-side and now selftest-pinned with a sentinel-tampered-table negative
+test). Any edit to the Dm block, table loading, or registered-table semantics
+must re-establish masked-E=0 before trusting the MK-free weights.
+
+FS schedule (seed = run_seed:obligation_id): absorb B, NCOL, LOW8, LEN8,
+LEN_R8, LOG_OUT, SENT + the 9 base commitments (com_z, com_mx, com_Dm, com_E,
+com_P, com_S, com_L, com_m_E8, com_m_L) → r, β_E → com_A_E8 → α_E, u_E →
+exp-lookup rounds + terminals + 3 IPAs → u_d → cD1 block + IPA(z_) → cD2
+block + IPA(mx@row-bits) → vDm + IPA(Dm) → β_L → com_A_L → α_L, u_L →
+limb-lookup rounds + 3 IPAs → u_b → ev_S → row-sum + 2 IPAs → u_r → c1/V1 +
+IPA → c2/V2 + 2 IPAs → v00..v11 + 4 plane IPAs → S_id + IPA → verifier-only
+I1, I2, Dm identity. Audit confirmed prove/verify absorb-for-absorb identical;
+com_mx is absorbed before any challenge (prover cannot pick mx after seeing
+evaluation points).
+
+CLI (LOG_OUT = 16 pinned in-driver; SENT derived; driver does NOT mkdir):
+```
+zkob_softmax8 prove  <obdir> <seed> <z-int32.bin> <mx-int32.bin> <B> <NCOL>
+                     <LOW8> <LEN8> <expmap8-int32.bin> <LEN_R8> <gen.bin>
+                     <q.bin> [P-int32-out.bin]
+zkob_softmax8 verify <obdir> <seed> <B> <NCOL> <LOW8> <LEN8>
+                     <expmap8-int32.bin> <LEN_R8> <gen.bin> <q.bin>
+zkob_softmax8 selftest
+```
+Real scale per head: B = NCOL = 1024, LOW8 = −2²⁰+2 (domain [−1048574, +1],
+SENT = +1), LEN8 = 2²⁰, LEN_R8 = 2¹⁴, gen1024. Files in <obdir> (40, all
+byte-tamper-tested): dims.bin; 11 com_*.bin (z, mx, Dm, E, P, S, L, m_E8,
+m_L, A_E8, A_L); lookup_E8.bin, lookup_L.bin; hp_cD1/cD2/rs/v1/v2.bin;
+vdm.bin; lvals.bin; 19 ipa_*.bin.
+
+Chain interface (STAGE3 §4.3): per (layer, head)
+`… rescale13 → rescale10 → z_.i32 (2⁹) → zkob_rowmax causal → mx.i32 →
+zkob_softmax8 → P.i32 (2¹⁶) → values-fc`. Edges: **RM1.hh**
+(rescale10/com_Xr ≡ rowmax/com_z), **RM2.hh** (rowmax/com_mx ≡
+softmax8/com_mx), **SX8a.hh** (rescale10/com_Xr ≡ softmax8/com_z), **SX8b.hh**
+(softmax8/com_P ≡ VM/fc.h{hh}/com_X) — all byte-equalities on the same
+gen1024. The selftest's real-scale case actually invokes zkob_rowmax and
+checks RM2 + SX8a/RM1 byte-identity in-process.
+
+Exp-table registration rule: run **`gen_softmax8_table.py`** ONCE (the §4.3
+script verbatim; note the design doc names it gen_softmax8_exp_table.py —
+errata, see SOFTMAX8_REPORT.md) and register `softmax8-exp-table.bin` by
+**sha256** in public.json. The sha256 registration is the source of truth; the
+driver's selftest fallback is flagged NON-AUTHORITATIVE, and both prove() and
+verify() independently require table[LEN8−1] == 0 (the sentinel check).
+
+Real-scale numbers (per head): prove 12.03 s, verify 12.84 s,
+proof+commitments 2,141,552 B (~2.04 MB). Audit independently reproduced
+12.15 s / 12.94 s / identical bytes. 12 heads ⟹ ≈ 2.4 min prove / 2.6 min
+verify per layer for the softmax8 obligations proper (rowmax, rescales and
+matmuls accounted separately).
+
+**Orchestrator obligations pinned by the audit:**
+- **(MINOR-1, load-bearing) Enforce RM1/RM2/SX8a/SX8b byte-identically AND
+  run the chained rowmax instance.** softmax8's exp table indexes Dm, not z_,
+  so verify() never bounds |z_| or |mx| (the ±2¹⁹ envelope / diff guards are
+  honest-prover throws only), and softmax8 alone does not prove allowed
+  z−mx ≤ 0 (an allowed Dm = SENT would silently drop that probability). The
+  chained rowmax on the SAME com_z/com_mx proves mx = allowed row max ⟹
+  allowed diffs ≤ 0 ⟹ allowed Dm ≠ SENT. A standalone softmax8 ACCEPT proves
+  materially less — the edges are the defense, by design (the softmax com_z
+  posture, made broader). The optional design-Q5 z_ range belt is NOT in v1.
+- **(MINOR-2) Treat ANY nonzero exit as reject** — a missing/short proof file
+  throws out of verify() (fail-closed, never a false ACCEPT) instead of
+  printing REJECT; do not parse for the REJECT line.
+
+## 21. zkob_headmerge perm flag — pinned <perm> ∈ {pi157, concat}: SELFTEST ALL PASS (166/166, both modes) + independent diff audit (SOUND)
+
+The STAGE3 §4.2 line-157 fix: zkob_headmerge (PHASE0 register: the head-merge
+driver for `layer{l}.attn.merge`) gains a pinned positional `<perm>` mode —
+no new driver, one binary serving both registered statements. Audited as a
+DIFF against the previously-audited pre-flag version at commit f792978
+(SOFTMAX8_REVIEW.md Part 2, VERDICT: SOUND): every hunk inside the §4.2
+scope; the per-head sumcheck, U_f2 == 1 check, Σ c_h == ev check, all 13 IPA
+openings and the eq/commit machinery byte-unchanged; the pi157 formula paths
+character-for-character the audited originals.
+
+- **Modes:** `pi157` (0) keeps the §1.3 π⁻¹ scramble verbatim (the stage-2
+  baseline statement); `concat` (1) is the faithful-arch identity layout
+  `Wm_h[t·HD+d] = E_u[t·C_pad + (HD·h+d)]`, `O2[t, HD·h+d] = out_h[t,d]` —
+  the §1.3 plain head-concat M, padding columns forced to exact 0 by the same
+  Σ c_h == ev identity (audit re-derived gather/assembly mutual consistency).
+- **Mode binding (the cross-mode splice defense, two independent layers):**
+  (1) dims.bin carries perm as a 4th u32, cross-checked against the
+  verifier's own CLI/public.json value → "dims.bin mismatch"; (2)
+  `absorb_u32 "PERM"` immediately after "HD" in BOTH prove and verify —
+  before com_O2 and before the grid challenge u — so even a forged dims PERM
+  field diverges every squeezed challenge and a downstream sumcheck fails.
+  The selftest splices BOTH directions (pi157→concat and concat→pi157) at
+  BOTH layers and requires the exact rejection strings, plus
+  restore-and-reverify ACCEPT.
+- **CLI:** `<perm>` positional after `<HD>` in both prove and verify
+  (literal `pi157` | `concat`); file set unchanged (dims.bin, com_O2.bin,
+  com_O{hh}.bin, ev.bin, hp{hh}.bin, ipa_O{hh}.bin, ipa_O2.bin).
+- **Which mode each submission uses:** the **faithful-arch-v1 manifest runs
+  concat** — public.json gains `"headmerge_perm": "concat"`, and the merge
+  output M.i32 (1024×768 @2¹⁶) feeds the new o_proj fc (edge **O1:
+  VM/merge/com_O2 ≡ o_proj.matmul/com_X**, then O2/O3 through the o_proj
+  rescale to attn_skip, STAGE3 §4.1). The **baseline-native submission stays
+  pi157** and retains its own f792978 binary (§4.4 driver coexistence).
+- Real scale (B=1024, C=768, HD=64, NH=12), per mode: prove 3.48 s, verify
+  2.18–2.20 s, proof+commitments 1,966,888 B. Selftest 166 PASS / 0 FAIL:
+  all toy shapes × both modes, the evil set in both modes (incl. evil=5 —
+  O2 assembled with the WRONG mode's layout → "sum of head claims != ev",
+  the concat-mode certifier), splice both directions, byte tampers, real
+  scale both modes.
+
+**Orchestrator obligations pinned by the audit:**
+- **(MINOR-7) Pass `headmerge_perm` from public.json as argv to BOTH prove
+  and verify** for each submission. pi157 proofs from the new binary are NOT
+  transcript-compatible with f792978 ones (the added PERM absorb is a
+  domain-separation strengthening, intended): never mix binaries within one
+  registered statement — baseline-native re-verification uses its own
+  f792978 binary.
+- Nonzero exit = reject (same fail-closed posture as §20).
