@@ -10,6 +10,14 @@ served tokens t* = argmax(logits) at all 1024 positions). 56/56 non-waived
 checked + 3 covered-waived; the only waived-and-uncovered id left is
 embedding.lookup.
 
+Submission faithful-arch-v1 (STAGE3 §4, Part C) re-registers the statement as
+the faithful llama-68m: per-head zkob_rowmax (causal) + zkob_softmax8 replace
+zkob_softmax (temperature 8 with the exact rowmax max-shift), zkob_headmerge
+runs concat mode (line-157 fix), and o_proj (registered weight, fc + rescale)
+slots between headmerge and attn_skip — 56 non-waived + 9 covered-waived = 65
+checked. The mode is selected per run by public.json's "submission" field; the
+baseline chain stays bit-reproducible behind the default.
+
 The walk specification (which driver runs cover which manifest id, with which
 public constants, and which chain edges bind them) is defined ONCE here and
 consumed by both prove_walk.py and verify_walk.py, so the two sides cannot
@@ -52,6 +60,17 @@ SCORES_RESCALE10_LOG = 10                    # then 2^19 -> 2^9 (widening shim b
 VALUES_RESCALE_LOG = 16
 SOFTMAX_LOW_E, SOFTMAX_LEN_E = -(1 << 19), 1 << 20
 SOFTMAX_LEN_R = 1 << 20
+
+# Submission faithful-arch-v1 (STAGE3_FAITHFUL_DESIGN §4; PHASE0 §19-21):
+# per-head exact rowmax max-shift + temperature-8 softmax8 + headmerge concat
+# mode + o_proj fc/rescale. The baseline statement keeps pi157/temp-128/no-o_proj.
+SUBMISSIONS = ("baseline", "faithful-arch-v1")
+PERM_FOR = {"baseline": "pi157", "faithful-arch-v1": "concat"}
+SCORES_ROWMAX_LEN_R = 1 << 20                # causal Df in [0, 2^20): one 20-bit limb
+SCORES_ROWMAX_NPL = 1
+SOFTMAX8_LOW, SOFTMAX8_LEN = -(1 << 20) + 2, 1 << 20   # Dm domain [-1048574, +1]; SENT=+1
+SOFTMAX8_LEN_R = 1 << 14                     # 14-bit limb pairs (r1, r2 < 2^27)
+OPROJ_RESCALE_LOG = 16
 
 # Stage 3 head (STAGE3_FAITHFUL_DESIGN §3.2/§3.3)
 VOCAB = 32000                                # real lm_head width (padded to 32768)
@@ -145,7 +164,7 @@ def run_driver(cmd, label, expect_reject_ok=False, retries=1, log=print,
 # 2-D weights are exported as (IN, OUT) = w.float().T per pipeline semantics;
 # rmsnorm gains as (1, EMBED). q/k/v registered now for attention-stage compat.
 # ---------------------------------------------------------------------------
-def weight_specs():
+def weight_specs(submission="baseline"):
     specs = []
     for l in range(N_LAYERS):
         specs += [
@@ -158,6 +177,13 @@ def weight_specs():
             (f"layer{l}.input_norm.g",  f"layer-{l}-input_layernorm.weight", 1, EMBED, 1024),
             (f"layer{l}.post_attn_norm.g", f"layer-{l}-post_attention_layernorm.weight", 1, EMBED, 1024),
         ]
+        if submission == "faithful-arch-v1":
+            # §4.1: the pipeline's commit loop iterates ALL layer.named_parameters(),
+            # so layer-{l}-self_attn.o_proj.weight-int.bin EXISTS in the pipeline
+            # dump (it is just never used) — the full byte-compare provenance
+            # guard applies to o_proj exactly as to q/k/v.
+            specs.append((f"layer{l}.attn.o_proj", f"layer-{l}-self_attn.o_proj.weight",
+                          EMBED, EMBED, 1024))
     return specs
 
 
@@ -188,6 +214,7 @@ def reg_paths(run_dir):
         "rope_cos": os.path.join(reg, "rope-cos-table.bin"),
         "rope_sin": os.path.join(reg, "rope-sin-table.bin"),
         "exp_table": os.path.join(reg, "softmax-exp-table.bin"),
+        "exp8_table": os.path.join(reg, "softmax8-exp-table.bin"),
     }
 
 
@@ -205,7 +232,7 @@ def ob(run_dir, mid, sub=None):
     return os.path.join(p, sub) if sub else p
 
 
-def covered_ids():
+def covered_ids(submission="baseline"):
     ids = []
     for l in range(N_LAYERS):
         ids += [f"layer{l}.input_norm.rmsnorm"]
@@ -219,6 +246,16 @@ def covered_ids():
             f"layer{l}.attn.scores_matmul",
             f"layer{l}.attn.softmax",
             f"layer{l}.attn.values_matmul",
+        ]
+        if submission == "faithful-arch-v1":
+            # §4.1: the six o_proj.* ids are waived in the frozen manifest but
+            # genuinely covered by the submission (covered-waived NOTE path).
+            ids += [
+                f"layer{l}.attn.o_proj.commitment_opening",
+                f"layer{l}.attn.o_proj.matmul",
+                f"layer{l}.attn.o_proj.rescaling",
+            ]
+        ids += [
             f"layer{l}.attn_skip.add",
             f"layer{l}.post_attn_norm.rmsnorm",
             f"layer{l}.mlp.gate_proj.commitment_opening",
@@ -330,21 +367,30 @@ def attn_proj_block(run_dir, l, pj):
     }
 
 
-def attention_spec(run_dir, l):
-    """The §7.3 integer attention chain for layer l, composed under the frozen
-    manifest ids per ROPE_ATTENTION_DESIGN §4.0:
+def attention_spec(run_dir, l, submission="baseline"):
+    """The integer attention chain for layer l, composed under the frozen
+    manifest ids per ROPE_ATTENTION_DESIGN §4.0 (baseline) extended by
+    STAGE3_FAITHFUL_DESIGN §4.3 (faithful-arch-v1):
 
       scores_matmul  = rope.q/k (+rescales) + headslice + 12 scores fc
-      softmax        = 12 x (rescale13 + rescale10 + softmax)
+      softmax        = 12 x (rescale13 + rescale10 + softmax)            [baseline]
+                     = 12 x (rescale13 + rescale10 + rowmax + softmax8)  [faithful]
       values_matmul  = 12 x (values fc + values rescale) + headmerge
+                       (perm = pi157 baseline / concat faithful, PHASE0 §21)
+      o_proj.matmul/.rescaling (faithful only, §4.1: fc vs REGISTERED com +
+                       rescale 2^16 between headmerge and attn_skip)
 
-    Returns (spec_update, edges) with EVERY §7.4 edge A1..A15. Edge kinds:
+    Returns (spec_update, edges) with EVERY §7.4 edge A1..A15 (baseline) /
+    A1..A14 + RM1/RM2/SX8a/SX8b per head + O1/O2/O3 (faithful — A10/A11 are
+    superseded by the rowmax/softmax8 edges, A15 by the o_proj path). Edge kinds:
       ("byte", owner, label, a, b)            byte-equality of commitment files
       ("path", owner, label, file, mid, sub)  com_W path binding: the named
         sub's verify argv must reference `file` (structural; the driver absorbs
         the file so a divergent operand rejects at the transcript level)
     """
     P = reg_paths(run_dir)
+    faithful = submission == "faithful-arch-v1"
+    perm = PERM_FOR[submission]
     SM = f"layer{l}.attn.scores_matmul"
     SX = f"layer{l}.attn.softmax"
     VM = f"layer{l}.attn.values_matmul"
@@ -378,7 +424,9 @@ def attention_spec(run_dir, l):
                        P["gen64"], P["gen1024"], P["q"]],
         }
 
-    # -- softmax subs: rescale13/rescale10/softmax per head (SOFTMAX §4.0) --
+    # -- softmax subs: rescale13/rescale10 + softmax (baseline, SOFTMAX §4.0)
+    #    or + rowmax/softmax8 (faithful, STAGE3 §4.3 — manifest composition:
+    #    layer{l}.attn.softmax = 12 x (rescale13 + rescale10 + rowmax + softmax8))
     for hh in HH:
         spec[SX][f"rescale13.h{hh}"] = {
             "obdir": ob(run_dir, SX, f"rescale13.h{hh}"),
@@ -392,13 +440,29 @@ def attention_spec(run_dir, l):
             "verify": [drv("zkob_rescale"), "verify", ob(run_dir, SX, f"rescale10.h{hh}"), None,
                        B, B, str(SCORES_RESCALE10_LOG), P["gen1024"], P["q"]],
         }
-        spec[SX][f"softmax.h{hh}"] = {
-            "obdir": ob(run_dir, SX, f"softmax.h{hh}"),
-            "seed_id": f"layer{l}.attn.softmax.h{hh}",
-            "verify": [drv("zkob_softmax"), "verify", ob(run_dir, SX, f"softmax.h{hh}"), None,
-                       B, B, str(SOFTMAX_LOW_E), str(SOFTMAX_LEN_E), P["exp_table"],
-                       str(SOFTMAX_LEN_R), P["gen1024"], P["q"]],
-        }
+        if faithful:
+            spec[SX][f"rowmax.h{hh}"] = {
+                "obdir": ob(run_dir, SX, f"rowmax.h{hh}"),
+                "seed_id": f"layer{l}.attn.rowmax.h{hh}",
+                "verify": [drv("zkob_rowmax"), "verify", ob(run_dir, SX, f"rowmax.h{hh}"), None,
+                           B, B, "causal", "0", str(SCORES_ROWMAX_LEN_R),
+                           str(SCORES_ROWMAX_NPL), P["gen1024"], P["gen1024"], P["q"]],
+            }
+            spec[SX][f"softmax8.h{hh}"] = {
+                "obdir": ob(run_dir, SX, f"softmax8.h{hh}"),
+                "seed_id": f"layer{l}.attn.softmax8.h{hh}",
+                "verify": [drv("zkob_softmax8"), "verify", ob(run_dir, SX, f"softmax8.h{hh}"), None,
+                           B, B, str(SOFTMAX8_LOW), str(SOFTMAX8_LEN), P["exp8_table"],
+                           str(SOFTMAX8_LEN_R), P["gen1024"], P["q"]],
+            }
+        else:
+            spec[SX][f"softmax.h{hh}"] = {
+                "obdir": ob(run_dir, SX, f"softmax.h{hh}"),
+                "seed_id": f"layer{l}.attn.softmax.h{hh}",
+                "verify": [drv("zkob_softmax"), "verify", ob(run_dir, SX, f"softmax.h{hh}"), None,
+                           B, B, str(SOFTMAX_LOW_E), str(SOFTMAX_LEN_E), P["exp_table"],
+                           str(SOFTMAX_LEN_R), P["gen1024"], P["q"]],
+            }
 
     # -- values_matmul subs: fc/rescale per head + merge --------------------
     for hh in HH:
@@ -417,8 +481,24 @@ def attention_spec(run_dir, l):
     spec[VM]["merge"] = {
         "obdir": ob(run_dir, VM, "merge"), "seed_id": f"layer{l}.attn.merge",
         "verify": [drv("zkob_headmerge"), "verify", ob(run_dir, VM, "merge"), None,
-                   B, C_, HD, "pi157", P["gen1024"], P["gen64"], P["q"]],
+                   B, C_, HD, perm, P["gen1024"], P["gen64"], P["q"]],
     }
+    if faithful:
+        # §4.1: o_proj fc (vs the REGISTERED commitment) + rescale 2^16,
+        # slotted between headmerge and attn_skip.
+        o_mm = f"layer{l}.attn.o_proj.matmul"
+        o_rs = f"layer{l}.attn.o_proj.rescaling"
+        spec[o_mm] = {"fc": {
+            "obdir": ob(run_dir, o_mm), "seed_id": o_mm,
+            "verify": [drv("zkob_fc"), "verify", ob(run_dir, o_mm), None,
+                       B, C_, C_, wpath(run_dir, f"layer{l}.attn.o_proj", "com"),
+                       P["gen1024"], P["gen1024"], P["q"]],
+        }}
+        spec[o_rs] = {"rescale": {
+            "obdir": ob(run_dir, o_rs), "seed_id": o_rs,
+            "verify": [drv("zkob_rescale"), "verify", ob(run_dir, o_rs), None,
+                       B, C_, str(OPROJ_RESCALE_LOG), P["gen1024"], P["q"]],
+        }}
 
     # -- §7.4 edges ----------------------------------------------------------
     nid = f"layer{l}.input_norm.rmsnorm"
@@ -454,10 +534,30 @@ def attention_spec(run_dir, l):
              os.path.join(smd, f"fc.h{hh}/com_Y.bin"), os.path.join(sxd, f"rescale13.h{hh}/com_X.bin")),
             ("byte", SX, f"A9.{hh}: layer{l} rescale13.h{hh} com_Xr == rescale10.h{hh} com_X",
              os.path.join(sxd, f"rescale13.h{hh}/com_Xr.bin"), os.path.join(sxd, f"rescale10.h{hh}/com_X.bin")),
-            ("byte", SX, f"A10.{hh}: layer{l} rescale10.h{hh} com_Xr == softmax.h{hh} com_z",
-             os.path.join(sxd, f"rescale10.h{hh}/com_Xr.bin"), os.path.join(sxd, f"softmax.h{hh}/com_z.bin")),
-            ("byte", SX, f"A11.{hh}: layer{l} softmax.h{hh} com_P == values fc.h{hh} com_X",
-             os.path.join(sxd, f"softmax.h{hh}/com_P.bin"), os.path.join(vmd, f"fc.h{hh}/com_X.bin")),
+        ]
+        if faithful:
+            # STAGE3 §2.7/§4.3 + PHASE0 §20 MINOR-1 (load-bearing): rowmax and
+            # softmax8 bind the SAME score grid (RM1/SX8a), mx chains rowmax ->
+            # softmax8 (RM2) — softmax8 alone neither range-binds z_ nor proves
+            # allowed z-mx <= 0; the chained rowmax instance is the defense.
+            edges += [
+                ("byte", SX, f"RM1.{hh}: layer{l} rescale10.h{hh} com_Xr == rowmax.h{hh} com_z",
+                 os.path.join(sxd, f"rescale10.h{hh}/com_Xr.bin"), os.path.join(sxd, f"rowmax.h{hh}/com_z.bin")),
+                ("byte", SX, f"RM2.{hh}: layer{l} rowmax.h{hh} com_mx == softmax8.h{hh} com_mx",
+                 os.path.join(sxd, f"rowmax.h{hh}/com_mx.bin"), os.path.join(sxd, f"softmax8.h{hh}/com_mx.bin")),
+                ("byte", SX, f"SX8a.{hh}: layer{l} rescale10.h{hh} com_Xr == softmax8.h{hh} com_z",
+                 os.path.join(sxd, f"rescale10.h{hh}/com_Xr.bin"), os.path.join(sxd, f"softmax8.h{hh}/com_z.bin")),
+                ("byte", SX, f"SX8b.{hh}: layer{l} softmax8.h{hh} com_P == values fc.h{hh} com_X",
+                 os.path.join(sxd, f"softmax8.h{hh}/com_P.bin"), os.path.join(vmd, f"fc.h{hh}/com_X.bin")),
+            ]
+        else:
+            edges += [
+                ("byte", SX, f"A10.{hh}: layer{l} rescale10.h{hh} com_Xr == softmax.h{hh} com_z",
+                 os.path.join(sxd, f"rescale10.h{hh}/com_Xr.bin"), os.path.join(sxd, f"softmax.h{hh}/com_z.bin")),
+                ("byte", SX, f"A11.{hh}: layer{l} softmax.h{hh} com_P == values fc.h{hh} com_X",
+                 os.path.join(sxd, f"softmax.h{hh}/com_P.bin"), os.path.join(vmd, f"fc.h{hh}/com_X.bin")),
+            ]
+        edges += [
             ("path", VM, f"A12.{hh}: layer{l} slice com_Vh{hh} IS values fc.h{hh} com_W argv",
              os.path.join(smd, f"slice/com_Vh{hh}.bin"), VM, f"fc.h{hh}"),
             ("byte", VM, f"A13.{hh}: layer{l} values fc.h{hh} com_Y == rescale.h{hh} com_X",
@@ -465,10 +565,24 @@ def attention_spec(run_dir, l):
             ("byte", VM, f"A14.{hh}: layer{l} values rescale.h{hh} com_Xr == merge com_O{hh}",
              os.path.join(vmd, f"rescale.h{hh}/com_Xr.bin"), os.path.join(vmd, f"merge/com_O{hh}.bin")),
         ]
-    edges.append(("byte", VM, f"A15: layer{l} merge com_O2 == attn_skip com_attn_out "
-                              "(closes edge S1's former OPEN BOUNDARY)",
-                  os.path.join(vmd, "merge/com_O2.bin"),
-                  os.path.join(ob(run_dir, f"layer{l}.attn_skip.add"), "com_attn_out.bin")))
+    if faithful:
+        # §4.1 edges O1/O2/O3 replace A15: the S1-closure now runs THROUGH o_proj.
+        o_mm_d, o_rs_d = ob(run_dir, o_mm), ob(run_dir, o_rs)
+        edges += [
+            ("byte", o_mm, f"O1: layer{l} merge com_O2 == o_proj fc com_X (plain head-concat M)",
+             os.path.join(vmd, "merge/com_O2.bin"), os.path.join(o_mm_d, "com_X.bin")),
+            ("byte", o_rs, f"O2: layer{l} o_proj fc com_Y == o_proj rescale com_X",
+             os.path.join(o_mm_d, "com_Y.bin"), os.path.join(o_rs_d, "com_X.bin")),
+            ("byte", o_rs, f"O3: layer{l} o_proj rescale com_Xr == attn_skip com_attn_out "
+                           "(the S1-closure edge, now through o_proj)",
+             os.path.join(o_rs_d, "com_Xr.bin"),
+             os.path.join(ob(run_dir, f"layer{l}.attn_skip.add"), "com_attn_out.bin")),
+        ]
+    else:
+        edges.append(("byte", VM, f"A15: layer{l} merge com_O2 == attn_skip com_attn_out "
+                                  "(closes edge S1's former OPEN BOUNDARY)",
+                      os.path.join(vmd, "merge/com_O2.bin"),
+                      os.path.join(ob(run_dir, f"layer{l}.attn_skip.add"), "com_attn_out.bin")))
     return spec, edges
 
 
@@ -535,7 +649,7 @@ def head_spec(run_dir):
     return spec, edges
 
 
-def walk_spec(run_dir):
+def walk_spec(run_dir, submission="baseline"):
     """Full covered-subgraph spec: {manifest_id: {sub: spec}}, plus edges.
 
     Each sub spec's `verify` is a ready argv with two None holes: argv[3] = seed
@@ -553,7 +667,7 @@ def walk_spec(run_dir):
         # attention chain: q/k/v projections, then scores/softmax/values
         for pj in ("q_proj", "k_proj", "v_proj"):
             spec.update(attn_proj_block(run_dir, l, pj))
-        attn_spec, attn_edges = attention_spec(run_dir, l)
+        attn_spec, attn_edges = attention_spec(run_dir, l, submission)
         spec.update(attn_spec)
         edges += attn_edges
         spec[pid] = psubs
@@ -575,10 +689,12 @@ def walk_spec(run_dir):
             edges.append(("byte", nid, f"{nid}: com_X == registered com_input",
                           os.path.join(ob(run_dir, nid), "rmsnorm/com_X.bin"), P["com_input"]))
 
-        # attn skip: Z1 = resid + attn_out (com_attn_out chained to merge com_O2 via A15)
+        # attn skip: Z1 = resid + attn_out (com_attn_out chained to merge com_O2
+        # via A15 in baseline; through o_proj via O3 in faithful-arch-v1)
         a_skip = f"layer{l}.attn_skip.add"
+        closure = "O3" if submission == "faithful-arch-v1" else "A15"
         spec[a_skip] = {"skip": {"obdir": ob(run_dir, a_skip), "seed_id": a_skip, "verify": None}}
-        edges.append(("skip", a_skip, f"{a_skip}: com_X(input_norm) + com_attn_out == com_X(post_attn_norm) [boundary closed by A15]",
+        edges.append(("skip", a_skip, f"{a_skip}: com_X(input_norm) + com_attn_out == com_X(post_attn_norm) [boundary closed by {closure}]",
                       os.path.join(ob(run_dir, nid), "rmsnorm/com_X.bin"),
                       os.path.join(ob(run_dir, a_skip), "com_attn_out.bin"),
                       os.path.join(ob(run_dir, pid), "rmsnorm/com_X.bin")))

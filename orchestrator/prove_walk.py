@@ -5,6 +5,13 @@ authority, lm_head fc + rescale on the registered 768x32000 weight, and the
 statement.logit_binding zkob_rowmax vpad instance binding the registered
 served tokens t*) on real llama-68m weights + the registered run input.
 
+Submission faithful-arch-v1 (STAGE3 §4, selected by public.json "submission"):
+per head, rowmax (causal) chains from rescale10 and its driver-emitted mx
+chain file feeds softmax8 (temperature 8, edges RM1/RM2/SX8a/SX8b); headmerge
+runs concat; o_proj fc + rescale slots between headmerge and attn_skip (edges
+O1/O2/O3). The §2.4(ii) selector-tie duty is measured for EVERY rowmax
+instance (24 causal + 1 vpad) and reported in prove_manifest.json.
+
 Witness authority (ORCHESTRATOR_DESIGN.md §3, extended by ROPE_ATTENTION_DESIGN
 §1.5/§7.3):
  - chain data files come from the drivers (fc Y.i64, rescale Xr.i32, glu H.i64,
@@ -31,6 +38,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C
 
 RUNS = []   # prove-manifest entries
+TIES = {}   # rowmax selector-tie duty per instance (STAGE3 §2.4(ii))
+
+
+def record_ties(instance, kmax):
+    """STAGE3 §2.4(ii) / PHASE0 §19 tie-count duty: per rowmax instance, the
+    rows with >1 allowed maximizers and sum over rows of log2(#maximizers) —
+    the selector tie channel, observable in proof bytes (com_S + openings)
+    only. kmax = per-row count of allowed positions attaining the row max."""
+    TIES[instance] = {
+        "rows": int(kmax.size),
+        "rows_with_ties": int((kmax > 1).sum()),
+        "sum_log2_maximizers_bits": round(float(np.log2(kmax.astype(np.float64)).sum()), 4),
+    }
 
 
 def record(mid, sub, seed_id, cmd, seconds):
@@ -72,19 +92,27 @@ def widen_i32_to_i64(src, dst):
     np.fromfile(src, dtype=np.int32).astype(np.int64).tofile(dst)
 
 
-def attention_chain(run_dir, l, attn_in_path, run_seed, cst, log=print):
-    """The §7.3 integer attention chain (ROPE_ATTENTION_DESIGN), fully proven:
+def attention_chain(run_dir, l, attn_in_path, run_seed, cst, submission, perm,
+                    log=print):
+    """The integer attention chain, fully proven. Baseline (ROPE §7.3):
 
       q/k/v fc+rescale -> rope.q/k (+rescales) -> headslice -> per head:
       scores fc -> rescale13 -> [widen] -> rescale10 -> softmax -> values fc
-      -> values rescale -> headmerge -> attn_out (int32 @2^16)
+      -> values rescale -> headmerge (pi157) -> attn_out (int32 @2^16)
+
+    faithful-arch-v1 (STAGE3 §4.3/§4.1) replaces the softmax step per head with
+    rowmax (causal, chained from rescale10; its mx-out CHAIN FILE — the pinned
+    witness authority — feeds softmax8, edges RM1/RM2/SX8a/SX8b) and appends,
+    after headmerge in concat mode, the o_proj fc + rescale (edges O1/O2/O3).
 
     Every chain file comes from the driver that proves it; the orchestrator
-    only widens int32->int64 between the two score rescales (lossless shim).
-    Returns the headmerge O2 output — THE attn_out (witness-authority rule:
-    this replaces the pipeline's float attention; com_O2 == com_attn_out, A15).
+    only widens int32->int64 between the two score rescales (lossless shim)
+    and measures the §2.4 selector-tie duty from the witness scores.
+    Returns the attn_out activation (headmerge O2 baseline / o_proj rescale
+    output faithful — com chained to attn_skip by A15 / O3).
     """
     P = C.reg_paths(run_dir)
+    faithful = submission == "faithful-arch-v1"
     d = os.path.join(run_dir, "data")
     B, Cw, HD = str(C.SEQ), str(C.EMBED), str(C.HEAD_DIM)
     SM = f"layer{l}.attn.scores_matmul"
@@ -144,8 +172,11 @@ def attention_chain(run_dir, l, attn_in_path, run_seed, cst, log=print):
         z_ = os.path.join(d, f"layer{l}.attn.scores.h{hh}.z_.i32.bin")
         pp = os.path.join(d, f"layer{l}.attn.softmax.h{hh}.P.i32.bin")
         out64 = os.path.join(d, f"layer{l}.attn.values.h{hh}.out64.i64.bin")
+        sx_subs = ((f"rowmax.h{hh}", f"softmax8.h{hh}") if faithful
+                   else (f"softmax.h{hh}",))
         for mid, sub in ((SM, f"fc.h{hh}"), (SX, f"rescale13.h{hh}"),
-                         (SX, f"rescale10.h{hh}"), (SX, f"softmax.h{hh}"),
+                         (SX, f"rescale10.h{hh}"),
+                         *[(SX, s) for s in sx_subs],
                          (VM, f"fc.h{hh}"), (VM, f"rescale.h{hh}")):
             os.makedirs(C.ob(run_dir, mid, sub), exist_ok=True)
         prove(SM, f"fc.h{hh}", f"layer{l}.attn.scores.h{hh}",
@@ -162,12 +193,35 @@ def attention_chain(run_dir, l, attn_in_path, run_seed, cst, log=print):
                z13w, B, B, str(C.SCORES_RESCALE10_LOG), P["gen1024"], P["q"], z_], run_seed)
         zv = np.fromfile(z_, dtype=np.int32)
         if zv.min() < C.SOFTMAX_LOW_E or zv.max() >= C.SOFTMAX_LOW_E + C.SOFTMAX_LEN_E:
-            raise RuntimeError(f"layer{l} h{hh}: scores leave the exp-table domain "
+            # one bound, two consumers: the baseline exp-table domain and the
+            # faithful rowmax/softmax8 envelope are both exactly [-2^19, 2^19)
+            raise RuntimeError(f"layer{l} h{hh}: scores leave the +-2^19 score envelope "
                                f"[{zv.min()}, {zv.max()}] — completeness failure, report honestly")
-        prove(SX, f"softmax.h{hh}", f"layer{l}.attn.softmax.h{hh}",
-              [C.drv("zkob_softmax"), "prove", C.ob(run_dir, SX, f"softmax.h{hh}"), None,
-               z_, B, B, str(C.SOFTMAX_LOW_E), str(C.SOFTMAX_LEN_E), P["exp_table"],
-               str(C.SOFTMAX_LEN_R), P["gen1024"], P["q"], pp], run_seed)
+        if faithful:
+            # rowmax causal (chained from rescale10) -> softmax8 consuming the
+            # driver-emitted mx CHAIN FILE (the pinned witness authority).
+            mx = os.path.join(d, f"layer{l}.attn.scores.h{hh}.mx.i32.bin")
+            prove(SX, f"rowmax.h{hh}", f"layer{l}.attn.rowmax.h{hh}",
+                  [C.drv("zkob_rowmax"), "prove", C.ob(run_dir, SX, f"rowmax.h{hh}"), None,
+                   z_, B, B, "causal", "0", str(C.SCORES_ROWMAX_LEN_R),
+                   str(C.SCORES_ROWMAX_NPL), P["gen1024"], P["gen1024"], P["q"], mx],
+                  run_seed)
+            # §2.4(ii) tie duty, measured from the witness scores (allowed = j <= i)
+            zg = zv.reshape(C.SEQ, C.SEQ).astype(np.int64)
+            tril = np.tri(C.SEQ, dtype=bool)
+            mxv = np.where(tril, zg, np.int64(-(1 << 62))).max(axis=1)
+            record_ties(f"layer{l}.attn.rowmax.h{hh}",
+                        ((zg == mxv[:, None]) & tril).sum(axis=1))
+            prove(SX, f"softmax8.h{hh}", f"layer{l}.attn.softmax8.h{hh}",
+                  [C.drv("zkob_softmax8"), "prove", C.ob(run_dir, SX, f"softmax8.h{hh}"), None,
+                   z_, mx, B, B, str(C.SOFTMAX8_LOW), str(C.SOFTMAX8_LEN),
+                   P["exp8_table"], str(C.SOFTMAX8_LEN_R), P["gen1024"], P["q"], pp],
+                  run_seed)
+        else:
+            prove(SX, f"softmax.h{hh}", f"layer{l}.attn.softmax.h{hh}",
+                  [C.drv("zkob_softmax"), "prove", C.ob(run_dir, SX, f"softmax.h{hh}"), None,
+                   z_, B, B, str(C.SOFTMAX_LOW_E), str(C.SOFTMAX_LEN_E), P["exp_table"],
+                   str(C.SOFTMAX_LEN_R), P["gen1024"], P["q"], pp], run_seed)
         prove(VM, f"fc.h{hh}", f"layer{l}.attn.values.h{hh}",
               [C.drv("zkob_fc"), "prove", C.ob(run_dir, VM, f"fc.h{hh}"), None,
                pp, os.path.join(slice_dir, f"Vh{hh}.i32.bin"),
@@ -177,13 +231,31 @@ def attention_chain(run_dir, l, attn_in_path, run_seed, cst, log=print):
                out64, B, HD, str(C.VALUES_RESCALE_LOG), P["gen64"], P["q"],
                os.path.join(values_dir, f"out{hh}.i32.bin")], run_seed)
 
-    # headmerge: concat + the line-157 permutation -> attn_out (com_O2)
+    # headmerge: pi157 (baseline, the line-157 permutation) or concat (faithful)
     attn_path = os.path.join(d, f"layer{l}.attn_out.i32.bin")
+    merge_path = (os.path.join(d, f"layer{l}.attn_merge.i32.bin") if faithful
+                  else attn_path)
     os.makedirs(C.ob(run_dir, VM, "merge"), exist_ok=True)
     prove(VM, "merge", f"layer{l}.attn.merge",
           [C.drv("zkob_headmerge"), "prove", C.ob(run_dir, VM, "merge"), None,
-           os.path.join(values_dir, "out"), B, Cw, HD, "pi157",
-           P["gen1024"], P["gen64"], P["q"], attn_path], run_seed)
+           os.path.join(values_dir, "out"), B, Cw, HD, perm,
+           P["gen1024"], P["gen64"], P["q"], merge_path], run_seed)
+    if faithful:
+        # §4.1: o_proj fc (REGISTERED weight) + rescale 2^16 between headmerge
+        # and attn_skip; attn_out := the o_proj rescale output (edges O1/O2/O3).
+        o_mm = f"layer{l}.attn.o_proj.matmul"
+        o_rs = f"layer{l}.attn.o_proj.rescaling"
+        o64 = os.path.join(d, f"{o_mm}.Y.i64.bin")
+        os.makedirs(C.ob(run_dir, o_mm), exist_ok=True)
+        os.makedirs(C.ob(run_dir, o_rs), exist_ok=True)
+        prove(o_mm, "fc", o_mm,
+              [C.drv("zkob_fc"), "prove", C.ob(run_dir, o_mm), None, merge_path,
+               C.wpath(run_dir, f"layer{l}.attn.o_proj", "int"),
+               B, Cw, Cw, P["gen1024"], P["gen1024"], P["q"], o64], run_seed)
+        prove(o_rs, "rescale", o_rs,
+              [C.drv("zkob_rescale"), "prove", C.ob(run_dir, o_rs), None, o64,
+               B, Cw, str(C.OPROJ_RESCALE_LOG), P["gen1024"], P["q"], attn_path],
+              run_seed)
     return np.fromfile(attn_path, dtype=np.int32).reshape(C.SEQ, C.EMBED)
 
 
@@ -233,10 +305,17 @@ def main():
     public = json.load(open(os.path.join(run_dir, "public.json")))
     cst = public["constants"]
     c_eps = cst["C_eps"]
+    submission = public.get("submission", "baseline")
+    assert submission in C.SUBMISSIONS, f"unknown submission {submission!r}"
+    # PHASE0 §21 MINOR-7: headmerge_perm comes from public.json (argv to BOTH
+    # prove and verify); it must agree with the submission's pinned mode.
+    perm = public.get("headmerge_perm", "pi157")
+    assert perm == C.PERM_FOR[submission], \
+        f"public.json headmerge_perm={perm!r} inconsistent with submission {submission!r}"
     run_seed = C.run_seed_of(run_dir)
     P = C.reg_paths(run_dir)
     d = os.path.join(run_dir, "data")
-    print(f"== prove_walk {run_dir} ==\n  run_seed = {run_seed}")
+    print(f"== prove_walk {run_dir} (submission: {submission}) ==\n  run_seed = {run_seed}")
     t_start = time.time()
 
     resid = np.fromfile(P["input"], dtype=np.int32).reshape(C.SEQ, C.EMBED)
@@ -247,8 +326,10 @@ def main():
         rmsnorm_site(run_dir, l, "input_norm", resid, run_seed, c_eps)
         attn_in_path = os.path.join(d, f"layer{l}.input_norm.rmsnorm.out.i32.bin")
 
-        # attention: the full §7.3 integer chain; attn_out = headmerge O2
-        attn_out = attention_chain(run_dir, l, attn_in_path, run_seed, cst)
+        # attention: the full integer chain; attn_out = headmerge O2 (baseline)
+        # or the o_proj rescale output (faithful, §4.1)
+        attn_out = attention_chain(run_dir, l, attn_in_path, run_seed, cst,
+                                   submission, perm)
         a_skip = f"layer{l}.attn_skip.add"
         os.makedirs(C.ob(run_dir, a_skip), exist_ok=True)
         prove(a_skip, "commit-attn-out", a_skip,
@@ -360,12 +441,13 @@ def main():
                            f"{bad[:8].tolist()} — head pass / chain divergence (bug)")
     # tie-count duty (STAGE3 §2.4(ii) / PHASE0 §19): sum over rows of
     # log2(#row maximizers) — the selector tie channel, proof-bytes-only.
+    # (logits holds exactly the V real columns, so every position is allowed.)
     mxv = logits.max(axis=1)
-    kmax = (logits == mxv[:, None]).sum(axis=1)
-    tie_bits = float(np.log2(kmax.astype(np.float64)).sum())
-    tie_rows = int((kmax > 1).sum())
-    print(f"  rowmax selector ties: {tie_rows}/{C.SEQ} rows tied, "
-          f"sum log2(#maximizers) = {tie_bits:.3f} bits")
+    record_ties("statement.logit_binding", (logits == mxv[:, None]).sum(axis=1))
+    total_tie_bits = round(sum(t["sum_log2_maximizers_bits"] for t in TIES.values()), 4)
+    total_tie_rows = sum(t["rows_with_ties"] for t in TIES.values())
+    print(f"  rowmax selector ties ({len(TIES)} instances): {total_tie_rows} tied rows, "
+          f"sum log2(#maximizers) = {total_tie_bits:.3f} bits")
 
     prove(LB, "rowmax", LB,
           [C.drv("zkob_rowmax"), "prove", C.ob(run_dir, LB, "rowmax"), None,
@@ -379,16 +461,16 @@ def main():
         proof_bytes += sum(os.path.getsize(os.path.join(root, f)) for f in files)
     manifest = {
         "run_seed": run_seed,
-        "covered_ids": C.covered_ids(),
+        "submission": submission,
+        "covered_ids": C.covered_ids(submission),
         "skipped_ids": C.skipped_ids(),
         "rowmax_selector_ties": {
             "note": "covert selector tie channel duty (STAGE3 §2.4(ii)): per rowmax "
                     "instance, sum over rows of log2(#allowed maximizers); observable "
                     "in proof bytes (com_S + openings) only, never in served tensors",
-            "statement.logit_binding": {
-                "rows": C.SEQ, "rows_with_ties": tie_rows,
-                "sum_log2_maximizers_bits": round(tie_bits, 4)},
-            "total_bits": round(tie_bits, 4),
+            "instances": TIES,
+            "rows_with_ties": total_tie_rows,
+            "total_bits": total_tie_bits,
         },
         "runs": RUNS,
         "totals": {

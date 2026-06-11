@@ -11,7 +11,16 @@ public.json BEFORE sealing — so run_seed = sha256(public.json) binds the
 served tokens into every FS transcript.
 See ORCHESTRATOR_DESIGN.md §2 + ROPE_ATTENTION_DESIGN.md §2.1/§4.5.
 
-Run with the pipeline env: /root/int-model-env/bin/python register.py [--run-id X]
+`--submission faithful-arch-v1` (STAGE3 §4.4) re-registers the statement as
+the faithful llama-68m: o_proj weights added per layer (byte-compared against
+the pipeline's own o_proj dumps — the commit loop exports them even though the
+frozen pipeline never uses them), the temperature-8 softmax8 exp table
+(gen_softmax8_table.py), "headmerge_perm": "concat", and a head pass run with
+the faithful integer attention — so t* and run_seed change with the statement
+(that is the point: a new public.json IS the revised registration).
+
+Run with the pipeline env:
+  /root/int-model-env/bin/python register.py [--run-id X] [--submission faithful-arch-v1]
 """
 import argparse
 import hashlib
@@ -30,9 +39,12 @@ CACHE_DIR = os.path.join(C.ZKLLM, "model-storage")
 PIPELINE_DUMP = os.path.join(C.ZKLLM, "zkllm-workdir", "llama-68m")
 
 
-def export_weights(run_dir, log=print):
+def export_weights(run_dir, submission, log=print):
     """Export integer weights with the pipeline's exact semantics and
-    cross-check against the pipeline's own dumps where they exist."""
+    cross-check against the pipeline's own dumps where they exist.
+    faithful-arch-v1 adds o_proj (STAGE3 §4.1) — the pipeline's commit loop
+    dumps layer-{l}-self_attn.o_proj.weight-int.bin even though it never uses
+    it, so the byte-compare provenance guard applies in full."""
     import torch
     from transformers import AutoModelForCausalLM
     model = AutoModelForCausalLM.from_pretrained(MODEL_CARD, cache_dir=CACHE_DIR)
@@ -42,11 +54,11 @@ def export_weights(run_dir, log=print):
         "mlp.gate_proj": "mlp.gate_proj.weight", "mlp.up_proj": "mlp.up_proj.weight",
         "mlp.down_proj": "mlp.down_proj.weight",
         "attn.q_proj": "self_attn.q_proj.weight", "attn.k_proj": "self_attn.k_proj.weight",
-        "attn.v_proj": "self_attn.v_proj.weight",
+        "attn.v_proj": "self_attn.v_proj.weight", "attn.o_proj": "self_attn.o_proj.weight",
         "input_norm.g": "input_layernorm.weight", "post_attn_norm.g": "post_attention_layernorm.weight",
     }
     os.makedirs(os.path.join(run_dir, "registration", "weights"), exist_ok=True)
-    for wid, dump_stem, IN, OUT, _gen in C.weight_specs():
+    for wid, dump_stem, IN, OUT, _gen in C.weight_specs(submission):
         l = int(wid.split(".")[0][len("layer"):])
         pname = name_of[wid.split(".", 1)[1]]
         w = dict(model.model.layers[l].named_parameters())[pname]
@@ -93,20 +105,77 @@ def export_head(run_dir, model, log=print):
     return tied
 
 
-def head_pass(run_dir, c_eps, log=print):
+def head_pass(run_dir, c_eps, submission, log=print):
     """Phase B (STAGE3 §3.4): deterministic integer-chain head pass — the
     validated numpy forward (measure/int_chain.py semantics) from the
     registered input through the registered weights to integer logits, with
     the final-norm advice R SWITCHED to the integer-exact bracket (§3.1; the
     same witness-authority rule as the four per-layer sites). t*[i] =
     np.argmax(logits[i, :V]) — lowest-index tie-break, matching zkob_rowmax's
-    canonical witness. Writes registration/tstar.i32.bin."""
+    canonical witness. Writes registration/tstar.i32.bin.
+
+    faithful-arch-v1 (STAGE3 §4): the attention segment is the FAITHFUL
+    integer chain instead — exact allowed row-max shift (zkob_rowmax causal
+    semantics), temperature-8 sentinel table (zkob_softmax8 semantics:
+    P = round_half_up(2^16*E/S), masked E = 0 by the sentinel row), plain
+    head-concat (headmerge concat mode), o_proj fc + rescale. Must reproduce
+    the driver-emitted logits byte-exactly: prove_walk asserts
+    argmax(driver logits) == this pass's registered t*."""
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "measure"))
     from int_chain import IntChain, imatmul, rescale
     from prove_walk import compute_R
     P = C.reg_paths(run_dir)
-    chain = IntChain(P["reg"])
+
+    if submission == "faithful-arch-v1":
+        class FaithfulChain(IntChain):
+            def __init__(self, reg_dir):
+                super().__init__(reg_dir)
+                t = np.fromfile(os.path.join(reg_dir, "softmax8-exp-table.bin"),
+                                dtype=np.int32)
+                assert (t.size == C.SOFTMAX8_LEN and t[-C.SOFTMAX8_LOW] == (1 << 16)
+                        and t[-1] == 0), "softmax8 exp table anchors wrong"
+                self.exp8_tab = t
+
+            def attention(self, l, attn_in):
+                SENT = np.int64(C.SOFTMAX8_LOW + C.SOFTMAX8_LEN - 1)   # +1
+                proj = {}
+                for pj in ("q_proj", "k_proj", "v_proj"):
+                    Wp = self.w[f"layer{l}.attn.{pj}"].reshape(C.EMBED, C.EMBED)
+                    proj[pj] = rescale(imatmul(attn_in, Wp), C.LOG_SF).astype(np.int32)
+                roped = {}
+                for t_, pj in (("q", "q_proj"), ("k", "k_proj")):
+                    T = proj[pj].astype(np.int64)
+                    Y64 = T * self.W1 + T[:, self.flip] * self.W2
+                    assert np.abs(Y64).max() < 2**47, "rope |Y64| completeness guard"
+                    roped[t_] = rescale(Y64, C.LOG_SF).astype(np.int32)
+                heads = []
+                for h in range(C.N_HEADS):
+                    sl = slice(C.HEAD_DIM * h, C.HEAD_DIM * (h + 1))
+                    z = imatmul(roped["q"][:, sl], roped["k"][:, sl].T)      # @2^32
+                    z_ = rescale(rescale(z, C.SCORES_RESCALE13_LOG),
+                                 C.SCORES_RESCALE10_LOG)                     # @2^9
+                    if np.abs(z_).max() >= (1 << 19):
+                        raise RuntimeError(
+                            f"layer{l} h{h}: scores leave the rowmax/softmax8 "
+                            f"envelope |z_| < 2^19 — completeness failure")
+                    mx = np.where(self.MK == 1, z_, np.int64(-(1 << 62))).max(axis=1)
+                    Dm = np.where(self.MK == 1, z_ - mx[:, None], SENT)
+                    if int(np.where(self.MK == 1, Dm, 0).min()) < C.SOFTMAX8_LOW:
+                        raise RuntimeError(
+                            f"layer{l} h{h}: allowed diff below LOW8 — completeness failure")
+                    E = self.exp8_tab[(Dm - C.SOFTMAX8_LOW)].astype(np.int64)
+                    S = E.sum(axis=1)                  # >= 2^16 structurally (argmax row)
+                    Pn = ((E << 17) + S[:, None]) // (2 * S[:, None])   # round_half_up @2^16
+                    heads.append(rescale(imatmul(Pn, proj["v_proj"][:, sl].astype(np.int64)),
+                                         C.LOG_SF).astype(np.int32))
+                M = np.concatenate(heads, axis=1)      # concat: NO line-157 permutation
+                Wo = self.w[f"layer{l}.attn.o_proj"].reshape(C.EMBED, C.EMBED)
+                return rescale(imatmul(M, Wo), C.LOG_SF).astype(np.int32)
+
+        chain = FaithfulChain(P["reg"])
+    else:
+        chain = IntChain(P["reg"])
     chain.g_final = chain.w["final_norm.g"].astype(np.int64)
     chain.w_lm = chain.w["lm_head"].reshape(C.EMBED, C.VOCAB)
     x0 = np.fromfile(P["input"], dtype=np.int32).reshape(C.SEQ, C.EMBED)
@@ -177,17 +246,41 @@ def gen_attention_tables(run_dir, log=print):
         "softmax exp table anchor wrong (exp(0) != 2^16)"
 
 
+def gen_softmax8_table(run_dir, log=print):
+    """faithful-arch-v1: run the PINNED generator /root/zkllm/gen_softmax8_table.py
+    (STAGE3 §4.3; the design doc's name gen_softmax8_exp_table.py is errata —
+    PHASE0 §20) with cwd = registration/. The sha256 registration below, not
+    regeneration, is the source of truth; both drivers additionally require
+    table[LEN8-1] == 0 (the sentinel check) at load."""
+    import subprocess
+    P = C.reg_paths(run_dir)
+    spath = os.path.join(C.ZKLLM, "gen_softmax8_table.py")
+    r = subprocess.run([sys.executable, spath], cwd=P["reg"],
+                       capture_output=True, text=True, timeout=300)
+    if r.returncode != 0:
+        raise RuntimeError(f"gen_softmax8_table.py failed: {r.stdout}{r.stderr}")
+    t = np.fromfile(P["exp8_table"], dtype=np.int32)
+    # anchors: E(v=0) = 2^16 (the shifted allowed argmax); table[SENT] == 0
+    assert (t.size == C.SOFTMAX8_LEN and t[-C.SOFTMAX8_LOW] == (1 << 16)
+            and t[-1] == 0), "softmax8 exp table anchors wrong"
+    log(f"  softmax8-exp-table.bin: {t.size} entries, E(0)=2^16, sentinel=0 (from {spath})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", default=time.strftime("run-%Y%m%d-%H%M%S"))
     ap.add_argument("--root", default=C.RUN_ROOT)
+    ap.add_argument("--submission", default="baseline", choices=C.SUBMISSIONS,
+                    help="faithful-arch-v1 = STAGE3 §4 re-registration (o_proj, "
+                         "headmerge concat, temperature-8 softmax8 + rowmax)")
     args = ap.parse_args()
+    sub = args.submission
     run_dir = os.path.join(args.root, args.run_id)
     P = C.reg_paths(run_dir)
     os.makedirs(P["weights"], exist_ok=True)
     os.makedirs(os.path.join(run_dir, "data"), exist_ok=True)
     os.makedirs(os.path.join(run_dir, "proofs"), exist_ok=True)
-    print(f"== register: {run_dir} ==")
+    print(f"== register: {run_dir} (submission: {sub}) ==")
 
     print("-- gens (ppgen) --")
     for n, key in ((64, "gen64"), (1024, "gen1024"), (4096, "gen4096"),
@@ -195,14 +288,14 @@ def main():
         C.run_driver([C.drv("ppgen"), str(n), P[key]], f"ppgen {n}")
 
     print("-- weights (pipeline semantics) --")
-    eps, model = export_weights(run_dir)
+    eps, model = export_weights(run_dir, sub)
     c_eps = round(eps * C.EMBED * (1 << 32))
     print(f"  rms_norm_eps={eps} -> C_eps={c_eps}")
     lm_head_tied = export_head(run_dir, model)
     del model
 
     print("-- registered commitments (zkob_fc commit) --")
-    for wid, _stem, IN, OUT, gen in C.weight_specs():
+    for wid, _stem, IN, OUT, gen in C.weight_specs(sub):
         C.run_driver([C.drv("zkob_fc"), "commit", C.wpath(run_dir, wid, "int"),
                       str(IN), str(OUT), P[C.GEN_FOR[gen].split(".")[0]],
                       C.wpath(run_dir, wid, "com")], f"commit {wid}")
@@ -221,13 +314,24 @@ def main():
 
     print("-- attention tables (rope cos/sin + softmax exp) --")
     gen_attention_tables(run_dir)
+    if sub == "faithful-arch-v1":
+        print("-- softmax8 exp table (temperature 8, STAGE3 §4.3) --")
+        gen_softmax8_table(run_dir)
 
     print("-- phase B: head pass -> registered served tokens t* (STAGE3 §3.4) --")
-    head_pass(run_dir, c_eps)
+    head_pass(run_dir, c_eps, sub)
 
     print("-- public.json --")
+    faithful = sub == "faithful-arch-v1"
     public = {
         "model": MODEL_CARD, "seq_len": C.SEQ, "run_id": args.run_id,
+        # STAGE3 §4.4: the submission constants that redefine the registered
+        # statement. baseline keeps the frozen-pipeline quirks (pi157, temp 128,
+        # o_proj omitted) and stays bit-reproducible.
+        "submission": sub,
+        "headmerge_perm": C.PERM_FOR[sub],
+        "softmax_temperature": 8 if faithful else 128,
+        "o_proj": "applied" if faithful else "omitted (frozen pipeline)",
         "prompt_token_ids": None,
         "note_input": "pipeline starts from a random-normal activation (embedding waived); "
                       "the input file digest below is the prompt-binding analog",
@@ -252,11 +356,12 @@ def main():
             "LOGIT_LEN_R": C.LOGIT_LEN_R, "LOGIT_NPL": C.LOGIT_NPL,
         },
         "lm_head_tied": lm_head_tied,
+        # faithful-arch chain constants (STAGE3 §4.3) merged below for faithful runs
         "gens": {k: C.sha256_file(P[k])
                  for k in ("gen64", "gen1024", "gen4096", "gen32768", "q")},
         "registered_weight_commitments": {
             wid: C.sha256_file(C.wpath(run_dir, wid, "com"))
-            for wid in ([w for w, *_ in C.weight_specs()]
+            for wid in ([w for w, *_ in C.weight_specs(sub)]
                         + [w for w, *_ in C.head_weight_specs()])
         },
         "served_tokens": {
@@ -274,10 +379,24 @@ def main():
             "rope-sin-table.bin": C.sha256_file(P["rope_sin"]),
             "softmax-exp-table.bin": C.sha256_file(P["exp_table"]),
         },
-        "covered_subgraph": "stage3-full-statement (MLP + rmsnorm + skips + complete attention "
-                            "chain + final_norm + lm_head + served-token argmax binding; "
-                            "the only waived-and-uncovered manifest id is embedding.lookup)",
+        "covered_subgraph": (
+            "faithful-arch-v1 (STAGE3 §4: full statement with o_proj applied, plain "
+            "head-concat, temperature-8 softmax8 + per-head rowmax max-shift; the six "
+            "o_proj.* ids are covered; the only waived-and-uncovered manifest id is "
+            "embedding.lookup)" if faithful else
+            "stage3-full-statement (MLP + rmsnorm + skips + complete attention "
+            "chain + final_norm + lm_head + served-token argmax binding; "
+            "the only waived-and-uncovered manifest id is embedding.lookup)"),
     }
+    if faithful:
+        public["constants"].update({
+            "SCORES_ROWMAX_LEN_R": C.SCORES_ROWMAX_LEN_R,
+            "SCORES_ROWMAX_NPL": C.SCORES_ROWMAX_NPL,
+            "SOFTMAX8_LOW": C.SOFTMAX8_LOW, "SOFTMAX8_LEN": C.SOFTMAX8_LEN,
+            "SOFTMAX8_LEN_R": C.SOFTMAX8_LEN_R,
+            "OPROJ_RESCALE_LOG": C.OPROJ_RESCALE_LOG,
+        })
+        public["tables"]["softmax8-exp-table.bin"] = C.sha256_file(P["exp8_table"])
     pj = os.path.join(run_dir, "public.json")
     with open(pj, "w") as f:
         json.dump(public, f, indent=2, sort_keys=True)

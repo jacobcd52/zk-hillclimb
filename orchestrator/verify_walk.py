@@ -1,4 +1,11 @@
-"""SEPARATE verifier process for a stage-3 run (full forward pass + head).
+"""SEPARATE verifier process for a stage-3 / faithful-arch-v1 run (full
+forward pass + head). The submission mode is part of the public STATEMENT
+(public.json "submission"/"headmerge_perm" — inside the run_seed hash):
+faithful-arch-v1 switches the attention chain to rowmax (causal) + softmax8
+per head with edges RM1/RM2/SX8a/SX8b, headmerge concat, and o_proj fc +
+rescale (edges O1/O2/O3, discharging the six o_proj.* covered-waived ids);
+an unknown submission value or a headmerge_perm inconsistent with the
+submission's pinned mode is a fail-closed REJECT before any driver runs.
 
 Reads ONLY: public.json, registration/ (hash-checked against public.json),
 proofs/, and the frozen harness manifest. NEVER reads data/ (witness files),
@@ -92,6 +99,22 @@ def main():
         print(f"VERDICT: REJECT ({why})")
         sys.exit(1)
 
+    # ---- 0. submission mode (part of the STATEMENT, inside the run_seed) --
+    submission = public.get("submission", "baseline")
+    if submission not in C.SUBMISSIONS:
+        fail("statement.registered_weight_hash",
+             f"unknown submission {submission!r} in public.json")
+        stop_reject(f"unknown submission {submission!r}", 0)
+    perm = public.get("headmerge_perm", "pi157")
+    if perm != C.PERM_FOR[submission]:
+        # PHASE0 §21 MINOR-7: the verifier passes headmerge_perm as argv; a
+        # statement whose perm contradicts its submission mode is incoherent.
+        fail("statement.registered_weight_hash",
+             f"headmerge_perm={perm!r} inconsistent with submission {submission!r} "
+             f"(pinned: {C.PERM_FOR[submission]!r})")
+        stop_reject("public.json submission/headmerge_perm inconsistent", 0)
+    print(f"  submission: {submission} (headmerge {perm})")
+
     # ---- 1. registration hash checks ------------------------------------
     reg_ok = True
     checks = [(f"gens.{k}", P[k], public["gens"][k])
@@ -118,7 +141,7 @@ def main():
         stop_reject("registration check failed (untrusted registration)", len(checks))
 
     # ---- 1b. structural checks (before any driver runs) ------------------
-    spec, edges = C.walk_spec(run_dir)
+    spec, edges = C.walk_spec(run_dir, submission)
 
     # MINOR-5: every registration/ path the walk consumes (driver argv or chain
     # edge) must have been hash-pinned by the step-1 checks above. Guards
@@ -238,7 +261,7 @@ def main():
     # (IPA(W) against the REGISTERED commitment, absorbed into the transcript).
     # Discharged AFTER the edge phase (MINOR-4) so a matmul whose driver passed
     # but whose chain edge failed also drags its opening id out of `checked`.
-    for mid in list(C.covered_ids()):
+    for mid in list(C.covered_ids(submission)):
         if mid.endswith(".commitment_opening"):
             mm = mid.replace(".commitment_opening", ".matmul")
             ok = details.get(mm, {}).get("ok", False)
@@ -259,7 +282,7 @@ def main():
         "tstar.i32.bin; logits grid chained by edge L1; t* pinned into run_seed "
         "via public.json — STAGE3 §3.3)")
 
-    drivers_ok = all(details.get(m, {}).get("ok", False) for m in C.covered_ids()
+    drivers_ok = all(details.get(m, {}).get("ok", False) for m in C.covered_ids(submission)
                      if m.startswith(("layer", "final_norm", "lm_head")))
     d = details.setdefault("statement.prompt_binding", {"ok": True, "reasons": []})
     d["ok"] = drivers_ok
@@ -270,13 +293,14 @@ def main():
         if drivers_ok else "dependent obligation verifies failed")
 
     # ---- transcript --------------------------------------------------------
-    checked = [m for m in C.covered_ids() if details.get(m, {}).get("ok", False)]
-    rejected = [m for m in C.covered_ids() if not details.get(m, {}).get("ok", False)]
+    checked = [m for m in C.covered_ids(submission) if details.get(m, {}).get("ok", False)]
+    rejected = [m for m in C.covered_ids(submission) if not details.get(m, {}).get("ok", False)]
     verdict = "ACCEPT" if not rejected else "REJECT"
     for m, d in details.items():
         d["reason"] = "; ".join(d.pop("reasons"))
     transcript = {
         "verdict": verdict,
+        "submission": submission,
         "checked": checked,
         "rejected": rejected,
         "skipped": skipped,
