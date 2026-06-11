@@ -123,6 +123,9 @@ static Fr_t fold_public(const FrTensor& W, const vector<Fr_t>& ws) {
 //     -> "h1 weight terminal" (verifier W_f rebuilt from the REGISTERED table).
 //  4: h1 run with a corrupted ones-buffer U[idx] += 1, c1 computed from it,
 //     everything else honest -> "h1 U_f2 != 1".
+//  5: sigma sign flipped on one W2 entry (the SIN / hadamard-2 path), used
+//     consistently throughout (Y64, c2, h2 E-buffer) -> "h2 weight terminal"
+//     (the verifier rebuilds W2 from the REGISTERED table; audit MINOR-3).
 static void prove(const string& obdir, const string& seed,
                   const vector<int>& Th, uint B, uint C, uint HD,
                   const vector<int>& cosT, const vector<int>& sinT,
@@ -140,6 +143,7 @@ static void prove(const string& obdir, const string& seed,
     vector<int> W1i, W2i;
     build_weights(W1i, W2i, cosT, sinT, B, C, C_pad, HD);
     if (evil == 3) W1i[evil_idx] += 1;
+    if (evil == 5) W2i[evil_idx] = W2i[evil_idx] ? -W2i[evil_idx] : 1;  // sign flip; 1 if the entry is 0 so the corruption is never vacuous
 
     // ---- padded T grid, flipped grid, exact Y64 (host int64) ----
     vector<int> Tg(D, 0), Txg(D);
@@ -459,6 +463,8 @@ static bool selftest_case(uint B, uint C, uint HD) {
             "bumped cos table W1[idx]+=1 used consistently throughout"},
         {4, real_idx, "h1 U_f2 != 1",
             "h1 ones-buffer U[idx]+=1, c1 computed from it"},
+        {5, real_idx, "h2 weight terminal",
+            "sigma sign flipped on one W2 entry (sin path) used consistently throughout"},
     };
     string evdir = "/tmp/zkob_rope_evil";
     mkdir(evdir.c_str(), 0755);

@@ -101,21 +101,23 @@ static vector<Fr_t> full_point(const vector<Fr_t>& v_d, const vector<Fr_t>& v_t,
 
 // ---------------- prove ----------------
 // evil (selftest only; the evil prover computes the claimed eval from its evil
-// slice so the slice-side IPA passes; the full-tensor side must catch it):
-//  1: Qh{1} filled from head (2 % NH)'s columns -> "IPA opening of eQ01 vs
-//     com_Q (head-selector point)".
-//  2: Vh{0} sliced with a one-column offset (cols 1..HD+1) -> "IPA opening of
-//     eV00 vs com_V (head-selector point)".
-//  3: KhT{0} = head 0's row-major B x HD buffer reinterpreted as HD x B
-//     WITHOUT transposing -> "IPA opening of eK00 vs com_K (head-selector
-//     point)". (Honest-case pass + this evil jointly pin the (v_t || v_d)
-//     coordinate swap.)
+// slice so the slice-side IPA passes; the full-tensor side must catch it).
+// evil = the error FAMILY, evil_t = the target tensor (0=Q, 1=K, 2=V); across
+// the three toy cases every family hits every tensor once (audit MINOR-4):
+//  1: slice {1} filled from head (2 % NH)'s columns (wrong head, honest
+//     layout) -> "IPA opening of e?01 vs com_? (head-selector point)".
+//  2: slice {0} gathered with a one-column offset (cols 1..HD, honest layout)
+//     -> "IPA opening of e?00 vs com_? (head-selector point)".
+//  3: slice {0} = head 0's data in the WRONG layout (K: row-major B x HD bytes
+//     reinterpreted as HD x B without transposing; Q/V: transposed when they
+//     must not be) -> "IPA opening of e?00 vs com_? (head-selector point)".
+//     (Honest-case pass + this family jointly pin the (v_t || v_d) swap.)
 static void prove(const string& obdir, const string& seed,
                   const vector<int>& Qh_in, const vector<int>& Kh_in,
                   const vector<int>& Vh_in, uint B, uint C, uint HD,
                   const Commitment& gen_big, const Commitment& gen_small,
                   const G1Jacobian_t& Q, const string& slice_dir,
-                  int evil = 0) {
+                  int evil = 0, int evil_t = 0) {
     layout_guards(B, C, HD, gen_big, gen_small);
     const uint C_pad = 1u << ceilLog2(C);
     const uint logB = ceilLog2(B), logCp = ceilLog2(C_pad), logHD = ceilLog2(HD);
@@ -137,21 +139,29 @@ static void prove(const string& obdir, const string& seed,
                 Vs[h][(size_t)t * HD + d] = Vh_in[(size_t)t * C + HD * h + d];
             }
     }
-    if (evil == 1) {        // Qh{1} from head (2 % NH)'s columns
-        uint src = 2 % NH;
-        for (uint t = 0; t < B; t++)
-            for (uint d = 0; d < HD; d++)
-                Qs[1][(size_t)t * HD + d] = Qh_in[(size_t)t * C + HD * src + d];
-    }
-    if (evil == 2) {        // Vh{0} with the classic one-column offset
-        for (uint t = 0; t < B; t++)
-            for (uint d = 0; d < HD; d++)
-                Vs[0][(size_t)t * HD + d] = Vh_in[(size_t)t * C + d + 1];
-    }
-    if (evil == 3) {        // KhT{0} = untransposed reinterpretation
-        for (uint t = 0; t < B; t++)
-            for (uint d = 0; d < HD; d++)
-                Ks[0][(size_t)t * HD + d] = Kh_in[(size_t)t * C + d];   // row-major B x HD bytes
+    if (evil) {             // family `evil` planted on tensor family `evil_t`
+        vector<vector<int>>& S = (evil_t == 0 ? Qs : evil_t == 1 ? Ks : Vs);
+        const vector<int>& full = (evil_t == 0 ? Qh_in : evil_t == 1 ? Kh_in : Vh_in);
+        const bool tK = (evil_t == 1);  // K's HONEST layout is the transposed one
+        if (evil == 1) {    // wrong head: slice {1} from head (2 % NH)'s columns
+            uint src = 2 % NH;
+            for (uint t = 0; t < B; t++)
+                for (uint d = 0; d < HD; d++)
+                    S[1][tK ? (size_t)d * B + t : (size_t)t * HD + d]
+                        = full[(size_t)t * C + HD * src + d];
+        }
+        if (evil == 2) {    // slice {0} with the classic one-column offset
+            for (uint t = 0; t < B; t++)
+                for (uint d = 0; d < HD; d++)
+                    S[0][tK ? (size_t)d * B + t : (size_t)t * HD + d]
+                        = full[(size_t)t * C + d + 1];
+        }
+        if (evil == 3) {    // slice {0} = head 0's data in the WRONG layout
+            for (uint t = 0; t < B; t++)
+                for (uint d = 0; d < HD; d++)
+                    S[0][tK ? (size_t)t * HD + d : (size_t)d * B + t]
+                        = full[(size_t)t * C + d];
+        }
     }
     if (!slice_dir.empty()) {     // prover-only witness files for the fc runs
         for (uint h = 0; h < NH; h++) {
@@ -369,7 +379,10 @@ static long tamper_offset(const string& f) {
     return 24;                                      // com_*: first point, x limbs
 }
 
-static bool selftest_case(uint B, uint C, uint HD) {
+// fam_t[k] = the tensor (0=Q, 1=K, 2=V) that error family k+1 targets in this
+// case; the three toy cases use a Latin square so every family hits every
+// tensor at least once across the selftest (audit MINOR-4)
+static bool selftest_case(uint B, uint C, uint HD, const int fam_t[3]) {
     const uint NH = C / HD, C_pad = 1u << ceilLog2(C);
     cout << "==== selftest case B=" << B << " C=" << C << " HD=" << HD
          << " (NH=" << NH << ", C_pad=" << C_pad << ") ====" << endl;
@@ -393,20 +406,27 @@ static bool selftest_case(uint B, uint C, uint HD) {
          << (honest ? "ACCEPT" : "REJECT(!!)") << endl;
     all = all && honest;
 
-    // semantic evil modes (full-tensor side must catch each)
-    struct Evil { int mode; string expect; const char* what; };
-    vector<Evil> evils = {
-        {1, "IPA opening of eQ01 vs com_Q (head-selector point)",
-            "Qh{1} filled from head (2 % NH)'s columns"},
-        {2, "IPA opening of eV00 vs com_V (head-selector point)",
-            "Vh{0} sliced with a one-column offset"},
-        {3, "IPA opening of eK00 vs com_K (head-selector point)",
-            "KhT{0} untransposed reinterpretation"},
-    };
+    // semantic evil modes (full-tensor side must catch each); family x tensor
+    // per the case's fam_t map
+    static const char* FAM_WHAT[3] = {
+        "slice {1} filled from head (2 % NH)'s columns",
+        "slice {0} gathered with a one-column offset",
+        "slice {0} in the wrong (un/transposed) layout"};
+    struct Evil { int mode; int tensor; string expect; string what; };
+    vector<Evil> evils;
+    for (int fam = 1; fam <= 3; fam++) {
+        const int tt = fam_t[fam - 1];
+        const char tn = "QKV"[tt];
+        const char* idx = (fam == 1) ? "01" : "00";
+        evils.push_back({fam, tt,
+            string("IPA opening of e") + tn + idx + " vs com_" + tn
+                + " (head-selector point)",
+            string(FAM_WHAT[fam - 1]) + " [target " + tn + "]"});
+    }
     string evdir = "/tmp/zkob_headslice_evil";
     mkdir(evdir.c_str(), 0755);
     for (auto& ev : evils) {
-        prove(evdir, seed, Qv, Kv, Vv, B, C, HD, gen_big, gen_small, Q, "", ev.mode);
+        prove(evdir, seed, Qv, Kv, Vv, B, C, HD, gen_big, gen_small, Q, "", ev.mode, ev.tensor);
         string reason;
         bool rejected = !verify(evdir, seed, B, C, HD, gen_big, gen_small, Q, &reason);
         bool right = rejected && reason.find(ev.expect) != string::npos;
@@ -512,9 +532,14 @@ int main(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     if (mode == "selftest") {
-        bool a = selftest_case(8, 6, 2);     // NH=3, padded heads present
-        bool b = selftest_case(4, 8, 4);     // NH=2, no padding
-        bool c = selftest_case(16, 12, 4);   // NH=3, padded heads present
+        // family->tensor Latin square (audit MINOR-4): wrong-head hits Q,K,V;
+        // column-offset hits V,Q,K; wrong-layout hits K,V,Q across the cases
+        static const int fa[3] = {0, 2, 1};  // the original assignment
+        static const int fb[3] = {1, 0, 2};
+        static const int fc[3] = {2, 1, 0};
+        bool a = selftest_case(8, 6, 2, fa);     // NH=3, padded heads present
+        bool b = selftest_case(4, 8, 4, fb);     // NH=2, no padding
+        bool c = selftest_case(16, 12, 4, fc);   // NH=3, padded heads present
         bool d = selftest_real();
         bool ok = a && b && c && d;
         cout << (ok ? "ZKOB-HEADSLICE SELFTEST: ALL PASS"

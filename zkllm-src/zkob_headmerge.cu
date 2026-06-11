@@ -507,8 +507,11 @@ int main(int argc, char* argv[]) {
         bool a = selftest_case(8, 6, 2);     // generic pi, padded grid
         bool b = selftest_case(4, 4, 2);     // B == C: pi = plain transpose
         bool c = selftest_case(16, 12, 4);   // generic pi, padded 16x16 grid
+        bool e = selftest_case(16, 6, 2);    // B != C_pad (audit MINOR-2): a
+                                             // B<->C_pad symbol confusion in the
+                                             // pi^-1 gather is non-vacuous here
         bool d = selftest_real();
-        bool ok = a && b && c && d;
+        bool ok = a && b && c && e && d;
         cout << (ok ? "ZKOB-HEADMERGE SELFTEST: ALL PASS"
                     : "ZKOB-HEADMERGE SELFTEST: FAIL") << endl;
         return ok ? 0 : 1;
