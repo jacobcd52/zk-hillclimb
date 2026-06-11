@@ -33,10 +33,29 @@
 //   zkob_fc commit  <W-int.bin> <IN> <OUT> <gen_out.bin> <com_out.bin>
 //   zkob_fc prove   <obdir> <seed> <X-int.bin> <W-int.bin> <B> <IN> <OUT>
 //                   <gen_in.bin> <gen_out.bin> <q.bin> [Y-int-out.bin]
+//                   [--claims <accdir> <obid> <registered-com_W-path>]
 //   zkob_fc verify  <obdir> <seed> <B> <IN> <OUT> <com_W.bin>
 //                   <gen_in.bin> <gen_out.bin> <q.bin>
+//                   [--claims <vaccdir> <obid>]
 //   zkob_fc selftest
+//
+// CLAIM MODE (Stage A of the transport rebuild, flag-selected; the old
+// inline-IPA tail below stays compilable and is the default until Stage C):
+// with --claims, prove EMITS its three terminal claims
+//   W vs the REGISTERED commitment (point u_output++u_input)   [comref =
+//     the registered file path — the F5/F6 pin: the *.commitment_opening
+//     manifest id is discharged by this claim inside the batch]
+//   X vs com_X (point u_input++u_batch)
+//   Y vs com_Y (point u_output++u_batch)
+// into <accdir>/claims.bin at the exact program points of the old
+// ipa_prove calls, plus its final transcript state (drvstate). Verify in
+// claim mode runs every absorb/round/terminal check unchanged, then
+// RECOMPUTES the three claims from its own transcript + sumcheck.bin and
+// emits them into the VERIFIER's accumulator (<vaccdir>) — the orchestrator
+// byte-compares the two lists (opening_batch.claims_match). The driver
+// verdict is ACCEPT-conditional; only the batch makes it final.
 #include "vrf_common.cuh"
+#include "zkob_claims.cuh"
 #include "zkfc.cuh"
 #include <iostream>
 #include <sys/stat.h>
@@ -103,7 +122,10 @@ static void prove(const string& obdir, const string& seed,
                   const FrTensor& X, const FrTensor& W,
                   uint B, uint IN, uint OUT,
                   const Commitment& gen_in, const Commitment& gen_out,
-                  const G1Jacobian_t& Q, const string& y_out_path) {
+                  const G1Jacobian_t& Q, const string& y_out_path,
+                  const string& accdir = "", const string& obid = "",
+                  const string& comW_path = "") {
+    const bool claim_mode = !accdir.empty();
     const uint B_pad = 1u << ceilLog2(B), IN_pad = 1u << ceilLog2(IN),
                OUT_pad = 1u << ceilLog2(OUT);
     if (gen_in.size != IN_pad || gen_out.size != OUT_pad)
@@ -197,7 +219,37 @@ static void prove(const string& obdir, const string& seed,
     absorb_fr(tr, "claim_X", claim_X); absorb_fr(tr, "claim_W", claim_W);
     write_sumcheck(obdir + "/sumcheck.bin", sc);
 
-    // ---- IPA openings (same transcript; order W, X, Y) ----
+    if (claim_mode) {
+        // ---- claim emission (replaces the inline IPAs; same program point,
+        // same order W, X, Y; the driver transcript simply ends here) ----
+        auto mk = [&](const string& tensor, const string& comref, uint32_t domain,
+                      uint32_t n_rows, const vector<Fr_t>& u_col,
+                      const vector<Fr_t>& u_row, const Fr_t& eval) {
+            BoClaim c;
+            c.id = obid + ":" + tensor;
+            c.comref = comref;
+            c.domain = domain; c.n_rows = n_rows;
+            c.point = u_col;
+            c.point.insert(c.point.end(), u_row.begin(), u_row.end());
+            c.eval = eval;
+            claim_emit(accdir, c);
+        };
+        string witW = accdir + "/wit_" + obid + "_W.fr";
+        string witX = accdir + "/wit_" + obid + "_X.fr";
+        string witY = accdir + "/wit_" + obid + "_Y.fr";
+        W_padded.save(witW); X_padded.save(witX); Y_padded.save(witY);
+        mk("W", comW_path, OUT_pad, IN_pad, u_output, u_input, claim_W);
+        witref_emit(accdir, comW_path, witW);
+        mk("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch, claim_X);
+        witref_emit(accdir, obdir + "/com_X.bin", witX);
+        mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, claim);
+        witref_emit(accdir, obdir + "/com_Y.bin", witY);
+        drvstate_emit(accdir, obid, tr);
+        cout << "PROVED matmul obligation (claim mode, 3 claims emitted) -> " << obdir << endl;
+        return;
+    }
+
+    // ---- OLD TAIL: inline IPA openings (same transcript; order W, X, Y) ----
     FrTensor aW = W_padded.partial_me(u_input, OUT_pad);    // fold IN_pad rows
     auto bW = me_weights(u_output);
     write_ipa(obdir + "/ipa_W.bin", ipa_prove(aW.gpu_data, bW, gen_out.gpu_data, Q, OUT_pad, tr));
@@ -216,7 +268,10 @@ static void prove(const string& obdir, const string& seed,
 static bool verify(const string& obdir, const string& seed,
                    uint B, uint IN, uint OUT, const string& com_W_path,
                    const Commitment& gen_in, const Commitment& gen_out,
-                   const G1Jacobian_t& Q) {
+                   const G1Jacobian_t& Q,
+                   const string& vaccdir = "", const string& obid = "") {
+    const bool claim_mode = !vaccdir.empty();
+    BoTimer prof("fc_verify");
     const uint B_pad = 1u << ceilLog2(B), IN_pad = 1u << ceilLog2(IN),
                OUT_pad = 1u << ceilLog2(OUT);
     if (gen_in.size != IN_pad || gen_out.size != OUT_pad) {
@@ -247,6 +302,7 @@ static bool verify(const string& obdir, const string& seed,
     auto u_batch = fs_challenge_vec(tr, ceilLog2(B));
     auto u_output = fs_challenge_vec(tr, ceilLog2(OUT));
     absorb_fr(tr, "claim", sc.claim);
+    prof.lap("absorb");
 
     Fr_t cur = sc.claim;
     vector<Fr_t> xs;
@@ -267,7 +323,36 @@ static bool verify(const string& obdir, const string& seed,
         cout << "REJECT: terminal claim != claim_X * claim_W" << endl; return false;
     }
     absorb_fr(tr, "claim_X", sc.claim_X); absorb_fr(tr, "claim_W", sc.claim_W);
+    prof.lap("rounds");
 
+    if (claim_mode) {
+        // ---- claim recomputation (the verifier-side accumulator entry; the
+        // orchestrator byte-compares this against the prover's claims.bin).
+        // Points come from THIS verify's own FS replay; evals are the
+        // FS-bound terminals it just checked. The W claim carries the
+        // REGISTERED com path as comref (F5/F6 discharge pin).
+        auto mk = [&](const string& tensor, const string& comref, uint32_t domain,
+                      uint32_t n_rows, const vector<Fr_t>& u_col,
+                      const vector<Fr_t>& u_row, const Fr_t& eval) {
+            BoClaim c;
+            c.id = obid + ":" + tensor;
+            c.comref = comref;
+            c.domain = domain; c.n_rows = n_rows;
+            c.point = u_col;
+            c.point.insert(c.point.end(), u_row.begin(), u_row.end());
+            c.eval = eval;
+            claim_emit(vaccdir, c);
+        };
+        mk("W", com_W_path, OUT_pad, IN_pad, u_output, u_input, sc.claim_W);
+        mk("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch, sc.claim_X);
+        mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, sc.claim);
+        drvstate_emit(vaccdir, obid, tr);
+        prof.lap("claim_emit");
+        cout << "ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)" << endl;
+        return true;
+    }
+
+    // ---- OLD TAIL: inline IPA verifies ----
     // IPA W: rows IN_pad folded by u_input, b from u_output, eval claim_W
     {
         G1Jacobian_t C0 = fold_chain(com_W.gpu_data, IN_pad, u_input, 0);
@@ -298,6 +383,7 @@ static bool verify(const string& obdir, const string& seed,
             return false;
         }
     }
+    prof.lap("ipa_tail");
     cout << "ACCEPT" << endl;
     return true;
 }
@@ -360,17 +446,136 @@ static bool selftest_case(uint B, uint IN, uint OUT) {
     return ok;
 }
 
+// claim-mode selftest: honest ACCEPT goes conditional-ACCEPT + batch ACCEPT;
+// every forgery still rejects, now at a NAMED locus (driver-side checks where
+// the driver still catches it; the batch where the opening layer used to).
+static bool selftest_case_claims(uint B, uint IN, uint OUT) {
+    cout << "=== selftest (claim mode) B=" << B << " IN=" << IN << " OUT=" << OUT
+         << " ===" << endl;
+    const uint IN_pad = 1u << ceilLog2(IN), OUT_pad = 1u << ceilLog2(OUT);
+    string dir = "/tmp/zkob_fc_selftest_cm";
+    { string c = "rm -rf " + dir; system(c.c_str()); }
+    mkdir(dir.c_str(), 0755);
+    string acc = dir + "/acc";
+    mkdir(acc.c_str(), 0755);
+    string run_seed = "selftest";              // batch seed = selftest:opening_batch
+    string seed = "selftest:matmul";           // obligation transcript seed
+    string obid = "selftest.matmul";
+
+    FrTensor X = FrTensor::random_int(B * IN, 8);
+    FrTensor W = FrTensor::random_int(IN * OUT, 8);
+    // ONE generator vector per domain SIZE (the registration invariant the
+    // per-domain RLC grouping relies on; gen_in == gen_out when sizes match)
+    map<uint32_t, Commitment*> genobj;
+    map<uint32_t, string> genpaths;
+    for (uint32_t G : {IN_pad, OUT_pad})
+        if (!genobj.count(G)) {
+            genobj[G] = new Commitment(Commitment::random(G));
+            genpaths[G] = dir + "/gen" + to_string(G) + ".bin";
+            genobj[G]->save(genpaths[G]);
+        }
+    Commitment& gen_in = *genobj[IN_pad];
+    Commitment& gen_out = *genobj[OUT_pad];
+    string qpath = dir + "/q.bin";
+    Commitment::random(2).save(qpath);         // 2-slot q (Q + H slot, §4.4)
+    Commitment qg(qpath);
+    G1Jacobian_t Q = qg(0);
+
+    string comW_path = dir + "/com_W.bin";
+    gen_out.commit(W.pad({IN, OUT})).save(comW_path);
+
+    prove(dir, seed, X, W, B, IN, OUT, gen_in, gen_out, Q, "", acc, obid, comW_path);
+
+    // pipeline: fc verify (fresh verifier accumulator) -> batch verify
+    int vacc_n = 0;
+    auto pipeline = [&](string& locus) -> bool {
+        string vacc = dir + "/vacc" + to_string(vacc_n++);
+        mkdir(vacc.c_str(), 0755);
+        if (!verify(dir, seed, B, IN, OUT, comW_path, gen_in, gen_out, Q, vacc, obid)) {
+            locus = "driver"; return false;
+        }
+        return batch_verify(acc, vacc, run_seed, genpaths, qpath, &locus);
+    };
+
+    int total = 0, fail = 0;
+    auto expect = [&](const string& what, const string& want) {
+        string locus;
+        bool acc_ok = pipeline(locus);
+        bool ok = (want == "accept") ? acc_ok : (!acc_ok && locus == want);
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] " << what
+             << " -> expected " << want << ", got " << (acc_ok ? "accept" : locus) << endl;
+    };
+
+    batch_prove(acc, run_seed, genpaths, qpath);
+    expect("honest (conditional ACCEPT + batch ACCEPT)", "accept");
+
+    // forgeries that the DRIVER still catches (unchanged loci)
+    tamper_byte(dir + "/sumcheck.bin", 4 + 32, +1);
+    expect("sumcheck round-0 p(1) tamper (driver round check)", "driver");
+    tamper_byte(dir + "/sumcheck.bin", 4 + 32, -1);
+    tamper_byte(dir + "/sumcheck.bin", -32, +1);
+    expect("claim_W terminal tamper (driver terminal product)", "driver");
+    tamper_byte(dir + "/sumcheck.bin", -32, -1);
+    tamper_byte(dir + "/com_Y.bin", 24, +1);
+    expect("com_Y tamper (driver transcript divergence)", "driver");
+    tamper_byte(dir + "/com_Y.bin", 24, -1);
+    tamper_byte(comW_path, 24, +1);
+    expect("registered com_W tamper (driver transcript divergence)", "driver");
+    tamper_byte(comW_path, 24, -1);
+
+    // forgeries that now die in the BATCH (the relocated opening layer)
+    tamper_byte(acc + "/claims.bin", -1, +1);
+    expect("prover claims.bin eval tamper", "claims_match");
+    tamper_byte(acc + "/claims.bin", -1, -1);
+    {
+        auto cs = claims_load(acc + "/claims.bin");
+        auto omitted = vector<BoClaim>(cs.begin(), cs.end() - 1);
+        claims_save(acc + "/claims.bin", omitted);
+        expect("claim dropped from prover accumulator", "claims_match");
+        claims_save(acc + "/claims.bin", cs);
+    }
+    tamper_byte(acc + "/ipa_batch_" + to_string(OUT_pad) + ".bin", -32, +1);
+    expect("batched IPA a_final tamper", "ipa" + to_string(OUT_pad));
+    tamper_byte(acc + "/ipa_batch_" + to_string(OUT_pad) + ".bin", -32, -1);
+
+    expect("restored", "accept");
+
+    for (auto& g : genobj) delete g.second;
+    bool ok = fail == 0;
+    cout << (ok ? "CASE PASS" : "CASE FAIL") << " (claim mode, " << (total - fail)
+         << "/" << total << ")" << endl;
+    return ok;
+}
+
 int main(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
+    // strip the optional claim-mode flag block: --claims <args...>
+    int base_argc = argc;
+    string cm_a, cm_b, cm_c;
+    for (int i = 2; i < argc; i++)
+        if (string(argv[i]) == "--claims") {
+            base_argc = i;
+            if (i + 1 < argc) cm_a = argv[i + 1];
+            if (i + 2 < argc) cm_b = argv[i + 2];
+            if (i + 3 < argc) cm_c = argv[i + 3];
+            break;
+        }
     if (mode == "selftest") {
+        bo_probe_kernels();
+        cout << "kernel -dlto probes: PASS" << endl;
         bool a = selftest_case(4, 6, 3);
         bool b = selftest_case(8, 8, 8);
         bool c = selftest_case(16, 12, 5);
-        cout << ((a && b && c) ? "ZKOB-FC SELFTEST: ALL PASS" : "ZKOB-FC SELFTEST: FAIL") << endl;
-        return (a && b && c) ? 0 : 1;
+        bool d = selftest_case_claims(4, 6, 3);
+        bool e = selftest_case_claims(8, 8, 8);    // IN_pad == OUT_pad: shared gen
+        bool f = selftest_case_claims(16, 12, 5);  // two domains in one batch
+        bool ok = a && b && c && d && e && f;
+        cout << (ok ? "ZKOB-FC SELFTEST: ALL PASS" : "ZKOB-FC SELFTEST: FAIL") << endl;
+        return ok ? 0 : 1;
     }
-    if (mode == "commit" && argc == 7) {
+    if (mode == "commit" && base_argc == 7) {
         uint IN = stoi(argv[3]), OUT = stoi(argv[4]);
         FrTensor W = load_int_tensor(argv[2], IN * OUT);
         Commitment gen_out(argv[5]);
@@ -378,22 +583,27 @@ int main(int argc, char* argv[]) {
         cout << "registered commitment -> " << argv[6] << endl;
         return 0;
     }
-    if (mode == "prove" && (argc == 12 || argc == 13)) {
+    if (mode == "prove" && (base_argc == 12 || base_argc == 13)) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[6]), IN = stoi(argv[7]), OUT = stoi(argv[8]);
         FrTensor X = load_int_tensor(argv[4], B * IN);
         FrTensor W = load_int_tensor(argv[5], IN * OUT);
         Commitment gen_in(argv[9]), gen_out(argv[10]), qg(argv[11]);
+        if (!cm_a.empty() && (cm_b.empty() || cm_c.empty()))
+            throw runtime_error("prove --claims needs <accdir> <obid> <registered-com_W>");
         prove(obdir, seed, X, W, B, IN, OUT, gen_in, gen_out, qg(0),
-              argc == 13 ? argv[12] : "");
+              base_argc == 13 ? argv[12] : "", cm_a, cm_b, cm_c);
         return 0;
     }
-    if (mode == "verify" && argc == 11) {
+    if (mode == "verify" && base_argc == 11) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[4]), IN = stoi(argv[5]), OUT = stoi(argv[6]);
         Commitment gen_in(argv[8]), gen_out(argv[9]), qg(argv[10]);
-        return verify(obdir, seed, B, IN, OUT, argv[7], gen_in, gen_out, qg(0)) ? 0 : 1;
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("verify --claims needs <vaccdir> <obid>");
+        return verify(obdir, seed, B, IN, OUT, argv[7], gen_in, gen_out, qg(0),
+                      cm_a, cm_b) ? 0 : 1;
     }
-    cerr << "usage: zkob_fc selftest | commit ... | prove ... | verify ..." << endl;
+    cerr << "usage: zkob_fc selftest | commit ... | prove ... [--claims <accdir> <obid> <com_W>] | verify ... [--claims <vaccdir> <obid>]" << endl;
     return 2;
 }
