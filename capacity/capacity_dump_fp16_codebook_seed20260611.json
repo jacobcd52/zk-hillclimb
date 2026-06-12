@@ -1,0 +1,45 @@
+{
+  "scheme": "codebook",
+  "seed": 20260611,
+  "vocab": 32000,
+  "orientation": "fp16-ref: reference=plain bf16 model (no FP8Linear), served=M_int post-Gumbel argmax",
+  "baseline_registration": null,
+  "n_positions": 8192,
+  "exact_postgumbel_agreement": 0.9334716796875,
+  "p_at_b0(=1-agreement)": 0.0665283203125,
+  "margin_mean_unclamped": 0.016326027456671,
+  "margin_p99_unclamped": 0.44318425178527854,
+  "margin_max_unclamped": 1.997323989868164,
+  "n_bgrid": 248,
+  "bgrid_max": 55.0,
+  "bgrid_extended_beyond_55": false,
+  "xcheck_vs_swapped_dump_max_margin_diff": 0.0,
+  "dolly_sha256": "2df9083338b4abd6bceb5635764dab5d833b393b55759dffb0959b6fcbf794ec",
+  "npz": "/workspace/projects/zk-hillclimb/capacity/capacity_dump_fp16_codebook_seed20260611.npz",
+  "stats": [
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    }
+  ]
+}

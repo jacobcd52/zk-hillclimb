@@ -1,0 +1,41 @@
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+`torch_dtype` is deprecated! Use `dtype` instead!
+[faithful] registered-weight provenance guard: OK
+[faithful] student prompt 0: chain 5.0s
+[faithful] student prompt 1: chain 5.0s
+[faithful] student prompt 2: chain 5.5s
+[faithful] student prompt 3: chain 5.4s
+[faithful] student prompt 4: chain 5.3s
+[faithful] student prompt 5: chain 5.3s
+[faithful] student prompt 6: chain 4.9s
+[faithful] student prompt 7: chain 5.1s
+[faithful] prompt 0: margin_mean=0.0002469 exact_agree=0.9941 margin_max=0.06726
+[faithful] prompt 1: margin_mean=0.0005138 exact_agree=0.9883 margin_max=0.08133
+[faithful] prompt 2: margin_mean=0.0007847 exact_agree=0.9854 margin_max=0.1929
+[faithful] prompt 3: margin_mean=0.0003825 exact_agree=0.9863 margin_max=0.05533
+[faithful] prompt 4: margin_mean=0.0003453 exact_agree=0.9941 margin_max=0.159
+[faithful] prompt 5: margin_mean=0.0005534 exact_agree=0.9863 margin_max=0.1466
+[faithful] prompt 6: margin_mean=0.0005406 exact_agree=0.9893 margin_max=0.1839
+[faithful] prompt 7: margin_mean=0.0005219 exact_agree=0.9902 margin_max=0.1171
+[faithful] prompt 0: max_Nb=32000
+[faithful] prompt 1: max_Nb=32000
+[faithful] prompt 2: max_Nb=32000
+[faithful] prompt 3: max_Nb=32000
+[faithful] prompt 4: max_Nb=32000
+[faithful] prompt 5: max_Nb=32000
+[faithful] prompt 6: max_Nb=32000
+[faithful] prompt 7: max_Nb=32000
+{
+  "scheme": "faithful",
+  "orientation": "fp16-ref: reference=plain bf16 model (no FP8Linear), served=M_int post-Gumbel argmax",
+  "exact_postgumbel_agreement": 0.9892578125,
+  "p_at_b0(=1-agreement)": 0.0107421875,
+  "margin_mean_unclamped": 0.000486122677102685,
+  "margin_p99_unclamped": 0.004886541366577259,
+  "margin_max_unclamped": 0.19287395477294922,
+  "n_bgrid": 248,
+  "bgrid_max": 55.0,
+  "xcheck_vs_swapped_dump_max_margin_diff": 0.0
+}
+wrote /workspace/projects/zk-hillclimb/capacity/capacity_dump_fp16_faithful_seed20260611.npz

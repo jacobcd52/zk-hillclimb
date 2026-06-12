@@ -1,0 +1,229 @@
+{
+  "scheme": "faithful",
+  "seed": 20260611,
+  "vocab": 32000,
+  "orientation": "fp16-ref: reference=plain bf16 model (no FP8Linear), served=M_int post-Gumbel argmax",
+  "baseline_registration": null,
+  "n_positions": 8192,
+  "exact_postgumbel_agreement": 0.9892578125,
+  "p_at_b0(=1-agreement)": 0.0107421875,
+  "margin_mean_unclamped": 0.000486122677102685,
+  "margin_p99_unclamped": 0.004886541366577259,
+  "margin_max_unclamped": 0.19287395477294922,
+  "n_bgrid": 248,
+  "bgrid_max": 55.0,
+  "bgrid_extended_beyond_55": false,
+  "xcheck_vs_swapped_dump_max_margin_diff": 0.0,
+  "dolly_sha256": "2df9083338b4abd6bceb5635764dab5d833b393b55759dffb0959b6fcbf794ec",
+  "npz": "/workspace/projects/zk-hillclimb/capacity/capacity_dump_fp16_faithful_seed20260611.npz",
+  "stats": [
+    {
+      "z_range": [
+        [
+          -154075,
+          125532
+        ],
+        [
+          -165086,
+          98783
+        ]
+      ],
+      "diff_min": [
+        -168956,
+        -195025
+      ],
+      "gate_range": [
+        [
+          -79503,
+          19003
+        ],
+        [
+          -40531,
+          44097
+        ]
+      ]
+    },
+    {
+      "z_range": [
+        [
+          -149021,
+          121203
+        ],
+        [
+          -128403,
+          100839
+        ]
+      ],
+      "diff_min": [
+        -177091,
+        -149204
+      ],
+      "gate_range": [
+        [
+          -66546,
+          19210
+        ],
+        [
+          -39836,
+          37072
+        ]
+      ]
+    },
+    {
+      "z_range": [
+        [
+          -143761,
+          123189
+        ],
+        [
+          -106794,
+          105412
+        ]
+      ],
+      "diff_min": [
+        -160757,
+        -128541
+      ],
+      "gate_range": [
+        [
+          -62881,
+          17776
+        ],
+        [
+          -37560,
+          43549
+        ]
+      ]
+    },
+    {
+      "z_range": [
+        [
+          -121256,
+          101826
+        ],
+        [
+          -95114,
+          82290
+        ]
+      ],
+      "diff_min": [
+        -135720,
+        -99623
+      ],
+      "gate_range": [
+        [
+          -61775,
+          15155
+        ],
+        [
+          -32433,
+          32978
+        ]
+      ]
+    },
+    {
+      "z_range": [
+        [
+          -148746,
+          125482
+        ],
+        [
+          -108723,
+          103799
+        ]
+      ],
+      "diff_min": [
+        -168522,
+        -139293
+      ],
+      "gate_range": [
+        [
+          -95402,
+          22009
+        ],
+        [
+          -33939,
+          34775
+        ]
+      ]
+    },
+    {
+      "z_range": [
+        [
+          -140110,
+          113369
+        ],
+        [
+          -94120,
+          90821
+        ]
+      ],
+      "diff_min": [
+        -164106,
+        -106284
+      ],
+      "gate_range": [
+        [
+          -55982,
+          17239
+        ],
+        [
+          -36037,
+          32463
+        ]
+      ]
+    },
+    {
+      "z_range": [
+        [
+          -146674,
+          125533
+        ],
+        [
+          -104734,
+          105678
+        ]
+      ],
+      "diff_min": [
+        -171610,
+        -120006
+      ],
+      "gate_range": [
+        [
+          -71516,
+          15841
+        ],
+        [
+          -35784,
+          34810
+        ]
+      ]
+    },
+    {
+      "z_range": [
+        [
+          -151394,
+          121719
+        ],
+        [
+          -116420,
+          103551
+        ]
+      ],
+      "diff_min": [
+        -171539,
+        -138415
+      ],
+      "gate_range": [
+        [
+          -61097,
+          17125
+        ],
+        [
+          -34968,
+          34243
+        ]
+      ]
+    }
+  ]
+}
