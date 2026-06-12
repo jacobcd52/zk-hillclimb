@@ -167,6 +167,9 @@ static bool selftest() {
     bo_probe_kernels();
     printf("kernel -dlto probes: PASS\n");
     setenv("ZKOB_BATCH_SELFCHECK", "1", 1);
+    // Stage B: every selftest verify cross-checks the batched G5 fold against
+    // per-tensor fold_chain element-exact (THROWS on divergence)
+    setenv("ZKOB_FOLD_CROSSCHECK", "1", 1);
     MiniRun M = build_minirun("/tmp/zkob_batchopen_selftest", "bo");
 
     printf("=== honest ===\n");
@@ -405,8 +408,13 @@ int main(int argc, char* argv[]) {
             return 0;
         }
         if (mode == "prove" && argc >= 5) {
-            batch_prove(argv[2], argv[3], parse_genspecs(argc, argv, 5), argv[4]);
-            cout << "PROVED opening_batch -> " << argv[2] << endl;
+            // ZKOB_EVIL=1|2|3: selftest/battery-only forgery construction
+            // (the header's batch_prove evil modes, exposed for the pair-scale
+            // BO battery; unset in production — mode 0)
+            int evil = getenv("ZKOB_EVIL") ? atoi(getenv("ZKOB_EVIL")) : 0;
+            batch_prove(argv[2], argv[3], parse_genspecs(argc, argv, 5), argv[4], evil);
+            cout << "PROVED opening_batch" << (evil ? " (EVIL mode, selftest only)" : "")
+                 << " -> " << argv[2] << endl;
             return 0;
         }
         if (mode == "verify" && argc >= 6) {

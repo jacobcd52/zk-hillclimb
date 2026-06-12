@@ -35,6 +35,22 @@
 // shape against the proven 1-thread h_scalar helpers at runtime; the toy and
 // both selftests call it at startup, and the per-round p(0)+p(1)==cur strict
 // checks re-probe every prove.
+//
+// Stage B additions (TRANSPORT_REBUILD_DESIGN §6 Stage B; the two measured
+// Stage-A verify hot spots):
+//   - bo_batched_group_fold + k_bo_rowweights: the G5 fold flattened to ONE
+//     Fr weight launch + ONE dev_msm per domain group (replaces ~logR G1
+//     launches+syncs per tensor, 34-51 ms each). Fr-only new kernel; the G1
+//     side reuses the long-probed dev_msm shapes. Cross-checked element-exact
+//     against per-tensor fold_chain under ZKOB_FOLD_CROSSCHECK=1 (every
+//     selftest sets it); ZKOB_SLOW_FOLD=1 selects the old path outright.
+//   - bo_fast_me_weights / bo_fast_s_vector / bo_fast_ipa_verify (the rowmax
+//     §2.8 k_pp_expand pattern, duplicated under bo_ names): the batch IPAs
+//     no longer pay the G*logG h_scalar host loops at gen32768, prove and
+//     verify side. Protocol/algebra identical, probed element-exact;
+//     ZKOB_SLOW_IPA=1 selects the header ipa_verify.
+//   - ZKOB_EVIL is consumed by the zkob_batchopen CLI only (selftest/battery
+//     forgery construction at pair scale; mode 0 in production).
 #ifndef ZKOB_CLAIMS_CUH
 #define ZKOB_CLAIMS_CUH
 #include "vrf_common.cuh"
@@ -362,6 +378,190 @@ KERNEL void k_bo_axpy(GLOBAL Fr_t* out, GLOBAL Fr_t* in, Fr_t c, uint n) {
         blstrs__scalar__Scalar_mul(blstrs__scalar__Scalar_mont(c), in[gid]));
 }
 
+// =====================  Stage-B fast helpers  ==============================
+// (TRANSPORT_REBUILD_DESIGN §6 Stage B / STAGE_A_REPORT §5.7: the two measured
+// verify hot spots — per-tensor fold_chain launch latency and the me_weights /
+// s-vector host loops at G=32768.) Fr-only kernels (the safe family); every
+// new shape is probed in bo_probe_kernels below. NO new G1 kernel shape: the
+// G1 work goes through the already-probed dev_msm (k_g1_scale/k_g1_add_pairs).
+//
+// k_bo_pp_expand: pp-doubling with arbitrary per-step pair factors — the
+// zkob_rowmax §2.8 k_pp_expand pattern, duplicated under a distinct name so
+// this header cannot collide with driver-local copies.
+KERNEL void k_bo_pp_expand(GLOBAL Fr_t* in, Fr_t a, Fr_t b, GLOBAL Fr_t* out, uint n) {
+    const uint gid = GET_GLOBAL_ID();
+    if (gid >= n) return;
+    Fr_t am = blstrs__scalar__Scalar_mont(a);
+    Fr_t bm = blstrs__scalar__Scalar_mont(b);
+    out[gid]     = blstrs__scalar__Scalar_mul(am, in[gid]);
+    out[gid + n] = blstrs__scalar__Scalar_mul(bm, in[gid]);
+}
+// after step i, index bit i picks (as[i] if 0, bs[i] if 1); returns a device
+// buffer of size 2^L; caller cudaFrees.
+static Fr_t* bo_pp_build_dev(const std::vector<Fr_t>& as, const std::vector<Fr_t>& bs) {
+    const uint L = (uint)as.size();
+    Fr_t *cur, *nxt;
+    cudaMalloc(&cur, sizeof(Fr_t) << L);
+    cudaMalloc(&nxt, sizeof(Fr_t) << L);
+    cudaMemcpy(cur, &F_ONE, sizeof(Fr_t), cudaMemcpyHostToDevice);
+    uint n = 1;
+    for (uint i = 0; i < L; i++) {
+        k_bo_pp_expand<<<(n + 255) / 256, 256>>>(cur, as[i], bs[i], nxt, n);
+        cudaDeviceSynchronize();
+        std::swap(cur, nxt);
+        n <<= 1;
+    }
+    cudaFree(nxt);
+    return cur;
+}
+// fast ME weights: b_k = prod_i (k>>i & 1 ? u[i] : 1-u[i]) — pairs (1-u_i, u_i)
+static Fr_t* bo_fast_me_weights_dev(const std::vector<Fr_t>& u) {
+    std::vector<Fr_t> as(u.size()), bs(u.size());
+    for (uint i = 0; i < u.size(); i++) {
+        as[i] = h_scalar(F_ONE, u[i], 1);
+        bs[i] = u[i];
+    }
+    return bo_pp_build_dev(as, bs);
+}
+static std::vector<Fr_t> bo_fast_me_weights(const std::vector<Fr_t>& u) {
+    Fr_t* d = bo_fast_me_weights_dev(u);
+    std::vector<Fr_t> h(1u << u.size());
+    cudaMemcpy(h.data(), d, sizeof(Fr_t) * h.size(), cudaMemcpyDeviceToHost);
+    cudaFree(d);
+    return h;
+}
+// fast IPA s-vector: s_i = prod_r (bit_{R-1-r}(i) ? xs[r] : xis[r]) — bit b
+// pairs (xis[R-1-b], xs[R-1-b]), matching ipa_verify's pinned MSB-first s_i.
+static Fr_t* bo_fast_s_vector_dev(const std::vector<Fr_t>& xs, const std::vector<Fr_t>& xis) {
+    const uint R = (uint)xs.size();
+    std::vector<Fr_t> as(R), bs(R);
+    for (uint t = 0; t < R; t++) {
+        as[t] = xis[R - 1 - t];
+        bs[t] = xs[R - 1 - t];
+    }
+    return bo_pp_build_dev(as, bs);
+}
+// fast variant of vrf_common.cuh's ipa_verify: identical protocol and algebra
+// (same absorbs, same challenge schedule, same final point equation); the b
+// fold's final value equals <b, s> with the SAME s-vector, all ops exact
+// canonical mod-p arithmetic, so every emitted/checked element is
+// bit-identical to the header's incremental fold (the zkob_rowmax §2.8
+// pattern, approved there; cross-checked element-exact in bo_probe_kernels).
+static bool bo_fast_ipa_verify(const G1Jacobian_t* d_g, uint n, const G1Jacobian_t& Q,
+                               const G1Jacobian_t& P0, const std::vector<Fr_t>& u_b,
+                               const IpaProof& pf, fs::Transcript& tr) {
+    const uint rounds = (uint)pf.L.size();
+    if (rounds != pf.R.size()) return false;
+    if (n != (1u << rounds)) return false;
+    if ((1u << u_b.size()) != n) return false;
+    std::vector<Fr_t> xs(rounds), xis(rounds);
+    G1Jacobian_t P = P0;
+    for (uint r = 0; r < rounds; r++) {
+        absorb_g1(tr, "L", pf.L[r]);
+        absorb_g1(tr, "R", pf.R[r]);
+        xs[r] = fs_challenge_fr(tr);
+        xis[r] = inv(xs[r]);
+        P = h_add(h_add(h_mul(pf.L[r], h_scalar(xs[r], xs[r], 2)), P),
+                  h_mul(pf.R[r], h_scalar(xis[r], xis[r], 2)));
+    }
+    Fr_t* d_s = bo_fast_s_vector_dev(xs, xis);
+    Fr_t* d_b = bo_fast_me_weights_dev(u_b);
+    Fr_t b_f = dev_ip(d_b, d_s, n);
+    G1Jacobian_t g_f = dev_msm(d_g, d_s, n);
+    cudaFree(d_s);
+    cudaFree(d_b);
+    return g1_eq(P, h_add(h_mul(g_f, pf.a_final), h_mul(Q, h_scalar(pf.a_final, b_f, 2))));
+}
+
+// k_bo_rowweights: the FLATTENED G5 fold (Stage B work item 1). One thread per
+// commitment row across ALL tensors of a domain group:
+//   w[q] = coef[q] * prod_{i < nlev[q]} (kloc[q]>>i & 1 ? rc[i] : rc1m[i])
+// — exactly fold_chain's ME row weight (pair-fold consumes row bits LSB-first,
+// pinned in TRANSPORT_REVIEW §9), shared challenge prefix rc[i] = r[logG+i]
+// across the whole group. C*_g then comes from ONE dev_msm over the packed
+// rows instead of ~logR G1 launches+syncs per tensor (the measured 34-51 ms/
+// tensor latency). rc1m[i] = 1 - rc[i] precomputed host-side.
+KERNEL void k_bo_rowweights(GLOBAL Fr_t* coef, GLOBAL uint* kloc, GLOBAL uint* nlev,
+                            GLOBAL Fr_t* rc, GLOBAL Fr_t* rc1m, GLOBAL Fr_t* out, uint n) {
+    const uint gid = GET_GLOBAL_ID();
+    if (gid >= n) return;
+    Fr_t w = coef[gid];
+    const uint k = kloc[gid], L = nlev[gid];
+    for (uint i = 0; i < L; i++) {
+        Fr_t f = ((k >> i) & 1) ? rc[i] : rc1m[i];
+        w = blstrs__scalar__Scalar_mul(blstrs__scalar__Scalar_mont(f), w);
+    }
+    out[gid] = w;
+}
+
+// Batched G5 fold for one domain group (uses k_bo_rowweights + dev_msm; both
+// G1 building blocks k_g1_scale/k_g1_add_pairs are the long-probed shapes —
+// no new G1 kernel). gj = tensor indices of the group, gcoef[t] = rho'^j *
+// kappa_j for gj[t]. Returns C*_g = sum_t coef_t * fold_chain(com_{gj[t]},
+// r[logG..vars)); with per_tensor non-null also returns each tensor's
+// coef-scaled folded point (the element-exact convention cross-check target).
+static G1Jacobian_t bo_batched_group_fold(const std::vector<G1TensorJacobian>& coms,
+                                          const std::vector<TensorInfo>& tensors,
+                                          const std::vector<uint32_t>& gj,
+                                          const std::vector<Fr_t>& gcoef,
+                                          const std::vector<Fr_t>& r, uint logG,
+                                          std::vector<G1Jacobian_t>* per_tensor = nullptr) {
+    size_t total = 0;
+    uint maxlev = 0;
+    for (uint32_t j : gj) {
+        total += tensors[j].n_rows;
+        maxlev = std::max(maxlev, tensors[j].vars - logG);
+    }
+    size_t P2 = 1; while (P2 < total) P2 <<= 1;
+    std::vector<Fr_t> hcoef(total);
+    std::vector<uint> hk(total), hlev(total);
+    std::vector<size_t> off(gj.size());
+    size_t pos = 0;
+    for (size_t t = 0; t < gj.size(); t++) {
+        uint32_t j = gj[t];
+        off[t] = pos;
+        uint lev = tensors[j].vars - logG;
+        for (uint k = 0; k < tensors[j].n_rows; k++) {
+            hcoef[pos] = gcoef[t]; hk[pos] = k; hlev[pos] = lev; pos++;
+        }
+    }
+    std::vector<Fr_t> rc(maxlev ? maxlev : 1, F_ZERO), rc1m(maxlev ? maxlev : 1, F_ZERO);
+    for (uint i = 0; i < maxlev; i++) {
+        rc[i] = r[logG + i];
+        rc1m[i] = h_scalar(F_ONE, r[logG + i], 1);
+    }
+    G1Jacobian_t* d_pts; cudaMalloc(&d_pts, P2 * sizeof(G1Jacobian_t));
+    cudaMemset(d_pts, 0, P2 * sizeof(G1Jacobian_t));   // pad: zero scalar * any -> identity
+    for (size_t t = 0; t < gj.size(); t++)
+        cudaMemcpy(d_pts + off[t], coms[gj[t]].gpu_data,
+                   tensors[gj[t]].n_rows * sizeof(G1Jacobian_t), cudaMemcpyDeviceToDevice);
+    Fr_t* d_w; cudaMalloc(&d_w, P2 * sizeof(Fr_t));
+    cudaMemset(d_w, 0, P2 * sizeof(Fr_t));
+    Fr_t *d_coef, *d_rc, *d_rc1m; uint *d_k, *d_lev;
+    cudaMalloc(&d_coef, total * sizeof(Fr_t));
+    cudaMalloc(&d_k, total * sizeof(uint));
+    cudaMalloc(&d_lev, total * sizeof(uint));
+    cudaMalloc(&d_rc, rc.size() * sizeof(Fr_t));
+    cudaMalloc(&d_rc1m, rc1m.size() * sizeof(Fr_t));
+    cudaMemcpy(d_coef, hcoef.data(), total * sizeof(Fr_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, hk.data(), total * sizeof(uint), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_lev, hlev.data(), total * sizeof(uint), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_rc, rc.data(), rc.size() * sizeof(Fr_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_rc1m, rc1m.data(), rc1m.size() * sizeof(Fr_t), cudaMemcpyHostToDevice);
+    k_bo_rowweights<<<((uint)total + 255) / 256, 256>>>(d_coef, d_k, d_lev, d_rc, d_rc1m,
+                                                        d_w, (uint)total);
+    cudaDeviceSynchronize();
+    if (per_tensor) {
+        per_tensor->resize(gj.size());
+        for (size_t t = 0; t < gj.size(); t++)
+            (*per_tensor)[t] = dev_msm(d_pts + off[t], d_w + off[t], tensors[gj[t]].n_rows);
+    }
+    G1Jacobian_t out = dev_msm(d_pts, d_w, (uint)P2);
+    cudaFree(d_pts); cudaFree(d_w); cudaFree(d_coef); cudaFree(d_k); cudaFree(d_lev);
+    cudaFree(d_rc); cudaFree(d_rc1m);
+    return out;
+}
+
 // pairwise-add sum over pow2 n (k_fr_add_pairs reduce, source preserved)
 static Fr_t bo_dev_sum(const Fr_t* d_src, uint n) {
     Fr_t *d_x, *d_y;
@@ -472,6 +672,74 @@ static void bo_probe_kernels() {
     }
     cudaFree(d_e); cudaFree(d_M); cudaFree(d_P);
     cudaFree(d_o0); cudaFree(d_o1); cudaFree(d_o2); cudaFree(d_f);
+
+    // ---- Stage-B shapes ----
+    // k_bo_pp_expand via bo_fast_me_weights vs the slow header me_weights
+    // (element-exact; the §2.8 cross-check rule)
+    {
+        std::vector<Fr_t> fast = bo_fast_me_weights(u);
+        for (uint i = 0; i < n; i++)
+            if (!fr_eq(fast[i], w[i]))
+                throw std::runtime_error("PROBE FAIL: bo_fast_me_weights != me_weights");
+    }
+    // bo_fast_s_vector vs the slow ipa_verify s_i product (element-exact)
+    {
+        const uint R = L;
+        std::vector<Fr_t> xs(R), xis(R);
+        for (uint r = 0; r < R; r++) { xs[r] = fs_challenge_fr(tr); xis[r] = inv(xs[r]); }
+        Fr_t* d = bo_fast_s_vector_dev(xs, xis);
+        std::vector<Fr_t> s_fast(n);
+        cudaMemcpy(s_fast.data(), d, n * sizeof(Fr_t), cudaMemcpyDeviceToHost);
+        cudaFree(d);
+        for (uint i = 0; i < n; i++) {
+            Fr_t want = F_ONE;
+            for (uint r = 0; r < R; r++)
+                want = h_scalar(want, ((i >> (R - 1 - r)) & 1) ? xs[r] : xis[r], 2);
+            if (!fr_eq(s_fast[i], want))
+                throw std::runtime_error("PROBE FAIL: bo_fast_s_vector != slow s-vector");
+        }
+    }
+    // k_bo_rowweights vs the host per-slot product (3 mock tensors with
+    // level counts {0, 2, 5}, random coefs/challenges; element-exact)
+    {
+        const uint levs[3] = {0, 2, 5};
+        const uint maxlev = 5;
+        std::vector<Fr_t> rc(maxlev), rc1m(maxlev);
+        for (uint i = 0; i < maxlev; i++) {
+            rc[i] = fs_challenge_fr(tr);
+            rc1m[i] = h_scalar(F_ONE, rc[i], 1);
+        }
+        std::vector<Fr_t> hcoef; std::vector<uint> hk, hlev;
+        for (int t = 0; t < 3; t++) {
+            Fr_t cf = fs_challenge_fr(tr);
+            for (uint k = 0; k < (1u << levs[t]); k++) {
+                hcoef.push_back(cf); hk.push_back(k); hlev.push_back(levs[t]);
+            }
+        }
+        uint tot = (uint)hk.size();
+        Fr_t *d_coef, *d_rc, *d_rc1m, *d_w; uint *d_k, *d_lev;
+        cudaMalloc(&d_coef, tot * sizeof(Fr_t)); cudaMalloc(&d_w, tot * sizeof(Fr_t));
+        cudaMalloc(&d_k, tot * sizeof(uint)); cudaMalloc(&d_lev, tot * sizeof(uint));
+        cudaMalloc(&d_rc, maxlev * sizeof(Fr_t)); cudaMalloc(&d_rc1m, maxlev * sizeof(Fr_t));
+        cudaMemcpy(d_coef, hcoef.data(), tot * sizeof(Fr_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_k, hk.data(), tot * sizeof(uint), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_lev, hlev.data(), tot * sizeof(uint), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_rc, rc.data(), maxlev * sizeof(Fr_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_rc1m, rc1m.data(), maxlev * sizeof(Fr_t), cudaMemcpyHostToDevice);
+        k_bo_rowweights<<<(tot + 63) / 64, 64>>>(d_coef, d_k, d_lev, d_rc, d_rc1m, d_w, tot);
+        cudaDeviceSynchronize();
+        std::vector<Fr_t> got(tot);
+        cudaMemcpy(got.data(), d_w, tot * sizeof(Fr_t), cudaMemcpyDeviceToHost);
+        for (uint q = 0; q < tot; q++) {
+            Fr_t want = hcoef[q];
+            for (uint i = 0; i < hlev[q]; i++)
+                want = h_scalar(want, ((hk[q] >> i) & 1) ? rc[i] : rc1m[i], 2);
+            if (!fr_eq(got[q], want))
+                throw std::runtime_error("PROBE FAIL: k_bo_rowweights");
+        }
+        cudaFree(d_coef); cudaFree(d_w); cudaFree(d_k); cudaFree(d_lev);
+        cudaFree(d_rc); cudaFree(d_rc1m);
+    }
 }
 
 // =====================  verifier-side terminal helpers  ====================
@@ -756,7 +1024,9 @@ static void batch_prove(const std::string& accdir, const std::string& run_seed,
             if (!g1_eq(lhs, rhs))
                 throw std::runtime_error("batch_prove: C* self-check failed (domain " + std::to_string(G) + ")");
         }
-        IpaProof pf = ipa_prove(d_a, me_weights(std::vector<Fr_t>(r.begin(), r.begin() + logG)),
+        // Stage B: GPU-built b vector (bo_fast_me_weights == me_weights,
+        // probed element-exact); kills the G*logG h_scalar prove-side loop
+        IpaProof pf = ipa_prove(d_a, bo_fast_me_weights(std::vector<Fr_t>(r.begin(), r.begin() + logG)),
                                 gen.gpu_data, Q, G, tr);
         write_ipa(accdir + "/ipa_batch_" + std::to_string(G) + ".bin", pf);
         cudaFree(d_a);
@@ -809,9 +1079,18 @@ static bool batch_verify(const std::string& paccdir, const std::string& vaccdir,
     // F3: per distinct tensor, com_file_point_count == n_rows == 2^{vars-logG},
     // checked BEFORE any fold_chain (restores open_verify's size check; without
     // it trailing prover-chosen commitment rows are silently accepted)
+    // comref canonicalization (Stage-A flag 3 / Stage B): under the
+    // orchestrator, comrefs are run-dir-relative paths resolved against the
+    // batch process's cwd (= run dir); ZKOB_REQUIRE_RELATIVE_COMREF=1 (set by
+    // the walk harness) rejects absolute comrefs so prover and verifier can
+    // never depend on box-specific absolute naming. Selftests keep absolute
+    // /tmp paths and do not set the flag.
+    const bool require_rel = getenv("ZKOB_REQUIRE_RELATIVE_COMREF") != nullptr;
     std::vector<G1TensorJacobian> coms;
     coms.reserve(nT);
     for (auto& t : tensors) {
+        if (require_rel && !t.comref.empty() && t.comref[0] == '/')
+            return reject("shape", "absolute comref under relative-comref policy: " + t.comref);
         if (!bo_file_exists(t.comref))
             return reject("shape", "commitment file missing: " + t.comref);
         coms.emplace_back(t.comref);
@@ -896,28 +1175,71 @@ static bool batch_verify(const std::string& paccdir, const std::string& vaccdir,
     for (uint j = 1; j < nT; j++) rhop_pows[j] = h_scalar(rhop_pows[j - 1], rhop, 2);
     std::set<uint32_t> domains;
     for (auto& t : tensors) domains.insert(t.domain);
+    // Stage-B G5: flattened batched fold (one Fr weight launch + one dev_msm
+    // per group) + fast IPA (GPU me_weights/s-vector). The pre-Stage-B paths
+    // stay selectable: ZKOB_SLOW_FOLD=1 / ZKOB_SLOW_IPA=1 (measurement +
+    // convention baselines); ZKOB_FOLD_CROSSCHECK=1 additionally checks the
+    // batched fold against per-tensor fold_chain element-exact and THROWS on
+    // mismatch (a convention STOP, not a verifier reject — set in every
+    // selftest and once at pair scale before trusting the fast path).
+    const bool slow_fold = getenv("ZKOB_SLOW_FOLD") != nullptr;
+    const bool fold_xchk = getenv("ZKOB_FOLD_CROSSCHECK") != nullptr;
+    const bool slow_ipa = getenv("ZKOB_SLOW_IPA") != nullptr;
     for (uint32_t G : domains) {
         uint logG = ceilLog2(G);
         std::string ipath = paccdir + "/ipa_batch_" + std::to_string(G) + ".bin";
         if (!bo_file_exists(ipath))
             return reject("group_missing", "ipa_batch_" + std::to_string(G) + ".bin missing");
-        G1Jacobian_t Cstar; memset(&Cstar, 0, sizeof(Cstar));   // identity (z = 0)
+        std::vector<uint32_t> gj;
+        std::vector<Fr_t> gcoef;
         Fr_t vstar = F_ZERO;
         for (uint j = 0; j < nT; j++) {
             if (tensors[j].domain != G) continue;
-            std::vector<Fr_t> u_row(r.begin() + logG, r.begin() + tensors[j].vars);
-            G1Jacobian_t cj = fold_chain(coms[j].gpu_data, coms[j].size, u_row, 0);
             Fr_t coef = h_scalar(rhop_pows[j], bo_kappa(tensors[j].vars, r), 2);
-            Cstar = h_add(Cstar, h_mul(cj, coef));
+            gj.push_back(j);
+            gcoef.push_back(coef);
             vstar = h_scalar(vstar, h_scalar(coef, vfin[j], 2), 0);
+        }
+        G1Jacobian_t Cstar; memset(&Cstar, 0, sizeof(Cstar));   // identity (z = 0)
+        if (!slow_fold) {
+            std::vector<G1Jacobian_t> per_tensor;
+            Cstar = bo_batched_group_fold(coms, tensors, gj, gcoef, r, logG,
+                                          fold_xchk ? &per_tensor : nullptr);
+            if (fold_xchk) {
+                G1Jacobian_t Cslow; memset(&Cslow, 0, sizeof(Cslow));
+                for (size_t t = 0; t < gj.size(); t++) {
+                    uint j = gj[t];
+                    std::vector<Fr_t> u_row(r.begin() + logG, r.begin() + tensors[j].vars);
+                    G1Jacobian_t cj = h_mul(fold_chain(coms[j].gpu_data, coms[j].size, u_row, 0),
+                                            gcoef[t]);
+                    if (!g1_eq(per_tensor[t], cj))
+                        throw std::runtime_error("STOP: batched fold != per-tensor fold_chain ("
+                                                 + tensors[j].comref + ") — convention cross-check failed");
+                    Cslow = h_add(Cslow, cj);
+                }
+                if (!g1_eq(Cstar, Cslow))
+                    throw std::runtime_error("STOP: batched group fold != fold_chain RLC (domain "
+                                             + std::to_string(G) + ") — convention cross-check failed");
+            }
+        } else {
+            for (size_t t = 0; t < gj.size(); t++) {
+                uint j = gj[t];
+                std::vector<Fr_t> u_row(r.begin() + logG, r.begin() + tensors[j].vars);
+                G1Jacobian_t cj = fold_chain(coms[j].gpu_data, coms[j].size, u_row, 0);
+                Cstar = h_add(Cstar, h_mul(cj, gcoef[t]));
+            }
         }
         T.lap(("fold_" + std::to_string(G)).c_str());
         G1Jacobian_t P0 = h_add(Cstar, h_mul(Q, vstar));
         IpaProof pf;
         try { pf = read_ipa(ipath); }
         catch (const std::exception& e) { return reject("ipa" + std::to_string(G), e.what()); }
-        if (!ipa_verify(gens.at(G).gpu_data, G, Q, P0,
-                        std::vector<Fr_t>(r.begin(), r.begin() + logG), pf, tr))
+        bool ipa_ok = slow_ipa
+            ? ipa_verify(gens.at(G).gpu_data, G, Q, P0,
+                         std::vector<Fr_t>(r.begin(), r.begin() + logG), pf, tr)
+            : bo_fast_ipa_verify(gens.at(G).gpu_data, G, Q, P0,
+                                 std::vector<Fr_t>(r.begin(), r.begin() + logG), pf, tr);
+        if (!ipa_ok)
             return reject("ipa" + std::to_string(G), "batched IPA for domain " + std::to_string(G) + " failed");
         T.lap(("ipa_" + std::to_string(G)).c_str());
     }

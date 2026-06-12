@@ -565,6 +565,8 @@ int main(int argc, char* argv[]) {
     if (mode == "selftest") {
         bo_probe_kernels();
         cout << "kernel -dlto probes: PASS" << endl;
+        // Stage B: batched-fold convention cross-check live in every batch verify
+        setenv("ZKOB_FOLD_CROSSCHECK", "1", 1);
         bool a = selftest_case(4, 6, 3);
         bool b = selftest_case(8, 8, 8);
         bool c = selftest_case(16, 12, 5);

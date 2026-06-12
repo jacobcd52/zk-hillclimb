@@ -373,6 +373,8 @@ int main() {
     vrf_selfcheck();
     bo_probe_kernels();
     printf("kernel -dlto probes: PASS\n");
+    // Stage B: batched-fold convention cross-check live in every batch verify
+    setenv("ZKOB_FOLD_CROSSCHECK", "1", 1);
     bool ok = true;
     // mixed domains, multi-claim tensor (rope/headslice shape: two claims on
     // the same tensor at different points), single-row tensor, max-vars tensor
