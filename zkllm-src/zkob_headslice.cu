@@ -762,7 +762,8 @@ static bool selftest_real() {
     return all;
 }
 
-int main(int argc, char* argv[]) {
+#include "zkob_serve.cuh"
+static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     // strip the optional claim-mode flag block: --claims <accdir> <obid>
@@ -822,4 +823,12 @@ int main(int argc, char* argv[]) {
          << "       zkob_headslice prove  <obdir> <seed> <Q-int32> <K-int32> <V-int32> <B> <C> <HD> <gen_big> <gen_small> <q> [slice-out-dir] [--claims <accdir> <obid>]\n"
          << "       zkob_headslice verify <obdir> <seed> <B> <C> <HD> <gen_big> <gen_small> <q> [--claims <vaccdir> <obid>]" << endl;
     return 2;
+}
+
+// Stage C2 single-process transport: `serve` keeps this driver resident (one
+// CUDA init for the whole walk); every request runs the same zkw_run1 entry.
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "serve")
+        return zkw_serve(argv[0], zkw_run1);
+    return zkw_run1(argc, argv);
 }

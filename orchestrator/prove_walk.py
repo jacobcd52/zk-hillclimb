@@ -40,6 +40,49 @@ import common as C
 RUNS = []   # prove-manifest entries
 TIES = {}   # rowmax selector-tie duty per instance (STAGE3 §2.4(ii))
 
+# Batched-transport state (TRANSPORT_REBUILD_DESIGN Stage C2). When
+# public.json says "transport": "batched", every claim-emitting prove call
+# gets a --claims block routed into its sub-batch accumulator (the common.py
+# claim_plan, EXACT prove order), drivers run with cwd=run_dir + relative
+# argv (run-relative comrefs), and zkob_batchopen prove runs as soon as each
+# sub-batch's last driver completes — after which that batch's witness dumps
+# (wit_*.fr, the ~32 B/element Fr expansions batch_prove streams from) are
+# DELETED, capping witness disk at one sub-batch (~7 GB) instead of the full
+# walk's ~42 GB.
+BATCH = {"on": False, "plan": [], "cursor": 0, "cur": 0, "run_dir": None,
+         "run_seed": None, "stats": []}
+
+
+def finalize_batch(k):
+    run_dir, run_seed = BATCH["run_dir"], BATCH["run_seed"]
+    acc = C.acc_dir(run_dir, k)
+    acc_rel = os.path.relpath(acc, run_dir)
+    cmd = [C.drv("zkob_batchopen"), "prove", acc_rel, C.batch_seed(run_seed, k),
+           "registration/q.bin"] + C.genspec_args()
+    ok, dt, out = C.run_driver(cmd, f"prove opening_batch [b{k}]", cwd=run_dir)
+    record("opening_batch", f"b{k}", f"b{k}", cmd, dt)
+    claims = C.parse_claims(os.path.join(acc, "claims.bin"))
+    elems = sum({c["comref"]: c["n_rows"] * c["domain"] for c in claims}.values())
+    tensors = len({c["comref"] for c in claims})
+    assert elems <= C.SUBBATCH_HARD_CAP_ELEMS, \
+        f"sub-batch b{k}: {elems} elements exceeds the hard cap (estimate drift)"
+    n_wit = 0
+    wit_bytes = 0
+    for f in os.listdir(acc):
+        if f.startswith("wit_") and f.endswith(".fr"):
+            p = os.path.join(acc, f)
+            wit_bytes += os.path.getsize(p)
+            os.remove(p)
+            n_wit += 1
+    wr = os.path.join(acc, "witrefs.txt")   # prover-only pointer file, spent
+    if os.path.exists(wr):
+        os.remove(wr)
+    BATCH["stats"].append({"batch": k, "claims": len(claims), "tensors": tensors,
+                           "elements": elems, "prove_s": round(dt, 2),
+                           "witness_bytes_freed": wit_bytes, "wit_files": n_wit})
+    print(f"  opening_batch b{k}: {len(claims)} claims, {tensors} tensors, "
+          f"{elems/1e6:.1f}M elems, {dt:.1f}s; freed {wit_bytes/2**30:.2f} GiB witness")
+
 
 def record_ties(instance, kmax):
     """STAGE3 §2.4(ii) / PHASE0 §19 tie-count duty: per rowmax instance, the
@@ -60,7 +103,26 @@ def record(mid, sub, seed_id, cmd, seconds):
 
 def prove(mid, sub, seed_id, cmd, run_seed):
     cmd = [c if c is not None else f"{run_seed}:{seed_id}" for c in cmd]
-    ok, dt, _ = C.run_driver(cmd, f"prove {mid}" + (f" [{sub}]" if sub != "main" else ""))
+    cwd = None
+    if BATCH["on"] and cmd[1] == "prove":
+        # every "prove"-mode call is a claim-emitting run and must be the next
+        # entry of the canonical plan (order drift would silently desynchronize
+        # claims_match — assert loudly instead)
+        e = BATCH["plan"][BATCH["cursor"]]
+        assert (e["mid"], e["sub"], e["obid"]) == (mid, sub, seed_id), \
+            f"claim plan drift: expected {e['mid']}[{e['sub']}] ({e['obid']}), " \
+            f"got {mid}[{sub}] ({seed_id})"
+        if e["batch"] != BATCH["cur"]:        # previous sub-batch is complete
+            finalize_batch(BATCH["cur"])
+            BATCH["cur"] = e["batch"]
+        BATCH["cursor"] += 1
+        run_dir = BATCH["run_dir"]
+        cmd = cmd + ["--claims", os.path.relpath(C.acc_dir(run_dir, e["batch"]), run_dir),
+                     seed_id] + ([e["extra"]] if e["extra"] else [])
+        cmd = C.rel_argv(cmd, run_dir)
+        cwd = run_dir
+    ok, dt, _ = C.run_driver(cmd, f"prove {mid}" + (f" [{sub}]" if sub != "main" else ""),
+                             cwd=cwd)
     record(mid, sub, seed_id, cmd, dt)
     return ok
 
@@ -301,12 +363,26 @@ def skip_add(a_i32, b_i32):
 
 
 def main():
-    run_dir = sys.argv[1]
+    run_dir = os.path.abspath(sys.argv[1])
     public = json.load(open(os.path.join(run_dir, "public.json")))
     cst = public["constants"]
     c_eps = cst["C_eps"]
     submission = public.get("submission", "baseline")
     assert submission in C.SUBMISSIONS, f"unknown submission {submission!r}"
+    transport = public.get("transport", "inline")
+    assert transport in C.TRANSPORTS, f"unknown transport {transport!r}"
+    if transport == "batched":
+        # Stage-B flag 7: the selftest-only forgery env must never reach a
+        # production batch prove; the measurement envs must not skew T5 either.
+        for v in ("ZKOB_EVIL", "ZKOB_SLOW_FOLD", "ZKOB_SLOW_IPA"):
+            assert v not in os.environ, f"{v} set in a production batched prove"
+        plan, n_batches = C.claim_plan(run_dir, submission)
+        BATCH.update(on=True, plan=plan, cursor=0, cur=0, run_dir=run_dir,
+                     run_seed=C.run_seed_of(run_dir))
+        for k in range(n_batches):
+            os.makedirs(C.acc_dir(run_dir, k), exist_ok=True)
+        print(f"  transport: batched ({len(plan)} claim-emitting runs -> "
+              f"{n_batches} opening sub-batches)")
     # PHASE0 §21 MINOR-7: headmerge_perm comes from public.json (argv to BOTH
     # prove and verify); it must agree with the submission's pinned mode.
     perm = public.get("headmerge_perm", "pi157")
@@ -455,6 +531,11 @@ def main():
            str(C.LOGIT_LEN_R), str(C.LOGIT_NPL), P["gen32768"], P["gen1024"],
            P["q"], "-", P["tstar"]], run_seed)
 
+    if BATCH["on"]:
+        assert BATCH["cursor"] == len(BATCH["plan"]), \
+            f"claim plan incomplete: {BATCH['cursor']}/{len(BATCH['plan'])} runs"
+        finalize_batch(BATCH["cur"])          # the last open sub-batch
+
     # prove manifest + totals
     proof_bytes = 0
     for root, _dirs, files in os.walk(os.path.join(run_dir, "proofs")):
@@ -462,6 +543,9 @@ def main():
     manifest = {
         "run_seed": run_seed,
         "submission": submission,
+        "transport": transport,
+        "opening_batch": ({"n_batches": len(BATCH["stats"]),
+                           "batches": BATCH["stats"]} if BATCH["on"] else None),
         "covered_ids": C.covered_ids(submission),
         "skipped_ids": C.skipped_ids(),
         "rowmax_selector_ties": {

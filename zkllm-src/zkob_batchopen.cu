@@ -395,7 +395,8 @@ static bool selftest() {
     return g_fail == 0;
 }
 
-int main(int argc, char* argv[]) {
+#include "zkob_serve.cuh"
+static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     try {
@@ -431,4 +432,12 @@ int main(int argc, char* argv[]) {
             "       zkob_batchopen verify <prover-accdir> <verifier-accdir> <run_seed> <q.bin> <G>=<gen.bin> ..."
          << endl;
     return 2;
+}
+
+// Stage C2 single-process transport: `serve` keeps this driver resident (one
+// CUDA init for the whole walk); every request runs the same zkw_run1 entry.
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "serve")
+        return zkw_serve(argv[0], zkw_run1);
+    return zkw_run1(argc, argv);
 }

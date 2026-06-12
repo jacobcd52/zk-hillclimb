@@ -805,7 +805,8 @@ static bool selftest_splice() {
     return all;
 }
 
-int main(int argc, char* argv[]) {
+#include "zkob_serve.cuh"
+static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     // strip the optional claim-mode flag block: --claims <accdir> <obid>
@@ -873,4 +874,12 @@ int main(int argc, char* argv[]) {
          << "       zkob_headmerge verify <obdir> <seed> <B> <C> <HD> <perm> <gen_big> <gen_small> <q> [--claims <vaccdir> <obid>]\n"
          << "       <perm> = pi157 | concat" << endl;
     return 2;
+}
+
+// Stage C2 single-process transport: `serve` keeps this driver resident (one
+// CUDA init for the whole walk); every request runs the same zkw_run1 entry.
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "serve")
+        return zkw_serve(argv[0], zkw_run1);
+    return zkw_run1(argc, argv);
 }

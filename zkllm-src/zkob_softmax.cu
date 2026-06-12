@@ -57,6 +57,7 @@
 // die in the batch had I1 not fired.
 #include "zkob_lookup.cuh"
 #include "zkob_claims.cuh"
+#include "zkob_fastg1.cuh"
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -337,7 +338,7 @@ static void prove(const string& obdir, const string& seed,
             vector<G1Jacobian_t> hz(B), he(B), hcomb(B);
             cudaMemcpy(hz.data(), com_z.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
             cudaMemcpy(he.data(), com_E.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
-            for (uint j = 0; j < B; j++) hcomb[j] = h_add(hz[j], h_mul(he[j], r));
+            hb_addmul(he, r, hz, /*mul_first=*/false, hcomb);   // fastg1, same ops
             G1TensorJacobian com_comb(B, hcomb.data());
             com_comb.save(obdir + "/com_comb.bin");
         }
@@ -669,7 +670,7 @@ static bool verify(const string& obdir, const string& seed,
         vector<G1Jacobian_t> hz(B), he(B);
         cudaMemcpy(hz.data(), com_z.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
         cudaMemcpy(he.data(), com_E.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
-        for (uint j = 0; j < B; j++) hcomb[j] = h_add(hz[j], h_mul(he[j], r));
+        hb_addmul(he, r, hz, /*mul_first=*/false, hcomb);   // fastg1, same ops
     }
     G1TensorJacobian com_comb(B, hcomb.data());
 
@@ -1281,7 +1282,8 @@ static vector<int> load_i32(const string& path, uint expect) {
     return v;
 }
 
-int main(int argc, char* argv[]) {
+#include "zkob_serve.cuh"
+static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     // strip the optional claim-mode flag block: --claims <accdir> <obid>
@@ -1340,4 +1342,12 @@ int main(int argc, char* argv[]) {
          << "       zkob_softmax prove  <obdir> <seed> <z-int32> <B> <NCOL> <LOW_E> <LEN_E> <expmap-int32> <LEN_R> <gen> <q> [P-int32-out] [--claims <accdir> <obid>]\n"
          << "       zkob_softmax verify <obdir> <seed> <B> <NCOL> <LOW_E> <LEN_E> <expmap-int32> <LEN_R> <gen> <q> [--claims <vaccdir> <obid>]" << endl;
     return 2;
+}
+
+// Stage C2 single-process transport: `serve` keeps this driver resident (one
+// CUDA init for the whole walk); every request runs the same zkw_run1 entry.
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "serve")
+        return zkw_serve(argv[0], zkw_run1);
+    return zkw_run1(argc, argv);
 }

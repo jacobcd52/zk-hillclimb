@@ -793,7 +793,8 @@ static vector<int> load_i32(const string& path, uint expect) {
     return v;
 }
 
-int main(int argc, char* argv[]) {
+#include "zkob_serve.cuh"
+static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     // strip the optional claim-mode flag block: --claims <accdir> <obid>
@@ -850,4 +851,12 @@ int main(int argc, char* argv[]) {
          << "       zkob_rope prove  <obdir> <seed> <T-int32> <B> <C> <HD> <cos-int32> <sin-int32> <gen> <q> [Y64-i64-out] [--claims <accdir> <obid>]\n"
          << "       zkob_rope verify <obdir> <seed> <B> <C> <HD> <cos-int32> <sin-int32> <gen> <q> [--claims <vaccdir> <obid>]" << endl;
     return 2;
+}
+
+// Stage C2 single-process transport: `serve` keeps this driver resident (one
+// CUDA init for the whole walk); every request runs the same zkw_run1 entry.
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "serve")
+        return zkw_serve(argv[0], zkw_run1);
+    return zkw_run1(argc, argv);
 }

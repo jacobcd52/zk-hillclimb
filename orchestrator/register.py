@@ -273,6 +273,10 @@ def main():
     ap.add_argument("--submission", default="baseline", choices=C.SUBMISSIONS,
                     help="faithful-arch-v1 = STAGE3 §4 re-registration (o_proj, "
                          "headmerge concat, temperature-8 softmax8 + rowmax)")
+    ap.add_argument("--transport", default="inline", choices=C.TRANSPORTS,
+                    help="batched = TRANSPORT_REBUILD Stage C2: drivers emit "
+                         "claims, ONE zkob_batchopen discharge per sub-batch "
+                         "(the mode is part of the statement, inside run_seed)")
     args = ap.parse_args()
     sub = args.submission
     run_dir = os.path.join(args.root, args.run_id)
@@ -330,6 +334,10 @@ def main():
         # o_proj omitted) and stays bit-reproducible.
         "submission": sub,
         "headmerge_perm": C.PERM_FOR[sub],
+        # Stage C2: the proof-transport mode is part of the statement. Only
+        # written when batched so inline registrations stay bit-identical to
+        # every pre-C2 registration (run_seed unchanged).
+        **({"transport": args.transport} if args.transport != "inline" else {}),
         "softmax_temperature": 8 if faithful else 128,
         "o_proj": "applied" if faithful else "omitted (frozen pipeline)",
         "prompt_token_ids": None,

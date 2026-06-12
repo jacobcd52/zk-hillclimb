@@ -84,6 +84,7 @@
 // at a MASKED idx — invisible to cD2's value and to the Dm identity) now
 // passes ALL driver checks and dies in the batch at round0 (BO-1a class).
 #include "zkob_claims.cuh"
+#include "zkob_fastg1.cuh"
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -408,7 +409,7 @@ static void prove(const string& obdir, const string& seed,
             vector<G1Jacobian_t> hd(B), he(B), hcb(B);
             cudaMemcpy(hd.data(), com_Dm.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
             cudaMemcpy(he.data(), com_E.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
-            for (uint j = 0; j < B; j++) hcb[j] = h_add(hd[j], h_mul(he[j], r));
+            hb_addmul(he, r, hd, /*mul_first=*/false, hcb);   // fastg1, same ops
             G1TensorJacobian com_comb(B, hcb.data());
             com_comb.save(obdir + "/com_comb.bin");
         }
@@ -792,6 +793,7 @@ static bool verify(const string& obdir, const string& seed,
         com_mE.size != LEN8 / NCOL || com_mL.size != LEN_R8 / NCOL)
         RJ("commitment row counts");
 
+    prof.lap("com_loads");
     LookupProof pfE = read_lookup(obdir + "/lookup_E8.bin");
     LookupProof pfL = read_lookup(obdir + "/lookup_L.bin");
     HadamardProof hp_cd1 = read_hp(obdir + "/hp_cD1.bin");
@@ -820,6 +822,7 @@ static bool verify(const string& obdir, const string& seed,
         for (uint j = 0; j < NCOL; j++) mkh[(size_t)i * NCOL + j] = (j <= i) ? 1 : 0;
     FrTensor MK_t(D, mkh.data());
 
+    prof.lap("proof_reads_mk");
     // ---- transcript replay ----
     fs::Transcript tr(seed);
     absorb_u32(tr, "B", B); absorb_u32(tr, "NCOL", NCOL);
@@ -843,17 +846,19 @@ static bool verify(const string& obdir, const string& seed,
 
     // combined commitment com_Dm + r*com_E, formed homomorphically (1-thread
     // helpers; batched G1 kernels are -dlto miscompile bait)
+    prof.lap("absorbs");
     vector<G1Jacobian_t> hcomb(B);
     {
         vector<G1Jacobian_t> hd(B), he(B);
         cudaMemcpy(hd.data(), com_Dm.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
         cudaMemcpy(he.data(), com_E.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
-        for (uint j = 0; j < B; j++) hcomb[j] = h_add(hd[j], h_mul(he[j], r));
+        hb_addmul(he, r, hd, /*mul_first=*/false, hcomb);   // fastg1, same ops
     }
     G1TensorJacobian com_comb(B, hcomb.data());
 
     const Fr_t inv6 = inv(F_SIX);
 
+    prof.lap("comb_loop");
     // ---- obligation 1: exp lookup rounds ----
     Fr_t cur = h_scalar(alpha_E, h_scalar(alpha_E, alpha_E, 2), 0);   // alpha + alpha^2
     Fr_t alpha_acc = alpha_E, alphasq_acc = h_scalar(alpha_E, alpha_E, 2);
@@ -915,6 +920,7 @@ static bool verify(const string& obdir, const string& seed,
             RJ("IPA opening of m_f vs com_m_E8");
     }
 
+    prof.lap("exp_rounds");
     // ---- obligation 2: Dm-binding block ----
     auto u_d = fs_challenge_vec(tr, logD);
     // cD1
@@ -986,6 +992,7 @@ static bool verify(const string& obdir, const string& seed,
             RJ("IPA opening of vDm vs com_Dm");
     }
 
+    prof.lap("dm_block");
     // ---- obligation 3: limb lookup rounds ----
     Fr_t beta_L = fs_challenge_fr(tr);
     absorb_g1_tensor(tr, "com_A_L", com_AL);
@@ -1036,6 +1043,7 @@ static bool verify(const string& obdir, const string& seed,
             RJ("IPA opening of m_f vs com_m_L");
     }
 
+    prof.lap("limb_rounds");
     // ---- obligation 4: row-sum sumcheck (pure broadcast eq weight:
     //      rmsnorm eq_acc shortcut, row rounds only) ----
     auto u_b = fs_challenge_vec(tr, logB);
@@ -1066,6 +1074,7 @@ static bool verify(const string& obdir, const string& seed,
             RJ("IPA opening of ev_S vs com_S");
     }
 
+    prof.lap("rowsum");
     // ---- obligation 5: bracket sumcheck V1 (pure eq weight) ----
     auto u_r = fs_challenge_vec(tr, logD);
     vector<Fr_t> ur_row(u_r.begin() + logC, u_r.end());
@@ -1093,6 +1102,7 @@ static bool verify(const string& obdir, const string& seed,
             RJ("IPA opening of E (V1) vs com_E");
     }
 
+    prof.lap("v1");
     // ---- obligation 6: bracket sumcheck V2 (pure eq weight) ----
     absorb_fr(tr, "c2", hp_v2.claim_H);
     cur = hp_v2.claim_H;
@@ -1124,6 +1134,7 @@ static bool verify(const string& obdir, const string& seed,
             RJ("IPA opening of V2 U_f2 vs com_S");
     }
 
+    prof.lap("v2");
     // ---- obligation 7: L plane openings + S_id ----
     {
         const char* labels[4] = {"v00", "v10", "v01", "v11"};
@@ -1147,6 +1158,7 @@ static bool verify(const string& obdir, const string& seed,
             RJ("IPA opening of S_id vs com_S");
     }
 
+    prof.lap("L_planes");
     // ---- verifier-only plain-field identities (Schwartz-Zippel) ----
     const Fr_t F_LENR = {LEN_R8, 0, 0, 0, 0, 0, 0, 0};
     const Fr_t F_2P17 = {1u << (LOG_OUT + 1), 0, 0, 0, 0, 0, 0, 0};
@@ -1742,7 +1754,8 @@ static bool selftest_case_claims(uint B, int LOW8, uint LEN8, uint LEN_R8) {
     return ok;
 }
 
-int main(int argc, char* argv[]) {
+#include "zkob_serve.cuh"
+static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     // strip the optional claim-mode flag block: --claims <accdir> <obid>
@@ -1803,4 +1816,12 @@ int main(int argc, char* argv[]) {
          << "       zkob_softmax8 prove  <obdir> <seed> <z-int32> <mx-int32> <B> <NCOL> <LOW8> <LEN8> <expmap8-int32> <LEN_R8> <gen> <q> [P-int32-out]\n"
          << "       zkob_softmax8 verify <obdir> <seed> <B> <NCOL> <LOW8> <LEN8> <expmap8-int32> <LEN_R8> <gen> <q>" << endl;
     return 2;
+}
+
+// Stage C2 single-process transport: `serve` keeps this driver resident (one
+// CUDA init for the whole walk); every request runs the same zkw_run1 entry.
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "serve")
+        return zkw_serve(argv[0], zkw_run1);
+    return zkw_run1(argc, argv);
 }

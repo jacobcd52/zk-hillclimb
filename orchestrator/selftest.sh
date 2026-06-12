@@ -42,16 +42,26 @@
 #      diverges — com_mx is absorbed before any challenge — AND edge RM2.h05
 #      fails byte-equality: two independent detections); restore.
 #  (j) restored faithful run re-ACCEPTs with checked = 65.
+# STAGE C2 (TRANSPORT_REBUILD): a batched-transport section (k)-(n) follows
+# (j): a THIRD full faithful-arch-v1 walk registered with transport=batched —
+# every driver in claim mode, ONE zkob_batchopen discharge per sub-batch —
+# honest ACCEPT + the same tamper loci + batch-specific forgeries (vfin /
+# claims_match / batched-IPA tampers) + the at-scale fold cross-check.
+# Run `selftest.sh <run-id> --batched-only` to run only that section.
 set -u
 PY=/root/int-model-env/bin/python
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HARNESS=/workspace/projects/zk-hillclimb/harness
 RUN_ID="${1:-selftest3-$(date +%Y%m%d-%H%M%S)}"
 RUN=/root/zkorch/$RUN_ID
+SECTIONS="${2:-all}"
 PASS=0; FAIL=0
 ok()   { echo "PASS: $1"; PASS=$((PASS+1)); }
 bad()  { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 
+if [ "$SECTIONS" = "--batched-only" ]; then
+echo "=== stage-3 selftest: BATCHED SECTION ONLY (run id base: $RUN_ID) ==="
+else
 echo "=== stage-3 selftest run: $RUN ==="
 
 # ---------- expected-count arithmetic, recounted from the manifest ----------
@@ -392,6 +402,252 @@ if $PY "$HERE/verify_walk.py" "$FRUN" --out "$FRUN/transcript_restored.json"; th
   fi
 else
   bad "restored faithful run re-ACCEPTs"
+fi
+
+fi   # end of SECTIONS != --batched-only
+
+# ============================================================================
+# BATCHED TRANSPORT (TRANSPORT_REBUILD_DESIGN Stage C2, gates T4/T5): a full
+# faithful-arch-v1 walk registered with transport=batched. Every driver runs
+# in claim mode (--claims), all claims discharge through zkob_batchopen
+# sub-batches; per-driver verdicts are ACCEPT-conditional, the orchestrator
+# verdict gates on opening_batch (F12).
+# ============================================================================
+BRUN_ID="${RUN_ID}-fab"
+BRUN=/root/zkorch/$BRUN_ID
+ZB=/root/zkllm/zkob_batchopen
+echo ""
+echo "=== batched-transport faithful-arch-v1 run: $BRUN ==="
+
+# ---------- (k) batched honest end-to-end ----------
+$PY "$HERE/register.py" --run-id "$BRUN_ID" --submission faithful-arch-v1 --transport batched \
+  || { bad "batched register"; echo "ABORT"; exit 1; }
+ok "batched register (transport pinned in public.json -> run_seed)"
+$PY "$HERE/prove_walk.py" "$BRUN" || { bad "batched prove_walk"; echo "ABORT"; exit 1; }
+ok "batched prove_walk (incl. per-sub-batch zkob_batchopen prove + witness cleanup)"
+$PY -c "
+import json
+m = json.load(open('$BRUN/prove_manifest.json'))
+obs = m['opening_batch']
+print(f\"opening_batch prove: {obs['n_batches']} sub-batches, \"
+      f\"{sum(b['claims'] for b in obs['batches'])} claims, \"
+      f\"{sum(b['elements'] for b in obs['batches'])/1e6:.0f}M elements, \"
+      f\"{sum(b['witness_bytes_freed'] for b in obs['batches'])/2**30:.1f} GiB witness freed\")
+print(f\"prove totals: {m['totals']}\")"
+if $PY "$HERE/verify_walk.py" "$BRUN" --out "$BRUN/transcript.json"; then
+  ok "batched verify_walk honest ACCEPT"
+else
+  bad "batched verify_walk honest ACCEPT"
+fi
+BN_CHECKED=$($PY -c "import json;print(len(json.load(open('$BRUN/transcript.json'))['checked']))")
+BOB_OK=$($PY -c "import json;t=json.load(open('$BRUN/transcript.json'));print(t['opening_batch']['ok'] and t['transport']=='batched')")
+if [ "$BN_CHECKED" = "65" ]; then ok "batched checked = 65"; else bad "batched checked=$BN_CHECKED expected=65"; fi
+if [ "$BOB_OK" = "True" ]; then ok "opening_batch ACCEPT (all sub-batches; registered-comref discharge pin)"; else bad "opening_batch not ok in honest transcript"; fi
+$PY -c "
+import json
+t = json.load(open('$BRUN/transcript.json'))
+print(f\"verify wall: {t['timing']['total_verify_wall_s']} s; \"
+      f\"opening_batch: {t['opening_batch']['n_batches']} sub-batches, \"
+      f\"{t['opening_batch']['claims']} claims\")"
+
+echo "--- check_transcript vs the FULL FROZEN manifest (batched run) ---"
+BFULL_OUT=$($PY "$HARNESS/check_transcript.py" "$HARNESS/manifest_llama68m.json" "$BRUN/transcript.json" 2>&1)
+BFULL_RC=$?
+echo "$BFULL_OUT"
+if [ "$BFULL_RC" = "0" ] && echo "$BFULL_OUT" | grep -q "required: 56  checked: 65  missing: 0  unknown: 0"; then
+  ok "batched check_transcript vs FROZEN manifest: PASS (56 required, 65 checked)"
+else
+  bad "batched check_transcript vs FROZEN manifest (rc=$BFULL_RC)"
+fi
+$PY "$HERE/make_faithful_scope_manifest.py" "$HARNESS/manifest_llama68m.json" "$BRUN/manifest_faithful_scope.json"
+BSCOPE_OUT=$($PY "$HARNESS/check_transcript.py" "$BRUN/manifest_faithful_scope.json" "$BRUN/transcript.json" 2>&1)
+if [ $? = 0 ] && echo "$BSCOPE_OUT" | grep -q "required: 65  checked: 65  missing: 0  unknown: 0"; then
+  ok "batched check_transcript vs faithful scope manifest: 65/65"
+else
+  bad "batched scope-manifest check"
+fi
+
+# ---------- (l1) tamper a slice commitment [batched analog of (b)] ----------
+TGT="$BRUN/proofs/layer0.attn.scores_matmul/slice/com_KhT05.bin"
+cp "$TGT" "$TGT.bak"
+$PY - "$TGT" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read())
+b[24] ^= 0xFF
+open(p, "wb").write(bytes(b))
+EOF
+if $PY "$HERE/verify_walk.py" "$BRUN" --out "$BRUN/transcript_tamper_slice.json"; then
+  bad "batched: tampered com_KhT05 accepted"
+else
+  HIT=$($PY -c "
+import json
+t = json.load(open('$BRUN/transcript_tamper_slice.json'))
+layer_rej = [m for m in t['rejected'] if m.startswith('layer')]
+print(t['verdict'] == 'REJECT' and layer_rej == ['layer0.attn.scores_matmul'])")
+  if [ "$HIT" = "True" ]; then
+    ok "batched: tampered slice commitment REJECTED, localized to layer0.attn.scores_matmul (transcript divergence; sub-batch claims_match fires too)"
+  else
+    bad "batched: slice tamper wrong localization: $($PY -c "import json;print(json.load(open('$BRUN/transcript_tamper_slice.json'))['rejected'])")"
+  fi
+fi
+mv "$TGT.bak" "$TGT"
+
+# ---------- (l2) tamper t* [batched analog of (e): registration locus] ------
+TGT="$BRUN/registration/tstar.i32.bin"
+cp "$TGT" "$TGT.bak"
+$PY - "$TGT" <<'EOF'
+import sys
+import numpy as np
+p = sys.argv[1]
+t = np.fromfile(p, dtype=np.int32)
+t[7] = (t[7] + 1) % 32000
+t.tofile(p)
+EOF
+if $PY "$HERE/verify_walk.py" "$BRUN" --out "$BRUN/transcript_tamper_tstar.json"; then
+  bad "batched: tampered t* accepted"
+else
+  HIT=$($PY -c "
+import json
+t = json.load(open('$BRUN/transcript_tamper_tstar.json'))
+d = t['details'].get('statement.registered_weight_hash', {})
+no_drivers = t.get('checked') == [] and 'not run' in t.get('note', '')
+print(t['verdict'] == 'REJECT' and d.get('ok') is False and no_drivers and
+      'served_tokens.file' in d.get('reason', ''))")
+  if [ "$HIT" = "True" ]; then
+    ok "batched: tampered t* REJECTED at the registration hash, no drivers run"
+  else
+    bad "batched: t* tamper wrong locus / drivers ran"
+  fi
+fi
+mv "$TGT.bak" "$TGT"
+
+# ---------- (l3) tamper a chained rowmax com_mx [batched analog of (i)] -----
+TGT="$BRUN/proofs/layer0.attn.softmax/rowmax.h05/com_mx.bin"
+cp "$TGT" "$TGT.bak"
+$PY - "$TGT" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read())
+b[24] ^= 0xFF
+open(p, "wb").write(bytes(b))
+EOF
+if $PY "$HERE/verify_walk.py" "$BRUN" --out "$BRUN/transcript_tamper_commx.json"; then
+  bad "batched: tampered rowmax com_mx accepted"
+else
+  HIT=$($PY -c "
+import json
+t = json.load(open('$BRUN/transcript_tamper_commx.json'))
+layer_rej = [m for m in t['rejected'] if m.startswith('layer')]
+d = t['details']['layer0.attn.softmax']['reason']
+two_routes = ('rowmax.h05: driver verify REJECT' in d) and ('RM2.05' in d)
+print(t['verdict'] == 'REJECT' and layer_rej == ['layer0.attn.softmax'] and two_routes)")
+  if [ "$HIT" = "True" ]; then
+    ok "batched: tampered rowmax com_mx REJECTED, localized (driver transcript divergence + edge RM2.h05 — both detections live in batched mode)"
+  else
+    bad "batched: com_mx tamper wrong localization"
+  fi
+fi
+mv "$TGT.bak" "$TGT"
+
+# ---------- (m1) BATCH-SPECIFIC: tamper the opening_batch terminal ----------
+# All 230 driver verifies stay ACCEPT-conditional; ONLY the batch dies (F12
+# gating: conditional verdicts + opening_batch REJECT => overall REJECT).
+TGT="$BRUN/proofs/opening_batch/b0/batch_vfin.bin"
+cp "$TGT" "$TGT.bak"
+$PY - "$TGT" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read())
+b[-32] ^= 0x01   # last tensor's v'_j, low byte
+open(p, "wb").write(bytes(b))
+EOF
+if $PY "$HERE/verify_walk.py" "$BRUN" --out "$BRUN/transcript_tamper_vfin.json"; then
+  bad "batched: tampered batch_vfin accepted"
+else
+  HIT=$($PY -c "
+import json
+t = json.load(open('$BRUN/transcript_tamper_vfin.json'))
+ob = t['opening_batch']
+b0 = [b for b in ob['batches'] if b['batch'] == 0][0]
+no_layer_rej = not [m for m in t['rejected'] if m.startswith(('layer', 'final', 'lm_head', 'statement.logit'))]
+print(t['verdict'] == 'REJECT' and ob['ok'] is False and not b0['ok']
+      and 'terminal' in (b0['locus'] or '') and no_layer_rej)")
+  if [ "$HIT" = "True" ]; then
+    ok "batched: batch_vfin tamper -> opening_batch.terminal REJECT while every driver stays conditional-ACCEPT (the F12 gating case)"
+  else
+    bad "batched: vfin tamper wrong locus/gating: $($PY -c "import json;t=json.load(open('$BRUN/transcript_tamper_vfin.json'));print(t['opening_batch'])")"
+  fi
+fi
+mv "$TGT.bak" "$TGT"
+
+# ---------- (m2) targeted batch tampers against the persisted vacc ----------
+RUN_SEED=$($PY -c "import hashlib;print(hashlib.sha256(open('$BRUN/public.json','rb').read()).hexdigest())")
+GENSPEC="64=registration/gen64.bin 1024=registration/gen1024.bin 4096=registration/gen4096.bin 32768=registration/gen32768.bin"
+bo_verify() {  # bo_verify <k> -> exit code of the direct batch verify
+  (cd "$BRUN" && ZKOB_REQUIRE_RELATIVE_COMREF=1 $ZB verify \
+     proofs/opening_batch/b$1 vacc/b$1 "$RUN_SEED:b$1" registration/q.bin $GENSPEC)
+}
+TGT="$BRUN/proofs/opening_batch/b0/claims.bin"
+cp "$TGT" "$TGT.bak"
+$PY - "$TGT" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read())
+b[-1] ^= 0x01   # last claim's eval, last byte
+open(p, "wb").write(bytes(b))
+EOF
+OUT=$(bo_verify 0 2>&1); RC=$?
+if [ "$RC" != "0" ] && echo "$OUT" | grep -q "REJECT\[opening_batch.claims_match\]"; then
+  ok "batched: prover claims.bin eval tamper -> opening_batch.claims_match"
+else
+  bad "batched: claims.bin tamper wrong locus (rc=$RC): $(echo "$OUT" | tail -1)"
+fi
+mv "$TGT.bak" "$TGT"
+TGT="$BRUN/proofs/opening_batch/b0/ipa_batch_1024.bin"
+cp "$TGT" "$TGT.bak"
+$PY - "$TGT" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read())
+b[-32] ^= 0x01   # a_final
+open(p, "wb").write(bytes(b))
+EOF
+OUT=$(bo_verify 0 2>&1); RC=$?
+if [ "$RC" != "0" ] && echo "$OUT" | grep -q "REJECT\[opening_batch.ipa1024\]"; then
+  ok "batched: batched-IPA a_final tamper -> opening_batch.ipa1024"
+else
+  bad "batched: ipa tamper wrong locus (rc=$RC): $(echo "$OUT" | tail -1)"
+fi
+mv "$TGT.bak" "$TGT"
+
+# ---------- (m3) at-scale fold cross-check (convention pin, all batches) ----
+XOK=1
+NB=$($PY -c "import json;print(json.load(open('$BRUN/transcript.json'))['opening_batch']['n_batches'])")
+for k in $(seq 0 $((NB-1))); do
+  OUT=$(cd "$BRUN" && ZKOB_REQUIRE_RELATIVE_COMREF=1 ZKOB_FOLD_CROSSCHECK=1 $ZB verify \
+     proofs/opening_batch/b$k vacc/b$k "$RUN_SEED:b$k" registration/q.bin $GENSPEC 2>&1)
+  if [ $? != 0 ] || ! echo "$OUT" | grep -q "opening_batch ACCEPT"; then
+    XOK=0; echo "  fold cross-check FAILED on b$k: $(echo "$OUT" | tail -1)"
+  fi
+done
+if [ "$XOK" = "1" ]; then
+  ok "batched: ZKOB_FOLD_CROSSCHECK=1 re-verify of all $NB sub-batches ACCEPTs (batched fold == per-tensor fold_chain element-exact at full-walk scale)"
+else
+  bad "batched: fold cross-check"
+fi
+
+# ---------- (n) restored batched run re-ACCEPTs ----------
+if $PY "$HERE/verify_walk.py" "$BRUN" --out "$BRUN/transcript_restored.json"; then
+  BN_RESTORED=$($PY -c "import json;print(len(json.load(open('$BRUN/transcript_restored.json'))['checked']))")
+  BOB_RESTORED=$($PY -c "import json;print(json.load(open('$BRUN/transcript_restored.json'))['opening_batch']['ok'])")
+  if [ "$BN_RESTORED" = "65" ] && [ "$BOB_RESTORED" = "True" ]; then
+    ok "restored batched run re-ACCEPTs with checked = 65 + opening_batch ACCEPT"
+  else
+    bad "restored batched run: checked=$BN_RESTORED opening_batch=$BOB_RESTORED"
+  fi
+else
+  bad "restored batched run re-ACCEPTs"
 fi
 
 echo "=== $PASS PASS / $FAIL FAIL ==="

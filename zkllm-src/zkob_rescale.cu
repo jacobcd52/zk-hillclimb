@@ -56,6 +56,7 @@
 // is ACCEPT-conditional; only opening_batch makes it final.
 #include "zkob_lookup.cuh"
 #include "zkob_claims.cuh"
+#include "zkob_fastg1.cuh"
 #include <iostream>
 #include <sys/stat.h>
 using namespace std;
@@ -221,21 +222,24 @@ static bool verify(const string& obdir, const string& seed, uint B, uint C,
         com_A.size != B_pad || com_m.size != N / C_pad) {
         cout << "REJECT: commitment row counts" << endl; return false;
     }
+    prof.lap("load_coms");
     // (1) homomorphic affine link, all rows at once
     {
-        uint n_bad = 0;
         vector<G1Jacobian_t> hx(B_pad), hxr(B_pad), hrem(B_pad);
         cudaMemcpy(hx.data(), com_X.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
         cudaMemcpy(hxr.data(), com_Xr.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
         cudaMemcpy(hrem.data(), com_rem.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
-        for (uint j = 0; j < B_pad; j++)
-            if (!g1_eq(hx[j], h_add(h_mul(hxr[j], {sf,0,0,0,0,0,0,0}), hrem[j]))) n_bad++;
+        // fastg1: same per-row h_mul/h_add/g1_eq ops, stream-concurrent
+        vector<G1Jacobian_t> haff;
+        hb_addmul(hxr, {sf,0,0,0,0,0,0,0}, hrem, /*mul_first=*/true, haff);
+        uint n_bad = hb_neq_count(hx, haff);
         if (n_bad) {
             cout << "REJECT: affine link com_X != sf*com_Xr + com_rem ("
                  << n_bad << " rows)" << endl;
             return false;
         }
     }
+    prof.lap("affine_link");
     LookupProof pf = read_lookup(obdir + "/lookup.bin");
     if (pf.ev.size() != 4 * logD) { cout << "REJECT: round count" << endl; return false; }
 
@@ -249,6 +253,7 @@ static bool verify(const string& obdir, const string& seed, uint B, uint C,
     absorb_g1_tensor(tr, "com_A", com_A);
     Fr_t alpha = fs_challenge_fr(tr);
     auto u = fs_challenge_vec(tr, logD);
+    prof.lap("absorbs");
 
     // (2) lookup rounds: anchor RECOMPUTED, then Lagrange-4 chain
     const Fr_t inv6 = inv(F_SIX);
@@ -269,6 +274,7 @@ static bool verify(const string& obdir, const string& seed, uint B, uint C,
         alpha_acc = h_scalar(alpha_acc, eqv, 2);
         if (k >= n1) alphasq_acc = h_scalar(alphasq_acc, eqv, 2);
     }
+    prof.lap("rounds_loop");
     // (3) B_f, T_f recomputed from the PUBLIC table, folded with the phase2
     // round challenges in round order (binds current MSB each time; §9)
     Fr_t B_f, T_f;
@@ -296,6 +302,7 @@ static bool verify(const string& obdir, const string& seed, uint B, uint C,
         cudaMemcpy(&T_f, dT, sizeof(Fr_t), cudaMemcpyDeviceToHost);
         cudaFree(dB); cudaFree(dT); cudaFree(dtmp);
     }
+    prof.lap("table_fold");
     // (4) terminal identity
     Fr_t inv_ratio = h_scalar({N,0,0,0,0,0,0,0}, inv({D,0,0,0,0,0,0,0}), 2);
     Fr_t t1 = h_scalar(alpha_acc, h_scalar(pf.A_f, h_scalar(pf.S_f, beta, 0), 2), 2);
@@ -510,7 +517,8 @@ static bool selftest_case_claims(uint B, uint C, uint log_sf) {
     return ok;
 }
 
-int main(int argc, char* argv[]) {
+#include "zkob_serve.cuh"
+static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     // strip the optional claim-mode flag block: --claims <accdir> <obid>
@@ -561,4 +569,12 @@ int main(int argc, char* argv[]) {
     }
     cerr << "usage: zkob_rescale selftest | prove ... [--claims <accdir> <obid>] | verify ... [--claims <vaccdir> <obid>]" << endl;
     return 2;
+}
+
+// Stage C2 single-process transport: `serve` keeps this driver resident (one
+// CUDA init for the whole walk); every request runs the same zkw_run1 entry.
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "serve")
+        return zkw_serve(argv[0], zkw_run1);
+    return zkw_run1(argc, argv);
 }

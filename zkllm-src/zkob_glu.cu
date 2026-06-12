@@ -58,6 +58,7 @@
 // the file is then exactly as bound as the homomorphic object it stands for.
 #include "zkob_lookup.cuh"
 #include "zkob_claims.cuh"
+#include "zkob_fastg1.cuh"
 #include <iostream>
 #include <sys/stat.h>
 using namespace std;
@@ -209,7 +210,7 @@ static void prove(const string& obdir, const string& seed,
             vector<G1Jacobian_t> hg(B_pad), hs(B_pad), hcomb(B_pad);
             cudaMemcpy(hg.data(), com_G.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
             cudaMemcpy(hs.data(), com_S.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
-            for (uint j = 0; j < B_pad; j++) hcomb[j] = h_add(hg[j], h_mul(hs[j], r));
+            hb_addmul(hs, r, hg, /*mul_first=*/false, hcomb);   // fastg1, same ops
             G1TensorJacobian com_comb(B_pad, hcomb.data());
             com_comb.save(obdir + "/com_comb.bin");
         }
@@ -334,10 +335,11 @@ static bool verify(const string& obdir, const string& seed, uint B, uint C,
         vector<G1Jacobian_t> hg(B_pad), hs(B_pad);
         cudaMemcpy(hg.data(), com_G.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
         cudaMemcpy(hs.data(), com_S.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
-        for (uint j = 0; j < B_pad; j++) hcomb[j] = h_add(hg[j], h_mul(hs[j], r));
+        hb_addmul(hs, r, hg, /*mul_first=*/false, hcomb);   // fastg1, same ops
     }
     G1TensorJacobian com_comb(B_pad, hcomb.data());
 
+    prof.lap("comb_loop");
     // lookup rounds: anchor recomputed, Lagrange-4 chain
     const Fr_t inv6 = inv(F_SIX);
     Fr_t cur = h_scalar(alpha, h_scalar(alpha, alpha, 2), 0);   // alpha + alpha^2
@@ -688,7 +690,8 @@ static bool selftest_case_claims(uint B, uint C, int low, uint len) {
     return ok;
 }
 
-int main(int argc, char* argv[]) {
+#include "zkob_serve.cuh"
+static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
     // strip the optional claim-mode flag block: --claims <accdir> <obid>
@@ -744,4 +747,12 @@ int main(int argc, char* argv[]) {
          << "       zkob_glu prove  <obdir> <seed> <G-int32> <U-int32> <B> <C> <low> <len> <mapped-int32> <gen> <q> [H-int64-out] [--claims <accdir> <obid>]\n"
          << "       zkob_glu verify <obdir> <seed> <B> <C> <low> <len> <mapped-int32> <gen> <q> [--claims <vaccdir> <obid>]" << endl;
     return 2;
+}
+
+// Stage C2 single-process transport: `serve` keeps this driver resident (one
+// CUDA init for the whole walk); every request runs the same zkw_run1 entry.
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "serve")
+        return zkw_serve(argv[0], zkw_run1);
+    return zkw_run1(argc, argv);
 }

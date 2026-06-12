@@ -33,12 +33,21 @@ import fcntl
 import hashlib
 import json
 import os
+import struct
 import subprocess
+import threading
 import time
 
 ZKLLM = "/root/zkllm"
 RUN_ROOT = "/root/zkorch"
 GPU_LOCK = "/tmp/zkorch.gpu.lock"
+
+# Proof-transport modes (TRANSPORT_REBUILD_DESIGN, Stage C2). "inline" is the
+# original per-driver inline-IPA tail; "batched" runs every driver in claim
+# mode and discharges all claims through zkob_batchopen sub-batches. The mode
+# is part of the public STATEMENT (public.json "transport", inside run_seed):
+# the verifier demands the discharge the statement names, fail-closed.
+TRANSPORTS = ("inline", "batched")
 
 SEQ, EMBED, INTER = 1024, 768, 3072
 LOG_SF = 16                      # residual-stream / weight scale 2^16
@@ -120,13 +129,16 @@ DRIVER_TIMEOUT_S = 900
 
 
 def run_driver(cmd, label, expect_reject_ok=False, retries=1, log=print,
-               timeout=DRIVER_TIMEOUT_S):
+               timeout=DRIVER_TIMEOUT_S, cwd=None):
     """Run one driver invocation, serialized on the shared GPU via a lock file.
 
     Returns (accepted: bool, seconds: float, output: str).
     Exit 0 = ACCEPT/success; exit 1 = REJECT (meaningful for verify modes, not
     retried); anything else = crash (CUDA contention etc.) -> retried once.
     Timeout = fail (RuntimeError, no retry): liveness hardening, fail-closed.
+    cwd: working directory (default ZKLLM). The batched transport runs drivers
+    with cwd = run dir and RELATIVE argv paths so every comref in claims.bin
+    is run-dir-relative (Stage-B comref canonicalization).
     """
     attempt = 0
     while True:
@@ -135,7 +147,7 @@ def run_driver(cmd, label, expect_reject_ok=False, retries=1, log=print,
         with open(GPU_LOCK, "w") as lk:
             fcntl.flock(lk, fcntl.LOCK_EX)
             try:
-                r = subprocess.run(cmd, cwd=ZKLLM, capture_output=True, text=True,
+                r = subprocess.run(cmd, cwd=cwd or ZKLLM, capture_output=True, text=True,
                                    timeout=timeout)
             except subprocess.TimeoutExpired as e:
                 # TimeoutExpired captures raw bytes even under text=True
@@ -157,6 +169,113 @@ def run_driver(cmd, label, expect_reject_ok=False, retries=1, log=print,
             time.sleep(5.0)
             continue
         raise RuntimeError(f"driver failed rc={r.returncode}: {' '.join(cmd)}\n{out[-2000:]}")
+
+
+class DriverPool:
+    """Stage C2 single-process verifier transport (TRANSPORT_REBUILD_DESIGN
+    §1.3/§2.7/§6 Stage C): one persistent `serve`-mode process per driver
+    binary; every request runs through the same zkw_run1 entry as the
+    one-shot CLI (byte-identical FS schedules, checks and verdicts), in the
+    exact order the caller issues them (so vacc claims.bin append order stays
+    canonical). CUDA init is paid once per DRIVER (~12) instead of once per
+    OBLIGATION (~235). Holds the GPU lock for its lifetime (the per-call
+    transport held it per invocation; the walk is serial either way).
+
+    Fail-closed: a request that crashes the worker, returns an unexpected rc,
+    or times out raises RuntimeError (callers already treat that as REJECT).
+    NO automatic retry — re-running a claim-mode verify would double-append
+    into the verifier accumulator. A dead worker is respawned only for the
+    NEXT request."""
+
+    def __init__(self, cwd, log=print):
+        self.cwd = cwd
+        self.log = log
+        self.procs = {}
+        self.spawn_s = 0.0
+        self._lk = open(GPU_LOCK, "w")
+        fcntl.flock(self._lk, fcntl.LOCK_EX)
+
+    def _get(self, binpath):
+        p = self.procs.get(binpath)
+        if p is not None and p.poll() is None:
+            return p
+        if p is not None:
+            self.log(f"  [pool] respawning dead {os.path.basename(binpath)} "
+                     f"worker (rc={p.returncode})")
+        t0 = time.time()
+        p = subprocess.Popen([binpath, "serve"], cwd=self.cwd,
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, bufsize=1)
+        line = p.stdout.readline()
+        if "ZKW-READY" not in line:
+            raise RuntimeError(f"serve worker failed to start: {binpath} ({line!r})")
+        dt = time.time() - t0
+        self.spawn_s += dt
+        self.log(f"  [pool] {os.path.basename(binpath)} serve up ({dt:.2f}s)")
+        self.procs[binpath] = p
+        return p
+
+    def run(self, cmd, label, expect_reject_ok=False, timeout=DRIVER_TIMEOUT_S):
+        """Same contract as run_driver (accepted, seconds, output)."""
+        binpath, args = cmd[0], [str(c) for c in cmd[1:]]
+        for a in args:
+            assert not any(ch.isspace() for ch in a), f"whitespace in argv: {a!r}"
+        t0 = time.time()
+        p = self._get(binpath)
+        try:
+            p.stdin.write(" ".join(args) + "\n")
+            p.stdin.flush()
+        except (BrokenPipeError, OSError):
+            raise RuntimeError(f"serve worker died before request: {label}")
+        # blocking readline + kill-timer (NOT select: readline buffers ahead,
+        # so the sentinel can sit in the TextIO buffer with the fd quiet)
+        out_lines = []
+        rc = None
+        timed_out = []
+        watchdog = threading.Timer(timeout, lambda: (timed_out.append(1), p.kill()))
+        watchdog.start()
+        try:
+            while True:
+                line = p.stdout.readline()
+                if line == "":
+                    if timed_out:
+                        raise RuntimeError(
+                            f"serve request TIMEOUT after {timeout}s: {label}\n"
+                            + "".join(out_lines)[-2000:])
+                    raise RuntimeError(
+                        f"serve worker died mid-request (rc={p.poll()}): {label}\n"
+                        + "".join(out_lines)[-2000:])
+                if line.startswith("ZKW-RC "):
+                    rc = int(line.split()[1])
+                    break
+                out_lines.append(line)
+        finally:
+            watchdog.cancel()
+        dt = time.time() - t0
+        out = "".join(out_lines)
+        if rc == 0:
+            self.log(f"  [{dt:7.2f}s] {label}")
+            return True, dt, out
+        if rc == 1 and expect_reject_ok:
+            self.log(f"  [{dt:7.2f}s] {label} -> REJECT")
+            return False, dt, out
+        raise RuntimeError(f"serve request failed rc={rc}: "
+                           f"{' '.join([binpath] + args)}\n{out[-2000:]}")
+
+    def close(self):
+        for p in self.procs.values():
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+        for p in self.procs.values():
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                p.kill()
+        self.procs.clear()
+        fcntl.flock(self._lk, fcntl.LOCK_UN)
+        self._lk.close()
 
 
 # ---------------------------------------------------------------------------
@@ -747,3 +866,251 @@ def walk_spec(run_dir, submission="baseline"):
     edges += h_edges
 
     return spec, edges
+
+
+# ---------------------------------------------------------------------------
+# Batched transport (TRANSPORT_REBUILD_DESIGN §6 Stage C2): the claim plan.
+#
+# Every claim-emitting driver run, in EXACT prove_walk order (the canonical
+# claim order both sides must reproduce byte-for-byte for claims_match), with
+# a deterministic sub-batch assignment. Sub-batches exist because batch_prove
+# round-0 residency is ~2x sum_j 2^vars_j of the batch's distinct tensors
+# (Fr = 32 B/element, post-streaming-fix) and the full walk's ~1.3 G elements
+# (~42 GB) exceed the 24 GB card; claims partition freely across batches
+# (design §8.3: Lemma 3 applies per batch). The partition is a deterministic
+# function of the walk spec computed identically by prove_walk and
+# verify_walk; a prover using ANY other partition fails claims_match on the
+# first divergent sub-batch (fail-closed).
+#
+# The per-run element numbers are conservative static estimates of
+# sum_{distinct tensors} 2^vars (from each driver's claim table); prove_walk
+# asserts the EXACT per-batch totals (parsed from claims.bin) stay under
+# SUBBATCH_HARD_CAP after each batch closes, so a drifting estimate fails
+# loudly, never silently OOMs.
+# ---------------------------------------------------------------------------
+SUBBATCH_BUDGET_ELEMS = 220_000_000   # ~14 GB resident (2 x 32 B) + overhead
+SUBBATCH_HARD_CAP_ELEMS = 260_000_000
+
+
+def _est_fc(IN, OUT):
+    INp, OUTp = pad2(IN), pad2(OUT)
+    return INp * OUTp + SEQ * INp + SEQ * OUTp           # W, X, Y
+
+
+def _est_rescale(C, sf_log):
+    return 2 * SEQ * pad2(C) + (1 << sf_log)             # A, rem, m-table
+
+
+def _est_rowmax(NCOL, len_r, npl):
+    NCOLp = pad2(NCOL)
+    return (2 * npl + 2) * SEQ * NCOLp + len_r + 2 * SEQ  # A_L, L, S, z (+m_L, mx)
+
+
+_EST_RMSNORM = 16 << 20      # 17 claims; AL/L limb planes + 5 full grids
+_EST_SOFTMAX8 = 17 << 20     # 19 claims; A_L/L 4B-row planes dominate
+_EST_SOFTMAX = 17 << 20
+_EST_GLU = 7 * SEQ * 4096 + SWIGLU_LEN
+_EST_HEADSLICE = 3 * SEQ * 1024 + 36 * SEQ * 64
+_EST_HEADMERGE = 2 << 20
+_EST_ROPE = 2 * SEQ * 1024   # T (2 claims, one tensor) + Y64
+
+
+def claim_plan(run_dir, submission="baseline"):
+    """Ordered claim-emitting runs: [{mid, sub, obid, est, batch, extra}].
+    obid == the sub's seed_id (the --claims obligation id, both sides);
+    extra == the registered/slice commitment path appended to fc/rmsnorm
+    prove --claims blocks (fc: <registered-com_W>; rmsnorm: <registered-com_g>).
+    Returns (plan, n_batches)."""
+    faithful = submission == "faithful-arch-v1"
+    P = reg_paths(run_dir)
+    entries = []
+
+    def add(mid, sub, obid, est, extra=None):
+        entries.append({"mid": mid, "sub": sub, "obid": obid, "est": int(est),
+                        "extra": extra})
+
+    def norm_site(mid, gwid):
+        add(mid, "rmsnorm", mid, _EST_RMSNORM, wpath(run_dir, gwid, "com"))
+        add(mid, "wrescale", mid + ".wrescale", _est_rescale(EMBED, LOG_SF))
+        add(mid, "yrescale", mid + ".yrescale", _est_rescale(EMBED, LOG_SF))
+
+    for l in range(N_LAYERS):
+        SM = f"layer{l}.attn.scores_matmul"
+        SX = f"layer{l}.attn.softmax"
+        VM = f"layer{l}.attn.values_matmul"
+        norm_site(f"layer{l}.input_norm.rmsnorm", f"layer{l}.input_norm.g")
+        for pj in ("q_proj", "k_proj", "v_proj"):
+            mm, rs = f"layer{l}.attn.{pj}.matmul", f"layer{l}.attn.{pj}.rescaling"
+            add(mm, "fc", mm, _est_fc(EMBED, EMBED),
+                wpath(run_dir, f"layer{l}.attn.{pj}", "com"))
+            add(rs, "rescale", rs, _est_rescale(EMBED, QKV_RESCALE_LOG))
+        for t in ("q", "k"):
+            add(SM, f"rope.{t}", f"layer{l}.attn.rope.{t}", _EST_ROPE)
+            add(SM, f"rope.{t}.rescale", f"layer{l}.attn.rope.{t}.rescale",
+                _est_rescale(EMBED, ROPE_RESCALE_LOG))
+        add(SM, "slice", f"layer{l}.attn.slice", _EST_HEADSLICE)
+        for hh in HH:
+            add(SM, f"fc.h{hh}", f"layer{l}.attn.scores.h{hh}",
+                _est_fc(HEAD_DIM, SEQ),
+                os.path.join(ob(run_dir, SM, "slice"), f"com_KhT{hh}.bin"))
+            add(SX, f"rescale13.h{hh}", f"layer{l}.attn.scores_rescale13.h{hh}",
+                _est_rescale(SEQ, SCORES_RESCALE13_LOG))
+            add(SX, f"rescale10.h{hh}", f"layer{l}.attn.scores_rescale10.h{hh}",
+                _est_rescale(SEQ, SCORES_RESCALE10_LOG))
+            if faithful:
+                add(SX, f"rowmax.h{hh}", f"layer{l}.attn.rowmax.h{hh}",
+                    _est_rowmax(SEQ, SCORES_ROWMAX_LEN_R, SCORES_ROWMAX_NPL))
+                add(SX, f"softmax8.h{hh}", f"layer{l}.attn.softmax8.h{hh}",
+                    _EST_SOFTMAX8)
+            else:
+                add(SX, f"softmax.h{hh}", f"layer{l}.attn.softmax.h{hh}",
+                    _EST_SOFTMAX)
+            add(VM, f"fc.h{hh}", f"layer{l}.attn.values.h{hh}",
+                _est_fc(SEQ, HEAD_DIM),
+                os.path.join(ob(run_dir, SM, "slice"), f"com_Vh{hh}.bin"))
+            add(VM, f"rescale.h{hh}", f"layer{l}.attn.values_rescale.h{hh}",
+                _est_rescale(HEAD_DIM, VALUES_RESCALE_LOG))
+        add(VM, "merge", f"layer{l}.attn.merge", _EST_HEADMERGE)
+        if faithful:
+            o_mm = f"layer{l}.attn.o_proj.matmul"
+            o_rs = f"layer{l}.attn.o_proj.rescaling"
+            add(o_mm, "fc", o_mm, _est_fc(EMBED, EMBED),
+                wpath(run_dir, f"layer{l}.attn.o_proj", "com"))
+            add(o_rs, "rescale", o_rs, _est_rescale(EMBED, OPROJ_RESCALE_LOG))
+        norm_site(f"layer{l}.post_attn_norm.rmsnorm", f"layer{l}.post_attn_norm.g")
+        for pj, IN, OUT, rs_log in (("gate_proj", EMBED, INTER, GATE_RESCALE_LOG),
+                                    ("up_proj", EMBED, INTER, UP_RESCALE_LOG),
+                                    ("down_proj", INTER, EMBED, DOWN_RESCALE_LOG)):
+            mm, rs = f"layer{l}.mlp.{pj}.matmul", f"layer{l}.mlp.{pj}.rescaling"
+            add(mm, "fc", mm, _est_fc(IN, OUT),
+                wpath(run_dir, f"layer{l}.mlp.{pj}", "com"))
+            add(rs, "rescale", rs, _est_rescale(OUT, rs_log))
+            if pj == "up_proj":   # prove_walk order: glu + hrescale after up
+                sw = f"layer{l}.mlp.swiglu"
+                add(sw, "glu", sw, _EST_GLU)
+                add(sw, "hrescale", sw + ".hrescale",
+                    _est_rescale(INTER, HIDDEN_RESCALE_LOG))
+    norm_site("final_norm.rmsnorm", "final_norm.g")
+    add("lm_head.matmul", "fc", "lm_head.matmul", _est_fc(EMBED, VOCAB),
+        wpath(run_dir, "lm_head", "com"))
+    add("lm_head.rescaling", "rescale", "lm_head.rescaling",
+        _est_rescale(VOCAB, LM_RESCALE_LOG))
+    add("statement.logit_binding", "rowmax", "statement.logit_binding",
+        _est_rowmax(VOCAB_PAD, LOGIT_LEN_R, LOGIT_NPL))
+
+    # greedy deterministic sub-batch assignment over prove order
+    batch, cur = 0, 0
+    for e in entries:
+        if cur > 0 and cur + e["est"] > SUBBATCH_BUDGET_ELEMS:
+            batch += 1
+            cur = 0
+        e["batch"] = batch
+        cur += e["est"]
+    return entries, batch + 1
+
+
+def acc_dir(run_dir, k):
+    """Prover accumulator + batch artifacts for sub-batch k (under proofs/ —
+    the batch artifacts ARE proof artifacts the verifier consumes)."""
+    return os.path.join(run_dir, "proofs", "opening_batch", f"b{k}")
+
+
+def vacc_dir(run_dir, k):
+    """Verifier-recomputed accumulator for sub-batch k (verifier-internal,
+    F6: NEVER under proofs/, never a prover artifact)."""
+    return os.path.join(run_dir, "vacc", f"b{k}")
+
+
+def batch_seed(run_seed, k):
+    """Per-sub-batch seed; zkob_batchopen appends ':opening_batch' itself."""
+    return f"{run_seed}:b{k}"
+
+
+def genspec_args(rel=True):
+    """zkob_batchopen generator spec: ONE registration gen file per domain
+    size (the registration invariant the per-domain RLC is a commitment
+    under), run-dir-relative."""
+    return [f"{g}=registration/{fname}" for g, fname in sorted(GEN_FOR.items())]
+
+
+def rel_argv(cmd, run_dir):
+    """Relativize every argv path under run_dir (driver binary stays
+    absolute). Batched-transport invocations use cwd=run_dir so claims.bin
+    comrefs come out run-dir-relative on both sides."""
+    out = []
+    for c in cmd:
+        if isinstance(c, str) and c.startswith(run_dir + os.sep):
+            out.append(os.path.relpath(c, run_dir))
+        else:
+            out.append(c)
+    return out
+
+
+def parse_claims(path):
+    """claims.bin parser (format: zkob_claims.cuh claim_blob); returns dicts
+    with id/comref/domain/n_rows/n_point/tag."""
+    with open(path, "rb") as f:
+        b = f.read()
+    assert b[:4] == b"ZKCL", "bad claims magic"
+    ver, n = struct.unpack_from("<II", b, 4)
+    assert ver == 1, f"bad claims version {ver}"
+    off = 12
+    out = []
+    for _ in range(n):
+        start = off
+        (l,) = struct.unpack_from("<I", b, off); off += 4
+        cid = b[off:off + l].decode(); off += l
+        (l,) = struct.unpack_from("<I", b, off); off += 4
+        comref = b[off:off + l].decode(); off += l
+        dom, rows, np_ = struct.unpack_from("<III", b, off); off += 12
+        off += np_ * 32
+        tag = b[off]; off += 1
+        off += 32 if tag == 0 else 144
+        out.append({"id": cid, "comref": comref, "domain": dom,
+                    "n_rows": rows, "n_point": np_, "tag": tag,
+                    "raw": b[start:off]})
+    assert off == len(b), "trailing bytes in claims.bin"
+    return out
+
+
+def localize_batch_failure(pacc_claims_path, vacc_claims_path):
+    """Stage C2 localization: a failed sub-batch must pinpoint the offending
+    id(s), never blame every id sharing the batch. Multiset-diff the prover's
+    claims.bin against the VERIFIER-recomputed list (the ground truth) on the
+    canonical per-claim record bytes; the diverging records' claim ids name
+    exactly the tampered/forged obligations (a driver whose transcript
+    diverged emits different points; a driver that rejected driver-side never
+    emitted, so its claims appear prover-side only; a forged prover record
+    appears prover-side only).
+
+    Returns (diverging_claim_ids, note). Empty ids + note means the claim
+    lists are byte-identical: the failure lives in the batch proof artifacts
+    themselves (sumcheck/vfin/ipa bytes) or is an SZ-caught false-claim batch
+    — information-theoretically not attributable to a single id, so the named
+    locus stays the batch check (the C1 §3 relocated-locus discipline)."""
+    vclaims = parse_claims(vacc_claims_path)   # verifier-internal: must parse
+    try:
+        pclaims = parse_claims(pacc_claims_path)
+    except (AssertionError, OSError, UnicodeDecodeError, struct.error):
+        return [], ("prover claims.bin unparseable — batch proof artifact "
+                    "(no per-id attribution)")
+    from collections import Counter
+    pc = Counter(c["raw"] for c in pclaims)
+    vc = Counter(c["raw"] for c in vclaims)
+    raw2id = {c["raw"]: c["id"] for c in pclaims + vclaims}
+    ids = sorted({raw2id[r] for r in (pc - vc) | (vc - pc)})
+    if not ids:
+        return [], ("prover and verifier claim lists byte-identical — failure "
+                    "is in the batch proof artifacts (or an SZ-caught false "
+                    "claim); no single id implicable")
+    return ids, f"{len(ids)} claim record(s) diverge from verifier recomputation"
+
+
+def registered_weight_comrefs(submission="baseline"):
+    """Every registered weight commitment the walk must open IN THE BATCH
+    (the F5 discharge pin: the orchestrator asserts these comrefs appear in
+    the verifier-recomputed claim lists, making the *.commitment_opening
+    discharge explicit). Run-dir-relative comref strings."""
+    wids = [wid for wid, *_ in weight_specs(submission)]
+    wids += [wid for wid, *_ in head_weight_specs()]
+    return {f"registration/weights/{wid}-com.bin" for wid in wids}
