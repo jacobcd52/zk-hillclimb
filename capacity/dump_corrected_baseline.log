@@ -1,0 +1,40 @@
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+`torch_dtype` is deprecated! Use `dtype` instead!
+[baseline] registered-weight provenance guard: OK
+[baseline] student prompt 0: chain 7.7s
+[baseline] student prompt 1: chain 7.2s
+[baseline] student prompt 2: chain 7.4s
+[baseline] student prompt 3: chain 8.7s
+[baseline] student prompt 4: chain 8.9s
+[baseline] student prompt 5: chain 7.3s
+[baseline] student prompt 6: chain 7.4s
+[baseline] student prompt 7: chain 7.8s
+[baseline] prompt 0: margin_mean=8.029 exact_agree=0.0703 margin_max=28.04
+[baseline] prompt 1: margin_mean=7.571 exact_agree=0.0879 margin_max=26.97
+[baseline] prompt 2: margin_mean=7.936 exact_agree=0.0576 margin_max=32.66
+[baseline] prompt 3: margin_mean=8.717 exact_agree=0.0430 margin_max=26.38
+[baseline] prompt 4: margin_mean=8.409 exact_agree=0.0557 margin_max=31.84
+[baseline] prompt 5: margin_mean=6.749 exact_agree=0.0908 margin_max=23.55
+[baseline] prompt 6: margin_mean=8.215 exact_agree=0.0625 margin_max=30.54
+[baseline] prompt 7: margin_mean=7.77 exact_agree=0.0596 margin_max=29.09
+[baseline] prompt 0: max_Nb=32000
+[baseline] prompt 1: max_Nb=32000
+[baseline] prompt 2: max_Nb=32000
+[baseline] prompt 3: max_Nb=32000
+[baseline] prompt 4: max_Nb=32000
+[baseline] prompt 5: max_Nb=32000
+[baseline] prompt 6: max_Nb=32000
+[baseline] prompt 7: max_Nb=32000
+{
+  "scheme": "baseline",
+  "orientation": "corrected: reference=M_int (proven), served=FP8 fast-model argmax",
+  "exact_postgumbel_agreement": 0.06591796875,
+  "p_at_b0(=1-agreement)": 0.93408203125,
+  "margin_mean_unclamped": 7.92458750033984,
+  "margin_p99_unclamped": 21.93251626968385,
+  "margin_max_unclamped": 32.65515899658203,
+  "n_bgrid": 248,
+  "bgrid_max": 55.0
+}
+wrote /workspace/projects/zk-hillclimb/capacity/capacity_dump_corrected_baseline_seed20260611.npz

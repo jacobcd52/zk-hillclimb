@@ -1,0 +1,43 @@
+{
+  "scheme": "codebook",
+  "seed": 20260611,
+  "vocab": 32000,
+  "orientation": "corrected: reference=M_int (proven), served=FP8 fast-model argmax",
+  "n_positions": 8192,
+  "exact_postgumbel_agreement": 0.9600830078125,
+  "p_at_b0(=1-agreement)": 0.0399169921875,
+  "margin_mean_unclamped": 0.005826286389492452,
+  "margin_p99_unclamped": 0.20785757064819343,
+  "margin_max_unclamped": 0.9391136169433594,
+  "n_bgrid": 248,
+  "bgrid_max": 55.0,
+  "bgrid_extended_beyond_55": false,
+  "dolly_sha256": "2df9083338b4abd6bceb5635764dab5d833b393b55759dffb0959b6fcbf794ec",
+  "npz": "/workspace/projects/zk-hillclimb/capacity/capacity_dump_corrected_codebook_seed20260611.npz",
+  "stats": [
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    },
+    {
+      "n_linears": 14
+    }
+  ]
+}
