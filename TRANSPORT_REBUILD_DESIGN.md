@@ -600,6 +600,42 @@ are already per-round-FS and the masks drop in per driver without restructuring.
 4. The G5 grouping keys on (domain, comref-class) so weight groups never homomorphically
    mix with activation groups.
 
+### 4.5 Stage-D AS-BUILT amendment (resolves TRANSPORT_REVIEW F7) — 2026-06-12
+
+F7 flagged that D4's "same reduction with two changes" was one change short: with
+Committed evals the batch's initial claim exists only inside commitments, so
+Libra-masked rounds have no public running claim to check against. AS BUILT
+(zkob_wpriv.cuh; STAGE_D_REPORT.md for the full protocol + arguments), the missing
+component is exactly the one the review named, and it REPLACES the Libra masks
+entirely:
+
+- **Committed round messages with homomorphic round checks** (weight batch AND the
+  fc driver zkip sumcheck): prover sends C_p0/C_p1/C_p2 = p_t·Q + τ_t·H with τ_0, τ_2
+  fresh and τ_1 = τ_cur − τ_0; verifier checks C_p0 + C_p1 == C_cur in G1 and folds
+  C_cur' = lagrange3(C_p0,C_p1,C_p2)(x) homomorphically (lagrange3 is linear; blind
+  tracking is the scalar lagrange3 of the τ's). No mask polynomial q, no mask
+  commitment, no extra mask opening: the round messages are perfectly-hiding Pedersen
+  commitments, which subsumes D2's goal for these sumchecks.
+- **Committed per-tensor terminals**: C_vfin_j = v'_j·Q + t'_j·H, the G3 check is
+  Σ_j M_j(r)κ_j·C_vfin_j == C_cur in G1; the prover solves the last nonzero-coefficient
+  t'_j so the H-components balance.
+- **Driver terminals as sigma proofs** (D3 as designed): fc's `cur == claim_X·claim_W`
+  becomes a Schnorr PoK of the H-component of C_cur − claim_X·C_W; rmsnorm's
+  `val_W == val_R·val_g` becomes a Schnorr PoK of the H-component of
+  val_R·C_val_g − val_W·Q.
+- **ZK final opening** (D4's IPA): blinds β_L, β_R on L/R, β' = β + x²β_L + x⁻²β_R,
+  and the a_final reveal replaced by a 2-base Schnorr PoK of (a_f, β_f) for
+  P_fin = a_f·(g_f + b_f·Q) + β_f·H.
+
+Honest accounting addition to §4.1/§4.2-D5, found during the build: the rmsnorm
+gain's privacy is bounded by the PUBLIC chain tensor W = R⊗g — val_g = val_W/val_R is
+computable from public claims even with the g claim hidden (and Y = W_∘X exposes g
+multiplicatively in the activation statement itself). Stage D closes the proof-LAYER
+leakage for g (no val_g byte appears in any artifact; regression-checked); the
+activation-statement channel is the same class as D5(i) and needs hiding activations.
+For the matmul weights the same class survives only as layer-0 public-X claim
+functionals (claim_Y at known points), per §4.1's existing accounting.
+
 ---
 
 ## 5. THE TEST HARNESS

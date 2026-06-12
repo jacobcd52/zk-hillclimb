@@ -277,19 +277,38 @@ def main():
                     help="batched = TRANSPORT_REBUILD Stage C2: drivers emit "
                          "claims, ONE zkob_batchopen discharge per sub-batch "
                          "(the mode is part of the statement, inside run_seed)")
+    ap.add_argument("--wpriv", action="store_true",
+                    help="Stage D weight privacy: hiding registration of every "
+                         "weight tensor (blinds prover-private under data/), "
+                         "2-slot q.bin [Q, H], weight claims discharged through "
+                         "the ZK weight sub-batch; requires --transport batched")
     args = ap.parse_args()
+    if args.wpriv and args.transport != "batched":
+        ap.error("--wpriv requires --transport batched (the wpriv driver "
+                 "modes exist only in claim mode)")
     sub = args.submission
     run_dir = os.path.join(args.root, args.run_id)
     P = C.reg_paths(run_dir)
     os.makedirs(P["weights"], exist_ok=True)
     os.makedirs(os.path.join(run_dir, "data"), exist_ok=True)
     os.makedirs(os.path.join(run_dir, "proofs"), exist_ok=True)
-    print(f"== register: {run_dir} (submission: {sub}) ==")
+    if args.wpriv:
+        os.makedirs(os.path.join(run_dir, "data", "wpriv"), exist_ok=True)
+    print(f"== register: {run_dir} (submission: {sub}"
+          + (", WEIGHT-PRIVATE" if args.wpriv else "") + ") ==")
 
     print("-- gens (ppgen) --")
     for n, key in ((64, "gen64"), (1024, "gen1024"), (4096, "gen4096"),
-                   (32768, "gen32768"), (1, "q")):
+                   (32768, "gen32768")):
         C.run_driver([C.drv("ppgen"), str(n), P[key]], f"ppgen {n}")
+    if args.wpriv:
+        # Stage D: q.bin = [Q, H] — the slot-1 generator H is the independent
+        # base every blind rides on (zkob_batchopen genq, the §4.4 touch);
+        # hash-pinned below like every gen, asserted 2-slot by the verifier.
+        C.run_driver([C.drv("zkob_batchopen"), "genq", P["q"]],
+                     "genq (2-slot q: Q + H)")
+    else:
+        C.run_driver([C.drv("ppgen"), "1", P["q"]], "ppgen 1")
 
     print("-- weights (pipeline semantics) --")
     eps, model = export_weights(run_dir, sub)
@@ -298,15 +317,26 @@ def main():
     lm_head_tied = export_head(run_dir, model)
     del model
 
-    print("-- registered commitments (zkob_fc commit) --")
+    print("-- registered commitments (zkob_fc commit"
+          + (" --hiding" if args.wpriv else "") + ") --")
+
+    def hiding_block(wid):
+        """Stage D D1: com[r] += s_r*H, fresh urandom row blinds saved
+        PROVER-PRIVATE under data/wpriv/ (the verifier never reads data/)."""
+        if not args.wpriv:
+            return []
+        return ["--hiding", P["q"], C.wblind_path(run_dir, wid)]
+
     for wid, _stem, IN, OUT, gen in C.weight_specs(sub):
         C.run_driver([C.drv("zkob_fc"), "commit", C.wpath(run_dir, wid, "int"),
                       str(IN), str(OUT), P[C.GEN_FOR[gen].split(".")[0]],
-                      C.wpath(run_dir, wid, "com")], f"commit {wid}")
+                      C.wpath(run_dir, wid, "com")] + hiding_block(wid),
+                     f"commit {wid}")
     for wid, IN, OUT, gen in C.head_weight_specs():
         C.run_driver([C.drv("zkob_fc"), "commit", C.wpath(run_dir, wid, "int"),
                       str(IN), str(OUT), P[C.GEN_FOR[gen].split(".")[0]],
-                      C.wpath(run_dir, wid, "com")], f"commit {wid}")
+                      C.wpath(run_dir, wid, "com")] + hiding_block(wid),
+                     f"commit {wid}")
 
     print("-- input + commitment --")
     gen_input(run_dir, args.run_id)
@@ -338,6 +368,14 @@ def main():
         # written when batched so inline registrations stay bit-identical to
         # every pre-C2 registration (run_seed unchanged).
         **({"transport": args.transport} if args.transport != "inline" else {}),
+        # Stage D: weight privacy is part of the statement (inside run_seed).
+        # Only written when on, so non-private registrations stay bit-identical
+        # to every pre-D registration. "hiding": all registered weight
+        # commitments below are HIDING Pedersen commitments (blinds
+        # prover-private, never shipped), q.bin is the 2-slot [Q, H] file
+        # (slot 1 = the independent blinding generator H, asserted by the
+        # verifier), and the verifier demands the ZK weight sub-batch.
+        **({"weight_privacy": "hiding"} if args.wpriv else {}),
         "softmax_temperature": 8 if faithful else 128,
         "o_proj": "applied" if faithful else "omitted (frozen pipeline)",
         "prompt_token_ids": None,

@@ -49,8 +49,18 @@ TIES = {}   # rowmax selector-tie duty per instance (STAGE3 §2.4(ii))
 # (wit_*.fr, the ~32 B/element Fr expansions batch_prove streams from) are
 # DELETED, capping witness disk at one sub-batch (~7 GB) instead of the full
 # walk's ~42 GB.
+#
+# Stage D weight privacy (public.json "weight_privacy": "hiding", inside
+# run_seed): every claim plan entry with a `wid` (= its --claims extra is a
+# REGISTERED weight commitment) additionally gets --wpriv <wacc> <blinds>,
+# routing its W/g claim as a Committed (C_v) record into the SEPARATE weight
+# accumulator (activation claims stay in the fast public sub-batches,
+# bit-identical path); ONE zkob_batchopen wprove discharges the weight batch
+# after the last public sub-batch, then the prover-private files the drivers
+# staged there (wit_*.fr, witrefs.txt, cblinds.bin, blindrefs.txt) are
+# deleted/relocated to data/wpriv/ so proofs/ ships no hidden eval or blind.
 BATCH = {"on": False, "plan": [], "cursor": 0, "cur": 0, "run_dir": None,
-         "run_seed": None, "stats": []}
+         "run_seed": None, "stats": [], "wpriv": False, "wstats": None}
 
 
 def finalize_batch(k):
@@ -82,6 +92,54 @@ def finalize_batch(k):
                            "witness_bytes_freed": wit_bytes, "wit_files": n_wit})
     print(f"  opening_batch b{k}: {len(claims)} claims, {tensors} tensors, "
           f"{elems/1e6:.1f}M elems, {dt:.1f}s; freed {wit_bytes/2**30:.2f} GiB witness")
+
+
+def finalize_wbatch():
+    """Stage D: discharge the weight accumulator (ONE batch over every
+    registered tensor's hidden claim) with zkob_batchopen wprove, then strip
+    the prover-private files: weight witness dumps are spent (deleted, like
+    the public batches'); cblinds.bin (the hidden evals + commitment blinds)
+    and blindrefs.txt RELOCATE to data/wpriv/ — they must survive for the D4
+    leak scan to know what secrets to scan for, but proofs/ must not ship
+    them."""
+    run_dir, run_seed = BATCH["run_dir"], BATCH["run_seed"]
+    wacc = C.wacc_dir(run_dir)
+    wacc_rel = os.path.relpath(wacc, run_dir)
+    cmd = [C.drv("zkob_batchopen"), "wprove", wacc_rel, run_seed,
+           "registration/q.bin"] + C.genspec_args()
+    ok, dt, out = C.run_driver(cmd, "prove opening_batch_w [weight sub-batch]",
+                               cwd=run_dir)
+    record("opening_batch_w", "w", "w", cmd, dt)
+    claims = C.parse_claims(os.path.join(wacc, "claims.bin"))
+    assert all(c["tag"] == 1 for c in claims), \
+        "plain (non-Committed) claim in the weight accumulator"
+    elems = sum({c["comref"]: c["n_rows"] * c["domain"] for c in claims}.values())
+    tensors = len({c["comref"] for c in claims})
+    assert elems <= C.SUBBATCH_HARD_CAP_ELEMS, \
+        f"weight batch: {elems} elements exceeds the hard cap"
+    wit_bytes = 0
+    n_wit = 0
+    for f in os.listdir(wacc):
+        if f.startswith("wit_") and f.endswith(".fr"):
+            p = os.path.join(wacc, f)
+            wit_bytes += os.path.getsize(p)
+            os.remove(p)
+            n_wit += 1
+    wr = os.path.join(wacc, "witrefs.txt")
+    if os.path.exists(wr):
+        os.remove(wr)
+    priv_dir = os.path.join(run_dir, "data", "wpriv")
+    os.makedirs(priv_dir, exist_ok=True)
+    for f in ("cblinds.bin", "blindrefs.txt"):   # prover-private, never shipped
+        p = os.path.join(wacc, f)
+        if os.path.exists(p):
+            os.replace(p, os.path.join(priv_dir, f))
+    BATCH["wstats"] = {"claims": len(claims), "tensors": tensors,
+                       "elements": elems, "prove_s": round(dt, 2),
+                       "witness_bytes_freed": wit_bytes, "wit_files": n_wit}
+    print(f"  opening_batch_w: {len(claims)} hidden claims, {tensors} tensors, "
+          f"{elems/1e6:.1f}M elems, {dt:.1f}s; freed {wit_bytes/2**30:.2f} GiB "
+          f"witness; cblinds/blindrefs -> data/wpriv/")
 
 
 def record_ties(instance, kmax):
@@ -119,6 +177,12 @@ def prove(mid, sub, seed_id, cmd, run_seed):
         run_dir = BATCH["run_dir"]
         cmd = cmd + ["--claims", os.path.relpath(C.acc_dir(run_dir, e["batch"]), run_dir),
                      seed_id] + ([e["extra"]] if e["extra"] else [])
+        if BATCH["wpriv"] and e.get("wid"):
+            # Stage D: this run opens a REGISTERED weight commitment — route
+            # its W/g claim (Committed, C_v) into the weight accumulator with
+            # the registration row blinds (prover-private, under data/).
+            cmd = cmd + ["--wpriv", os.path.relpath(C.wacc_dir(run_dir), run_dir),
+                         C.wblind_path(run_dir, e["wid"])]
         cmd = C.rel_argv(cmd, run_dir)
         cwd = run_dir
     ok, dt, _ = C.run_driver(cmd, f"prove {mid}" + (f" [{sub}]" if sub != "main" else ""),
@@ -371,6 +435,11 @@ def main():
     assert submission in C.SUBMISSIONS, f"unknown submission {submission!r}"
     transport = public.get("transport", "inline")
     assert transport in C.TRANSPORTS, f"unknown transport {transport!r}"
+    wpriv = public.get("weight_privacy")
+    assert wpriv is None or wpriv in C.WEIGHT_PRIVACY_MODES, \
+        f"unknown weight_privacy {wpriv!r}"
+    assert not (wpriv and transport != "batched"), \
+        "weight_privacy requires the batched transport"
     if transport == "batched":
         # Stage-B flag 7: the selftest-only forgery env must never reach a
         # production batch prove; the measurement envs must not skew T5 either.
@@ -378,11 +447,16 @@ def main():
             assert v not in os.environ, f"{v} set in a production batched prove"
         plan, n_batches = C.claim_plan(run_dir, submission)
         BATCH.update(on=True, plan=plan, cursor=0, cur=0, run_dir=run_dir,
-                     run_seed=C.run_seed_of(run_dir))
+                     run_seed=C.run_seed_of(run_dir), wpriv=bool(wpriv))
         for k in range(n_batches):
             os.makedirs(C.acc_dir(run_dir, k), exist_ok=True)
+        if wpriv:
+            os.makedirs(C.wacc_dir(run_dir), exist_ok=True)
+        n_wpriv = sum(1 for e in plan if e.get("wid"))
         print(f"  transport: batched ({len(plan)} claim-emitting runs -> "
-              f"{n_batches} opening sub-batches)")
+              f"{n_batches} opening sub-batches)"
+              + (f"; weight privacy: {wpriv} ({n_wpriv} hidden weight claims "
+                 f"-> 1 weight sub-batch)" if wpriv else ""))
     # PHASE0 §21 MINOR-7: headmerge_perm comes from public.json (argv to BOTH
     # prove and verify); it must agree with the submission's pinned mode.
     perm = public.get("headmerge_perm", "pi157")
@@ -535,6 +609,8 @@ def main():
         assert BATCH["cursor"] == len(BATCH["plan"]), \
             f"claim plan incomplete: {BATCH['cursor']}/{len(BATCH['plan'])} runs"
         finalize_batch(BATCH["cur"])          # the last open sub-batch
+        if BATCH["wpriv"]:
+            finalize_wbatch()                 # the ONE weight sub-batch
 
     # prove manifest + totals
     proof_bytes = 0
@@ -544,8 +620,10 @@ def main():
         "run_seed": run_seed,
         "submission": submission,
         "transport": transport,
+        "weight_privacy": wpriv,
         "opening_batch": ({"n_batches": len(BATCH["stats"]),
                            "batches": BATCH["stats"]} if BATCH["on"] else None),
+        "opening_batch_w": BATCH["wstats"],
         "covered_ids": C.covered_ids(submission),
         "skipped_ids": C.skipped_ids(),
         "rowmax_selector_ties": {

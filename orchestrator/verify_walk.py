@@ -36,6 +36,16 @@ Checks, in order:
     covered tstar.i32.bin (§3.3 — the last is fail-closed in step 1).
 A manifest id enters `checked` only if ALL its composed sub-runs and ALL its
 edges pass (ROPE_ATTENTION_DESIGN §9.5).
+
+Stage D (public.json "weight_privacy": "hiding", inside run_seed): the 20
+registered-weight-opening verifies additionally run --wpriv (their W/g claim
+is recomputed as a Committed record into the verifier's weight accumulator),
+q.bin must be the 2-slot [Q, H] file, and ONE zkob_batchopen wverify weight
+sub-batch (wclaims_match + committed-round sumcheck + blinded ZK IPAs) must
+ACCEPT with every registered weight comref opened HIDDEN there (and never
+Plain in a public sub-batch) — all gating the verdict like the public
+sub-batches. Fail-closed before any driver on an unknown mode, a non-batched
+transport, or a 1-slot q.bin.
 Emits transcript.json (harness format + explicit skipped/details sections).
 
 Run: /root/int-model-env/bin/python verify_walk.py <run_dir> [--out transcript.json]
@@ -136,7 +146,24 @@ def main():
             assert v not in os.environ, f"{v} set in a production batched verify"
         # Stage-B comref canonicalization: reject absolute comrefs in the batch
         os.environ["ZKOB_REQUIRE_RELATIVE_COMREF"] = "1"
-    print(f"  submission: {submission} (headmerge {perm}; transport {transport})")
+    # Stage D: weight privacy is part of the statement (inside the run_seed).
+    # "hiding" switches every registered-weight-opening driver verify to
+    # --wpriv (its W/g claim is recomputed as a Committed record into the
+    # verifier's weight accumulator) and demands the zkob_batchopen wverify
+    # weight sub-batch on top of the public discharges — fail-closed: an
+    # unknown mode, or weight privacy without the batched transport, rejects
+    # before any driver runs.
+    wpriv = public.get("weight_privacy")
+    if wpriv is not None and wpriv not in C.WEIGHT_PRIVACY_MODES:
+        fail("statement.registered_weight_hash",
+             f"unknown weight_privacy {wpriv!r} in public.json")
+        stop_reject(f"unknown weight_privacy {wpriv!r}", 0)
+    if wpriv and not batched:
+        fail("statement.registered_weight_hash",
+             "weight_privacy requires the batched transport")
+        stop_reject("weight_privacy without batched transport", 0)
+    print(f"  submission: {submission} (headmerge {perm}; transport {transport}"
+          + (f"; weight privacy: {wpriv}" if wpriv else "") + ")")
 
     # ---- 1. registration hash checks ------------------------------------
     reg_ok = True
@@ -162,6 +189,20 @@ def main():
         print(f"  registration: {len(checks)} hashes OK")
     else:
         stop_reject("registration check failed (untrusted registration)", len(checks))
+
+    # Stage D: under weight privacy the blinding generator H IS q.bin slot 1 —
+    # the (hash-pinned, just re-checked) q.bin must be the 2-slot [Q, H] file,
+    # or every "hiding" commitment claim is vacuous. Fail-closed before drivers.
+    if wpriv:
+        want = C.WPRIV_Q_SLOTS * C.G1_POINT_BYTES
+        qsz = os.path.getsize(P["q"])
+        if qsz != want:
+            fail("statement.registered_weight_hash",
+                 f"weight_privacy={wpriv!r} but q.bin is {qsz} bytes, not the "
+                 f"2-slot [Q, H] file ({want})")
+            stop_reject("weight_privacy without a 2-slot q.bin (no H)", len(checks))
+        note("statement.registered_weight_hash",
+             "q.bin is the 2-slot [Q, H] file (H = slot 1, hash-pinned)")
 
     # ---- 1b. structural checks (before any driver runs) ------------------
     spec, edges = C.walk_spec(run_dir, submission)
@@ -277,13 +318,22 @@ def main():
             shutil.rmtree(os.path.join(run_dir, "vacc"))
         for k in range(n_batches):
             os.makedirs(C.vacc_dir(run_dir, k))
+        if wpriv:
+            os.makedirs(C.wvacc_dir(run_dir))
+        wvacc_rel = os.path.relpath(C.wvacc_dir(run_dir), run_dir)
         for e in plan:
             s = spec[e["mid"]][e["sub"]]
             assert s["seed_id"] == e["obid"], (e, s["seed_id"])
-            run_verify(e["mid"], e["sub"], s,
-                       suffix=["--claims",
-                               os.path.relpath(C.vacc_dir(run_dir, e["batch"]), run_dir),
-                               e["obid"]],
+            suffix = ["--claims",
+                      os.path.relpath(C.vacc_dir(run_dir, e["batch"]), run_dir),
+                      e["obid"]]
+            if wpriv and e.get("wid"):
+                # Stage D: this run opens a REGISTERED weight commitment — the
+                # verifier-side driver recomputes its W/g claim as a Committed
+                # record into the weight accumulator (mirrors prove exactly;
+                # claim order = plan order on both sides, wclaims_match).
+                suffix += ["--wpriv", wvacc_rel]
+            run_verify(e["mid"], e["sub"], s, suffix=suffix,
                        cwd=run_dir, want="ACCEPT-conditional")
     else:
         for mid, subs in spec.items():
@@ -298,7 +348,8 @@ def main():
     # sub-batch's claims_match + batch-evaluation sumcheck + per-domain IPAs
     # ACCEPT AND every chain edge holds.
     batch_results = []
-    batch_ok = True
+    batch_ok = True      # the public sub-batches (F12 gate)
+    wbatch_ok = True     # the Stage-D weight sub-batch (same gate class)
     if batched:
         ob_d = details.setdefault("opening_batch", {"ok": True, "reasons": []})
         all_comrefs = set()
@@ -319,7 +370,11 @@ def main():
                         f"absolute comref {c['comref']} ({c['id']})"
                     assert c["domain"] in C.GEN_FOR, \
                         f"claim domain {c['domain']} has no registration gen file"
-                    assert c["tag"] == 0, f"non-Plain EvalVar pre-Stage-D ({c['id']})"
+                    # the PUBLIC batches carry Plain evals only, in BOTH modes
+                    # (Stage D routes Committed claims to the weight batch; a
+                    # Committed claim here is the closed BO-13b path)
+                    assert c["tag"] == 0, \
+                        f"non-Plain EvalVar in a public sub-batch ({c['id']})"
                     all_comrefs.add(c["comref"])
                 cmd = [C.drv("zkob_batchopen"), "verify",
                        os.path.relpath(pacc, run_dir), os.path.relpath(vacc, run_dir),
@@ -369,20 +424,124 @@ def main():
                               f"diverge from the prover list ({', '.join(cids[:3])}"
                               f"{', ...' if len(cids) > 3 else ''})")
             batch_results.append(entry)
+        # ---- 2c. Stage D: the ZK weight sub-batch ------------------------
+        # ONE zkob_batchopen wverify over every hidden weight claim
+        # (wclaims_match byte-compares the prover's weight claims.bin against
+        # the verifier-recomputed list; committed-round batch sumcheck;
+        # blinded per-domain ZK IPAs). The verdict gates on it exactly like
+        # the public sub-batches (F12 clause).
+        wbatch_entry = None
+        wcomrefs = set()
+        if wpriv:
+            wb_d = details.setdefault("opening_batch_w", {"ok": True, "reasons": []})
+            pwacc, wvacc = C.wacc_dir(run_dir), C.wvacc_dir(run_dir)
+            wbatch_entry = {"ok": False, "locus": None, "claims": 0}
+            try:
+                wclaims = C.parse_claims(os.path.join(wvacc, "claims.bin"))
+                wbatch_entry["claims"] = len(wclaims)
+                for c in wclaims:
+                    assert not c["comref"].startswith("/"), \
+                        f"absolute comref {c['comref']} ({c['id']})"
+                    assert c["domain"] in C.GEN_FOR, \
+                        f"claim domain {c['domain']} has no registration gen file"
+                    # the weight batch is uniformly COMMITTED (a Plain weight
+                    # eval here is the wevalvar leak path — fail-closed early)
+                    assert c["tag"] == 1, \
+                        f"plain (non-Committed) claim in the weight batch ({c['id']})"
+                    wcomrefs.add(c["comref"])
+                cmd = [C.drv("zkob_batchopen"), "wverify",
+                       os.path.relpath(pwacc, run_dir),
+                       os.path.relpath(wvacc, run_dir),
+                       run_seed, "registration/q.bin"] + C.genspec_args()
+                ok, dt, out = drive(cmd, "verify opening_batch_w", cwd=run_dir)
+                timing["opening_batch_w"] = round(dt, 3)
+                loci = [ln for ln in out.splitlines()
+                        if ln.startswith("REJECT[opening_batch_w")]
+                wbatch_entry["ok"] = ok
+                wbatch_entry["locus"] = ("accept" if ok else
+                                         (loci[0] if loci else out[-200:].strip()))
+            except (AssertionError, RuntimeError, OSError) as exc:
+                wbatch_entry["ok"] = False
+                wbatch_entry["locus"] = str(exc)
+            if wbatch_entry["ok"]:
+                wb_d["reasons"].append(
+                    f"weight sub-batch ACCEPT ({wbatch_entry['claims']} hidden "
+                    f"claims, all Committed; committed-round sumcheck + ZK IPAs)")
+            else:
+                wbatch_ok = False
+                wb_d["ok"] = False
+                wb_d["reasons"].append(
+                    f"weight sub-batch REJECT ({wbatch_entry['locus']})")
+                print(f"  REJECT opening_batch_w: {wbatch_entry['locus']}")
+                # same localization discipline as the public sub-batches
+                try:
+                    div_ids, loc_note = C.localize_batch_failure(
+                        os.path.join(pwacc, "claims.bin"),
+                        os.path.join(wvacc, "claims.bin"))
+                except (AssertionError, OSError) as exc:
+                    div_ids, loc_note = [], f"localization unavailable ({exc})"
+                wbatch_entry["diverging_claims"] = div_ids
+                wb_d["reasons"].append(f"localization: {loc_note}")
+                impl_mids = {}
+                for cid in div_ids:
+                    mid = obid2mid.get(cid.rsplit(":", 1)[0])
+                    if mid is None:
+                        wb_d["reasons"].append(
+                            f"diverging claim {cid!r} has no plan obligation "
+                            f"(forged id — stays on opening_batch_w)")
+                    else:
+                        impl_mids.setdefault(mid, []).append(cid)
+                wbatch_entry["implicated"] = sorted(impl_mids)
+                for mid, cids in sorted(impl_mids.items()):
+                    fail(mid, f"opening_batch_w: {len(cids)} recomputed hidden "
+                              f"claim(s) diverge from the prover list "
+                              f"({', '.join(cids[:3])}"
+                              f"{', ...' if len(cids) > 3 else ''})")
+
         # the F5 discharge pin: every registered weight commitment the walk
-        # consumes must be opened in the batch under its registered comref
-        missing_reg = sorted(C.registered_weight_comrefs(submission) - all_comrefs)
-        if missing_reg:
-            batch_ok = False
-            ob_d["ok"] = False
+        # consumes must be opened under its registered comref — in the WEIGHT
+        # batch when weight privacy is on (and then NEVER in a public batch:
+        # a registered weight claimed Plain there would be the leak path), in
+        # the public batches otherwise.
+        reg_comrefs = C.registered_weight_comrefs(submission)
+        if wpriv:
+            wb_d = details["opening_batch_w"]
+            missing_reg = sorted(reg_comrefs - wcomrefs)
+            leaked_reg = sorted(reg_comrefs & all_comrefs)
             for m in missing_reg:
-                ob_d["reasons"].append(f"registered commitment NOT opened in any batch: {m}")
-                print(f"  REJECT opening_batch: registered comref missing: {m}")
+                wbatch_ok = False
+                wb_d["ok"] = False
+                wb_d["reasons"].append(
+                    f"registered commitment NOT opened in the weight batch: {m}")
+                print(f"  REJECT opening_batch_w: registered comref missing: {m}")
+            for m in leaked_reg:
+                wbatch_ok = False
+                wb_d["ok"] = False
+                wb_d["reasons"].append(
+                    f"registered weight commitment opened PLAIN in a public "
+                    f"sub-batch under weight privacy: {m}")
+                print(f"  REJECT opening_batch_w: registered comref in a "
+                      f"public batch: {m}")
+            if not missing_reg and not leaked_reg:
+                wb_d["reasons"].append(
+                    f"all {len(reg_comrefs)} registered weight commitments "
+                    f"opened HIDDEN in the weight batch under their registered "
+                    f"comrefs (commitment_opening discharge explicit), none in "
+                    f"a public sub-batch")
+            wbatch_entry["ok"] = wbatch_ok   # fold the pins into the entry
         else:
-            ob_d["reasons"].append(
-                f"all {len(C.registered_weight_comrefs(submission))} registered weight "
-                f"commitments opened under their registered comrefs (commitment_opening "
-                f"discharge explicit); {total_claims} claims total")
+            missing_reg = sorted(reg_comrefs - all_comrefs)
+            if missing_reg:
+                batch_ok = False
+                ob_d["ok"] = False
+                for m in missing_reg:
+                    ob_d["reasons"].append(f"registered commitment NOT opened in any batch: {m}")
+                    print(f"  REJECT opening_batch: registered comref missing: {m}")
+            else:
+                ob_d["reasons"].append(
+                    f"all {len(reg_comrefs)} registered weight "
+                    f"commitments opened under their registered comrefs (commitment_opening "
+                    f"discharge explicit); {total_claims} claims total")
 
     # ---- 3. chain edges ---------------------------------------------------
     edge_results = []
@@ -437,9 +596,10 @@ def main():
             ok = details.get(mm, {}).get("ok", False)
             d = details.setdefault(mid, {"ok": True, "reasons": []})
             d["ok"] = ok
+            via = "opening_batch_w (hidden claim)" if wpriv else "opening_batch"
             d["reasons"].append(
                 (f"discharged by {mm}'s W claim vs the registered commitment via "
-                 f"opening_batch ({'ACCEPT-conditional, gated on opening_batch' if ok else 'REJECT'})")
+                 f"{via} ({f'ACCEPT-conditional, gated on {via}' if ok else 'REJECT'})")
                 if batched else
                 (f"discharged by {mm}: IPA(W) vs registered commitment "
                  f"({'ACCEPT' if ok else 'REJECT'})"))
@@ -479,13 +639,15 @@ def main():
     # `opening_batch` deliberately does NOT enter `checked`: it is not a
     # manifest obligation id and check_transcript rejects unknown ids
     # (design §8.11 resolved — the batch gates the verdict via details).
-    verdict = "ACCEPT" if not rejected and (not batched or batch_ok) else "REJECT"
+    verdict = ("ACCEPT" if not rejected and (not batched or batch_ok)
+               and (not wpriv or wbatch_ok) else "REJECT")
     for m, d in details.items():
         d["reason"] = "; ".join(d.pop("reasons"))
     transcript = {
         "verdict": verdict,
         "submission": submission,
         "transport": transport,
+        "weight_privacy": wpriv,
         "checked": checked,
         "rejected": rejected,
         "skipped": skipped,
@@ -494,6 +656,7 @@ def main():
         "opening_batch": ({"ok": batch_ok, "n_batches": len(batch_results),
                            "claims": sum(b["claims"] for b in batch_results),
                            "batches": batch_results} if batched else None),
+        "opening_batch_w": (wbatch_entry if wpriv else None),
         "registration": {"ok": True, "n_hashes": len(checks)},
         # harness-reader echo (§3.3): the registered served tokens this
         # transcript's logit binding was verified against.
@@ -503,7 +666,10 @@ def main():
     json.dump(transcript, open(out_path, "w"), indent=2)
     print(f"checked={len(checked)} rejected={len(rejected)} skipped={len(skipped)}"
           + (f" opening_batch={'ACCEPT' if batch_ok else 'REJECT'}"
-             f" ({len(batch_results)} sub-batches)" if batched else ""))
+             f" ({len(batch_results)} sub-batches)" if batched else "")
+          + (f" opening_batch_w={'ACCEPT' if wbatch_entry and wbatch_entry['ok'] else 'REJECT'}"
+             f" ({wbatch_entry['claims'] if wbatch_entry else 0} hidden claims)"
+             if wpriv else ""))
     print(f"VERDICT: {verdict}  ({out_path})")
     sys.exit(0 if verdict == "ACCEPT" else 1)
 

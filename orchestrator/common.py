@@ -49,6 +49,19 @@ GPU_LOCK = "/tmp/zkorch.gpu.lock"
 # the verifier demands the discharge the statement names, fail-closed.
 TRANSPORTS = ("inline", "batched")
 
+# Weight-privacy modes (STAGE_D_REPORT / TRANSPORT_REBUILD_DESIGN §4).
+# "hiding": every registered weight tensor is committed with hiding Pedersen
+# rows (com[r] += s_r*H, blinds prover-private under data/), fc and rmsnorm
+# emit their weight claims as Committed (C_v, no scalar eval) into a SEPARATE
+# weight accumulator, and ONE zkob_batchopen wprove/wverify weight sub-batch
+# (committed-round sumcheck + ZK blinded IPAs) discharges them. Part of the
+# public STATEMENT (public.json "weight_privacy", inside run_seed); requires
+# transport=batched (the wpriv driver modes exist only in claim mode); H = the
+# q.bin slot-1 generator (2-slot genq file, hash-pinned like every gen).
+WEIGHT_PRIVACY_MODES = ("hiding",)
+G1_POINT_BYTES = 144             # Commitment::save Jacobian point size
+WPRIV_Q_SLOTS = 2                # q.bin = [Q, H] under weight privacy
+
 SEQ, EMBED, INTER = 1024, 768, 3072
 LOG_SF = 16                      # residual-stream / weight scale 2^16
 GATE_RESCALE_LOG = 20            # gate lands at 2^12 for the silu table (ffn.cu)
@@ -916,21 +929,26 @@ _EST_ROPE = 2 * SEQ * 1024   # T (2 claims, one tensor) + Y64
 
 
 def claim_plan(run_dir, submission="baseline"):
-    """Ordered claim-emitting runs: [{mid, sub, obid, est, batch, extra}].
+    """Ordered claim-emitting runs: [{mid, sub, obid, est, batch, extra, wid}].
     obid == the sub's seed_id (the --claims obligation id, both sides);
     extra == the registered/slice commitment path appended to fc/rmsnorm
-    prove --claims blocks (fc: <registered-com_W>; rmsnorm: <registered-com_g>).
-    Returns (plan, n_batches)."""
+    prove --claims blocks (fc: <registered-com_W>; rmsnorm: <registered-com_g>);
+    wid == the registered weight tensor id when extra IS a registered weight
+    commitment (None for slice commitments / non-weight runs) — under
+    weight_privacy exactly these runs get --wpriv (their W/g claim routes to
+    the weight accumulator; per-head scores/values fc open ACTIVATION slices
+    and stay public by design). Returns (plan, n_batches)."""
     faithful = submission == "faithful-arch-v1"
     P = reg_paths(run_dir)
     entries = []
 
-    def add(mid, sub, obid, est, extra=None):
+    def add(mid, sub, obid, est, extra=None, wid=None):
         entries.append({"mid": mid, "sub": sub, "obid": obid, "est": int(est),
-                        "extra": extra})
+                        "extra": extra, "wid": wid})
 
     def norm_site(mid, gwid):
-        add(mid, "rmsnorm", mid, _EST_RMSNORM, wpath(run_dir, gwid, "com"))
+        add(mid, "rmsnorm", mid, _EST_RMSNORM, wpath(run_dir, gwid, "com"),
+            wid=gwid)
         add(mid, "wrescale", mid + ".wrescale", _est_rescale(EMBED, LOG_SF))
         add(mid, "yrescale", mid + ".yrescale", _est_rescale(EMBED, LOG_SF))
 
@@ -942,7 +960,8 @@ def claim_plan(run_dir, submission="baseline"):
         for pj in ("q_proj", "k_proj", "v_proj"):
             mm, rs = f"layer{l}.attn.{pj}.matmul", f"layer{l}.attn.{pj}.rescaling"
             add(mm, "fc", mm, _est_fc(EMBED, EMBED),
-                wpath(run_dir, f"layer{l}.attn.{pj}", "com"))
+                wpath(run_dir, f"layer{l}.attn.{pj}", "com"),
+                wid=f"layer{l}.attn.{pj}")
             add(rs, "rescale", rs, _est_rescale(EMBED, QKV_RESCALE_LOG))
         for t in ("q", "k"):
             add(SM, f"rope.{t}", f"layer{l}.attn.rope.{t}", _EST_ROPE)
@@ -975,7 +994,8 @@ def claim_plan(run_dir, submission="baseline"):
             o_mm = f"layer{l}.attn.o_proj.matmul"
             o_rs = f"layer{l}.attn.o_proj.rescaling"
             add(o_mm, "fc", o_mm, _est_fc(EMBED, EMBED),
-                wpath(run_dir, f"layer{l}.attn.o_proj", "com"))
+                wpath(run_dir, f"layer{l}.attn.o_proj", "com"),
+                wid=f"layer{l}.attn.o_proj")
             add(o_rs, "rescale", o_rs, _est_rescale(EMBED, OPROJ_RESCALE_LOG))
         norm_site(f"layer{l}.post_attn_norm.rmsnorm", f"layer{l}.post_attn_norm.g")
         for pj, IN, OUT, rs_log in (("gate_proj", EMBED, INTER, GATE_RESCALE_LOG),
@@ -983,7 +1003,8 @@ def claim_plan(run_dir, submission="baseline"):
                                     ("down_proj", INTER, EMBED, DOWN_RESCALE_LOG)):
             mm, rs = f"layer{l}.mlp.{pj}.matmul", f"layer{l}.mlp.{pj}.rescaling"
             add(mm, "fc", mm, _est_fc(IN, OUT),
-                wpath(run_dir, f"layer{l}.mlp.{pj}", "com"))
+                wpath(run_dir, f"layer{l}.mlp.{pj}", "com"),
+                wid=f"layer{l}.mlp.{pj}")
             add(rs, "rescale", rs, _est_rescale(OUT, rs_log))
             if pj == "up_proj":   # prove_walk order: glu + hrescale after up
                 sw = f"layer{l}.mlp.swiglu"
@@ -992,7 +1013,7 @@ def claim_plan(run_dir, submission="baseline"):
                     _est_rescale(INTER, HIDDEN_RESCALE_LOG))
     norm_site("final_norm.rmsnorm", "final_norm.g")
     add("lm_head.matmul", "fc", "lm_head.matmul", _est_fc(EMBED, VOCAB),
-        wpath(run_dir, "lm_head", "com"))
+        wpath(run_dir, "lm_head", "com"), wid="lm_head")
     add("lm_head.rescaling", "rescale", "lm_head.rescaling",
         _est_rescale(VOCAB, LM_RESCALE_LOG))
     add("statement.logit_binding", "rowmax", "statement.logit_binding",
@@ -1019,6 +1040,46 @@ def vacc_dir(run_dir, k):
     """Verifier-recomputed accumulator for sub-batch k (verifier-internal,
     F6: NEVER under proofs/, never a prover artifact)."""
     return os.path.join(run_dir, "vacc", f"b{k}")
+
+
+def wacc_dir(run_dir):
+    """Prover WEIGHT accumulator + weight sub-batch artifacts (Stage D; ONE
+    batch — the 20 registered tensors sum well under the residency budget).
+    Under proofs/ because claims.bin/drvstates.bin/wbatch_*/wipa_* ARE
+    verifier-consumed; the prover-private files the wpriv drivers stage here
+    (cblinds.bin, blindrefs.txt, wit_*.fr, witrefs.txt) are deleted/relocated
+    to data/wpriv/ by prove_walk right after wprove, so the shipped proofs/
+    tree never carries a hidden eval or blind."""
+    return os.path.join(run_dir, "proofs", "opening_batch_w")
+
+
+def wvacc_dir(run_dir):
+    """Verifier-recomputed WEIGHT accumulator (verifier-internal, like vacc)."""
+    return os.path.join(run_dir, "vacc", "w")
+
+
+def wblind_path(run_dir, wid):
+    """Registration row blinds for a hiding-registered weight tensor.
+    PROVER-PRIVATE: lives under data/ (which the verifier NEVER reads, by the
+    same rule as every witness file); consumed by prove --wpriv only."""
+    return os.path.join(run_dir, "data", "wpriv", f"{wid}.blinds.bin")
+
+
+def parse_cblinds(path):
+    """cblinds.bin parser (zkob_wpriv.cuh wp_cblind_emit records: u32 id-len,
+    id, v (32 B Fr LE), t (32 B Fr LE)). Returns {claim_id: (v_bytes, t_bytes)}.
+    v IS the hidden weight-MLE evaluation — this file is PROVER-PRIVATE (the
+    D4 scan reads the secrets to scan FOR from here)."""
+    with open(path, "rb") as f:
+        b = f.read()
+    off, out = 0, {}
+    while off < len(b):
+        (l,) = struct.unpack_from("<I", b, off); off += 4
+        cid = b[off:off + l].decode(); off += l
+        v, t = b[off:off + 32], b[off + 32:off + 64]; off += 64
+        out[cid] = (v, t)
+    assert off == len(b), "trailing bytes in cblinds.bin"
+    return out
 
 
 def batch_seed(run_seed, k):
