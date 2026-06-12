@@ -36,11 +36,28 @@
 // Usage:
 //   zkob_glu prove  <obdir> <seed> <G-int32.bin> <U-int32.bin> <B> <C>
 //                   <low> <len> <mapped-int32.bin> <gen.bin> <q.bin>
-//                   [H-int64-out.bin]
+//                   [H-int64-out.bin] [--claims <accdir> <obid>]
 //   zkob_glu verify <obdir> <seed> <B> <C> <low> <len> <mapped-int32.bin>
-//                   <gen.bin> <q.bin>
+//                   <gen.bin> <q.bin> [--claims <vaccdir> <obid>]
 //   zkob_glu selftest
+//
+// CLAIM MODE (Stage C of the transport rebuild, flag-selected; the old
+// inline-IPA tail stays compilable and is the DEFAULT): with --claims, prove
+// EMITS its six terminal claims at the exact old open_prove sites —
+//   lookup:   A vs com_A, comb vs com_comb, m vs com_m   (order A, comb, m)
+//   hadamard: H vs com_H, S vs com_S, U vs com_U         (order H, S, U)
+// — into <accdir>/claims.bin, plus witrefs and drvstate. The inline-IPA
+// absorbs vanish from the transcript on BOTH sides symmetrically (u_h is
+// squeezed right after the lookup terminals in claim mode), the same
+// "transcript ends earlier" discipline as zkob_fc/zkob_rescale.
+// GLU SUBTLETY: comb = G + r*S is opened against a commitment the verifier
+// forms HOMOMORPHICALLY (no file). The batch needs a file comref, so claim-
+// mode prove writes com_comb.bin (the same host h_add/h_mul combination the
+// verifier computes) and claim-mode verify REJECTS unless that file's rows
+// g1_eq-equal its own recomputed combination BEFORE emitting the claim —
+// the file is then exactly as bound as the homomorphic object it stands for.
 #include "zkob_lookup.cuh"
+#include "zkob_claims.cuh"
 #include <iostream>
 #include <sys/stat.h>
 using namespace std;
@@ -66,7 +83,9 @@ static void prove(const string& obdir, const string& seed,
                   const FrTensor& G, const FrTensor& U,
                   uint B, uint C, int low, uint len, const FrTensor& mapped,
                   const Commitment& gen, const G1Jacobian_t& Q,
-                  const string& h_out_path, int evil = 0, uint evil_idx = 0) {
+                  const string& h_out_path, int evil = 0, uint evil_idx = 0,
+                  const string& accdir = "", const string& obid = "") {
+    const bool claim_mode = !accdir.empty();
     const uint B_pad = 1u << ceilLog2(B), C_pad = 1u << ceilLog2(C);
     const uint D = B_pad * C_pad, N = len;
     const uint logD = ceilLog2(D), n1 = ceilLog2(D / N);
@@ -171,9 +190,44 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(pf.S_f, comb.multi_dim_me({u_row, u_col}, {B_pad, C_pad})))
             throw runtime_error("lookup terminal != multi_dim_me (convention bug)");
     }
-    open_prove(A, C_pad, gen, Q, u_pt, obdir + "/ipa_A.bin", tr);
-    open_prove(comb, C_pad, gen, Q, u_pt, obdir + "/ipa_comb.bin", tr);
-    open_prove(m, C_pad, gen, Q, u_m, obdir + "/ipa_m.bin", tr);
+    auto mk_claim = [&](const string& tensor, const string& comref, uint32_t n_rows,
+                        const vector<Fr_t>& point, const Fr_t& eval) {
+        BoClaim c;
+        c.id = obid + ":" + tensor;
+        c.comref = comref;
+        c.domain = C_pad; c.n_rows = n_rows;
+        c.point = point;
+        c.eval = eval;
+        claim_emit(accdir, c);
+    };
+    if (claim_mode) {
+        // ---- lookup claim emission (replaces the 3 inline IPAs; same
+        // program point, same order A, comb, m) ----
+        // com_comb.bin: the file stand-in for the verifier's homomorphic
+        // combination com_G + r*com_S (1-thread helpers, same as verify)
+        {
+            vector<G1Jacobian_t> hg(B_pad), hs(B_pad), hcomb(B_pad);
+            cudaMemcpy(hg.data(), com_G.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hs.data(), com_S.gpu_data, B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
+            for (uint j = 0; j < B_pad; j++) hcomb[j] = h_add(hg[j], h_mul(hs[j], r));
+            G1TensorJacobian com_comb(B_pad, hcomb.data());
+            com_comb.save(obdir + "/com_comb.bin");
+        }
+        string witA = accdir + "/wit_" + obid + "_A.fr";
+        string witComb = accdir + "/wit_" + obid + "_comb.fr";
+        string witM = accdir + "/wit_" + obid + "_m.fr";
+        A.save(witA); comb.save(witComb); m.save(witM);
+        mk_claim("A", obdir + "/com_A.bin", B_pad, u_pt, pf.A_f);
+        witref_emit(accdir, obdir + "/com_A.bin", witA);
+        mk_claim("comb", obdir + "/com_comb.bin", B_pad, u_pt, pf.S_f);
+        witref_emit(accdir, obdir + "/com_comb.bin", witComb);
+        mk_claim("m", obdir + "/com_m.bin", N / C_pad, u_m, pf.m_f);
+        witref_emit(accdir, obdir + "/com_m.bin", witM);
+    } else {
+        open_prove(A, C_pad, gen, Q, u_pt, obdir + "/ipa_A.bin", tr);
+        open_prove(comb, C_pad, gen, Q, u_pt, obdir + "/ipa_comb.bin", tr);
+        open_prove(m, C_pad, gen, Q, u_m, obdir + "/ipa_m.bin", tr);
+    }
 
     // ---- hadamard part: H = S .* U ----
     auto u_h = fs_challenge_vec(tr, logD);
@@ -201,6 +255,23 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(hp.U_f2, U_pad.multi_dim_me({u_row, u_col}, {B_pad, C_pad})))
             throw runtime_error("hadamard terminal != multi_dim_me (convention bug)");
     }
+    if (claim_mode) {
+        // ---- hadamard claim emission (same program point, order H, S, U;
+        // the driver transcript simply ends here) ----
+        string witH = accdir + "/wit_" + obid + "_H.fr";
+        string witS = accdir + "/wit_" + obid + "_S.fr";
+        string witU = accdir + "/wit_" + obid + "_U.fr";
+        H_pad.save(witH); S_pad.save(witS); U_pad.save(witU);
+        mk_claim("H", obdir + "/com_H.bin", B_pad, u_h, hp.claim_H);
+        witref_emit(accdir, obdir + "/com_H.bin", witH);
+        mk_claim("S", obdir + "/com_S.bin", B_pad, u_pt2, hp.S_f2);
+        witref_emit(accdir, obdir + "/com_S.bin", witS);
+        mk_claim("U", obdir + "/com_U.bin", B_pad, u_pt2, hp.U_f2);
+        witref_emit(accdir, obdir + "/com_U.bin", witU);
+        drvstate_emit(accdir, obid, tr);
+        cout << "PROVED swiglu obligation (claim mode, 6 claims emitted) -> " << obdir << endl;
+        return;
+    }
     open_prove(H_pad, C_pad, gen, Q, u_h, obdir + "/ipa_H.bin", tr);
     open_prove(S_pad, C_pad, gen, Q, u_pt2, obdir + "/ipa_S.bin", tr);
     open_prove(U_pad, C_pad, gen, Q, u_pt2, obdir + "/ipa_U.bin", tr);
@@ -210,7 +281,10 @@ static void prove(const string& obdir, const string& seed,
 // ---------------- verify (witness-free) ----------------
 static bool verify(const string& obdir, const string& seed, uint B, uint C,
                    int low, uint len, const FrTensor& mapped,
-                   const Commitment& gen, const G1Jacobian_t& Q) {
+                   const Commitment& gen, const G1Jacobian_t& Q,
+                   const string& vaccdir = "", const string& obid = "") {
+    const bool claim_mode = !vaccdir.empty();
+    BoTimer prof("glu_verify");
     const uint B_pad = 1u << ceilLog2(B), C_pad = 1u << ceilLog2(C);
     const uint D = B_pad * C_pad, N = len;
     const uint logD = ceilLog2(D), n1 = ceilLog2(D / N), n2 = ceilLog2(N);
@@ -323,15 +397,52 @@ static bool verify(const string& obdir, const string& seed, uint B, uint C,
 
     vector<Fr_t> u_pt(ws.rbegin(), ws.rend());
     vector<Fr_t> u_m(ws.rbegin(), ws.rend() - n1);
-    if (!open_verify(com_A, gen, C_pad, Q, u_pt, pf.A_f, obdir + "/ipa_A.bin", tr)) {
-        cout << "REJECT: IPA opening of A_f vs com_A" << endl; return false;
+    auto mk_claim = [&](const string& tensor, const string& comref, uint32_t n_rows,
+                        const vector<Fr_t>& point, const Fr_t& eval) {
+        BoClaim c;
+        c.id = obid + ":" + tensor;
+        c.comref = comref;
+        c.domain = C_pad; c.n_rows = n_rows;
+        c.point = point;
+        c.eval = eval;
+        claim_emit(vaccdir, c);
+    };
+    if (claim_mode) {
+        // ---- lookup claim recomputation. The comb claim opens against the
+        // PROVER-WRITTEN com_comb.bin; it is only emitted after this verify
+        // checks that file row-by-row (g1_eq) against its OWN homomorphic
+        // combination com_G + r*com_S — the file is then exactly as bound
+        // as the homomorphic object the old inline IPA consumed.
+        {
+            G1TensorJacobian com_comb_file(obdir + "/com_comb.bin");
+            if (com_comb_file.size != B_pad) {
+                cout << "REJECT: com_comb.bin row count" << endl; return false;
+            }
+            vector<G1Jacobian_t> hfile(B_pad);
+            cudaMemcpy(hfile.data(), com_comb_file.gpu_data,
+                       B_pad * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
+            for (uint j = 0; j < B_pad; j++)
+                if (!g1_eq(hfile[j], hcomb[j])) {
+                    cout << "REJECT: com_comb.bin != com_G + r*com_S (row "
+                         << j << ")" << endl;
+                    return false;
+                }
+        }
+        // (claim emission deferred to the end of verify so a later hadamard
+        // REJECT cannot leave a partially-filled verifier accumulator; the
+        // canonical order A, comb, m, H, S, U is preserved there)
+    } else {
+        if (!open_verify(com_A, gen, C_pad, Q, u_pt, pf.A_f, obdir + "/ipa_A.bin", tr)) {
+            cout << "REJECT: IPA opening of A_f vs com_A" << endl; return false;
+        }
+        if (!open_verify(com_comb, gen, C_pad, Q, u_pt, pf.S_f, obdir + "/ipa_comb.bin", tr)) {
+            cout << "REJECT: IPA opening of S_f vs com_G + r*com_S" << endl; return false;
+        }
+        if (!open_verify(com_m, gen, C_pad, Q, u_m, pf.m_f, obdir + "/ipa_m.bin", tr)) {
+            cout << "REJECT: IPA opening of m_f vs com_m" << endl; return false;
+        }
     }
-    if (!open_verify(com_comb, gen, C_pad, Q, u_pt, pf.S_f, obdir + "/ipa_comb.bin", tr)) {
-        cout << "REJECT: IPA opening of S_f vs com_G + r*com_S" << endl; return false;
-    }
-    if (!open_verify(com_m, gen, C_pad, Q, u_m, pf.m_f, obdir + "/ipa_m.bin", tr)) {
-        cout << "REJECT: IPA opening of m_f vs com_m" << endl; return false;
-    }
+    prof.lap("lookup");
 
     // ---- hadamard part ----
     auto u_h = fs_challenge_vec(tr, logD);
@@ -357,6 +468,21 @@ static bool verify(const string& obdir, const string& seed, uint B, uint C,
     absorb_fr(tr, "S_f2", hp.S_f2); absorb_fr(tr, "U_f2", hp.U_f2);
 
     vector<Fr_t> u_pt2(wsh.rbegin(), wsh.rend());
+    if (claim_mode) {
+        // ---- claim recomputation (all six, canonical order A, comb, m,
+        // H, S, U — the prover's emission order); the driver verdict
+        // becomes ACCEPT-conditional, finalized only by opening_batch ----
+        mk_claim("A", obdir + "/com_A.bin", B_pad, u_pt, pf.A_f);
+        mk_claim("comb", obdir + "/com_comb.bin", B_pad, u_pt, pf.S_f);
+        mk_claim("m", obdir + "/com_m.bin", N / C_pad, u_m, pf.m_f);
+        mk_claim("H", obdir + "/com_H.bin", B_pad, u_h, hp.claim_H);
+        mk_claim("S", obdir + "/com_S.bin", B_pad, u_pt2, hp.S_f2);
+        mk_claim("U", obdir + "/com_U.bin", B_pad, u_pt2, hp.U_f2);
+        drvstate_emit(vaccdir, obid, tr);
+        prof.lap("claim_emit");
+        cout << "ACCEPT-conditional (6 claims emitted; final verdict gated on opening_batch)" << endl;
+        return true;
+    }
     if (!open_verify(com_H, gen, C_pad, Q, u_h, hp.claim_H, obdir + "/ipa_H.bin", tr)) {
         cout << "REJECT: IPA opening of claim_H vs com_H" << endl; return false;
     }
@@ -445,18 +571,152 @@ static bool selftest_case(uint B, uint C, int low, uint len) {
     return true;
 }
 
+// claim-mode selftest (Stage C): honest ACCEPT goes conditional-ACCEPT +
+// batch ACCEPT; every forgery still rejects at a NAMED locus (driver-side
+// where the driver still catches it; the batch where the opening layer was).
+static bool selftest_case_claims(uint B, uint C, int low, uint len) {
+    cout << "---- selftest (claim mode) B=" << B << " C=" << C
+         << " low=" << low << " len=" << len << " ----" << endl;
+    const uint C_pad = 1u << ceilLog2(C);
+    string dir = "/tmp/zkob_glu_cm";
+    { string c = "rm -rf " + dir; system(c.c_str()); }
+    mkdir(dir.c_str(), 0755);
+    string acc = dir + "/acc";
+    mkdir(acc.c_str(), 0755);
+    string run_seed = "selftest";              // batch seed = selftest:opening_batch
+    string seed = "selftest:glu";              // obligation transcript seed
+    string obid = "selftest.swiglu";
+
+    vector<int> map_host(len);
+    for (uint i = 0; i < len; i++) { int x = (int)i + low; map_host[i] = x * x; }
+    FrTensor mapped(len, map_host.data());
+    srand(142 + B + C);
+    vector<int> g_host(B * C), u_host(B * C);
+    for (uint i = 0; i < B * C; i++) {
+        g_host[i] = (rand() % (int)len) + low;
+        u_host[i] = (rand() % 13) - 6;
+    }
+    FrTensor G(B * C, g_host.data()), U(B * C, u_host.data());
+    map<uint32_t, string> genpaths;
+    Commitment gen = Commitment::random(C_pad);
+    genpaths[C_pad] = dir + "/gen" + to_string(C_pad) + ".bin";
+    gen.save(genpaths[C_pad]);
+    string qpath = dir + "/q.bin";
+    Commitment::random(2).save(qpath);         // 2-slot q (Q + H slot, §4.4)
+    Commitment qg(qpath);
+    G1Jacobian_t Q = qg(0);
+
+    prove(dir, seed, G, U, B, C, low, len, mapped, gen, Q, "", 0, 0, acc, obid);
+    batch_prove(acc, run_seed, genpaths, qpath);
+
+    int vacc_n = 0;
+    auto pipeline = [&](string& locus) -> bool {
+        string vacc = dir + "/vacc" + to_string(vacc_n++);
+        mkdir(vacc.c_str(), 0755);
+        if (!verify(dir, seed, B, C, low, len, mapped, gen, Q, vacc, obid)) {
+            locus = "driver"; return false;
+        }
+        return batch_verify(acc, vacc, run_seed, genpaths, qpath, &locus);
+    };
+    int total = 0, fail = 0;
+    auto expect = [&](const string& what, const string& want) {
+        string locus;
+        bool acc_ok = pipeline(locus);
+        bool ok = (want == "accept") ? acc_ok : (!acc_ok && locus == want);
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] " << what
+             << " -> expected " << want << ", got " << (acc_ok ? "accept" : locus) << endl;
+    };
+
+    expect("honest (conditional ACCEPT + batch ACCEPT)", "accept");
+
+    // forgeries the DRIVER still catches (unchanged loci)
+    tamper_byte(dir + "/lookup.bin", 4 + 32, +1);
+    expect("lookup round-0 p(1) tamper (driver round check)", "driver");
+    tamper_byte(dir + "/lookup.bin", 4 + 32, -1);
+    tamper_byte(dir + "/hp.bin", -32, +1);
+    expect("hadamard U_f2 terminal tamper (driver terminal identity)", "driver");
+    tamper_byte(dir + "/hp.bin", -32, -1);
+    tamper_byte(dir + "/com_H.bin", 24, +1);
+    expect("com_H tamper (driver transcript divergence)", "driver");
+    tamper_byte(dir + "/com_H.bin", 24, -1);
+    // the NEW driver-side check: prover's com_comb.bin must g1_eq-equal the
+    // verifier's homomorphic combination
+    tamper_byte(dir + "/com_comb.bin", 24, +1);
+    expect("com_comb.bin tamper (driver homomorphic-combination check)", "driver");
+    tamper_byte(dir + "/com_comb.bin", 24, -1);
+
+    // forgeries that now die in the BATCH (the relocated opening layer)
+    tamper_byte(acc + "/claims.bin", -1, +1);
+    expect("prover claims.bin eval tamper", "claims_match");
+    tamper_byte(acc + "/claims.bin", -1, -1);
+    {
+        auto cs = claims_load(acc + "/claims.bin");
+        auto omitted = vector<BoClaim>(cs.begin(), cs.end() - 1);
+        claims_save(acc + "/claims.bin", omitted);
+        expect("claim dropped from prover accumulator", "claims_match");
+        claims_save(acc + "/claims.bin", cs);
+    }
+    tamper_byte(acc + "/ipa_batch_" + to_string(C_pad) + ".bin", -32, +1);
+    expect("batched IPA a_final tamper", "ipa" + to_string(C_pad));
+    tamper_byte(acc + "/ipa_batch_" + to_string(C_pad) + ".bin", -32, -1);
+
+    expect("restored", "accept");
+
+    // SEMANTIC forgeries in claim mode: both must die DRIVER-side (round /
+    // terminal checks), never reaching an accepted batch
+    {
+        string edir = dir + "/evil", eacc = dir + "/eacc", evacc = dir + "/evacc";
+        mkdir(edir.c_str(), 0755); mkdir(eacc.c_str(), 0755); mkdir(evacc.c_str(), 0755);
+        prove(edir, seed, G, U, B, C, low, len, mapped, gen, Q, "", 1, 3, eacc, obid);
+        bool rej = !verify(edir, seed, B, C, low, len, mapped, gen, Q, evacc, obid);
+        total++; if (!rej) fail++;
+        cout << "  [" << (rej ? "PASS" : "FAIL")
+             << "] semantic wrong-mapping (S[3]+=1) rejected DRIVER-side" << endl;
+        { string c = "rm -rf " + edir + " " + eacc + " " + evacc; system(c.c_str()); }
+        mkdir(edir.c_str(), 0755); mkdir(eacc.c_str(), 0755); mkdir(evacc.c_str(), 0755);
+        prove(edir, seed, G, U, B, C, low, len, mapped, gen, Q, "", 2, 5, eacc, obid);
+        rej = !verify(edir, seed, B, C, low, len, mapped, gen, Q, evacc, obid);
+        total++; if (!rej) fail++;
+        cout << "  [" << (rej ? "PASS" : "FAIL")
+             << "] semantic wrong-product (H[5]+=1) rejected DRIVER-side" << endl;
+    }
+
+    bool ok = fail == 0;
+    cout << (ok ? "CASE PASS" : "CASE FAIL") << " (claim mode, " << (total - fail)
+         << "/" << total << ")" << endl;
+    return ok;
+}
+
 int main(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
+    // strip the optional claim-mode flag block: --claims <accdir> <obid>
+    int base_argc = argc;
+    string cm_a, cm_b;
+    for (int i = 2; i < argc; i++)
+        if (string(argv[i]) == "--claims") {
+            base_argc = i;
+            if (i + 1 < argc) cm_a = argv[i + 1];
+            if (i + 2 < argc) cm_b = argv[i + 2];
+            break;
+        }
     if (mode == "selftest") {
+        bo_probe_kernels();
+        cout << "kernel -dlto probes: PASS" << endl;
+        setenv("ZKOB_FOLD_CROSSCHECK", "1", 1);
         bool a = selftest_case(8, 4, -8, 16);    // n1 = 1
         bool b = selftest_case(4, 4, -8, 16);    // n1 = 0 (pure phase2)
         bool c = selftest_case(8, 6, -16, 32);   // padded C, m multi-row
-        cout << ((a && b && c) ? "ZKOB-GLU SELFTEST: ALL PASS"
-                               : "ZKOB-GLU SELFTEST: FAIL") << endl;
-        return (a && b && c) ? 0 : 1;
+        bool d = selftest_case_claims(8, 4, -8, 16);
+        bool e = selftest_case_claims(4, 4, -8, 16);
+        bool f = selftest_case_claims(8, 6, -16, 32);
+        bool ok = a && b && c && d && e && f;
+        cout << (ok ? "ZKOB-GLU SELFTEST: ALL PASS"
+                    : "ZKOB-GLU SELFTEST: FAIL") << endl;
+        return ok ? 0 : 1;
     }
-    if (mode == "prove" && (argc == 13 || argc == 14)) {
+    if (mode == "prove" && (base_argc == 13 || base_argc == 14)) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[6]), C = stoi(argv[7]);
         int low = stoi(argv[8]); uint len = stoi(argv[9]);
@@ -464,20 +724,24 @@ int main(int argc, char* argv[]) {
         FrTensor U = load_int32_tensor(argv[5], B * C);
         FrTensor mapped = load_mapped(argv[10], low, len);
         Commitment gen(argv[11]), qg(argv[12]);
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("prove --claims needs <accdir> <obid>");
         prove(obdir, seed, G, U, B, C, low, len, mapped, gen, qg(0),
-              argc == 14 ? argv[13] : "");
+              base_argc == 14 ? argv[13] : "", 0, 0, cm_a, cm_b);
         return 0;
     }
-    if (mode == "verify" && argc == 11) {
+    if (mode == "verify" && base_argc == 11) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[4]), C = stoi(argv[5]);
         int low = stoi(argv[6]); uint len = stoi(argv[7]);
         FrTensor mapped = load_mapped(argv[8], low, len);
         Commitment gen(argv[9]), qg(argv[10]);
-        return verify(obdir, seed, B, C, low, len, mapped, gen, qg(0)) ? 0 : 1;
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("verify --claims needs <vaccdir> <obid>");
+        return verify(obdir, seed, B, C, low, len, mapped, gen, qg(0), cm_a, cm_b) ? 0 : 1;
     }
     cerr << "usage: zkob_glu selftest\n"
-         << "       zkob_glu prove  <obdir> <seed> <G-int32> <U-int32> <B> <C> <low> <len> <mapped-int32> <gen> <q> [H-int64-out]\n"
-         << "       zkob_glu verify <obdir> <seed> <B> <C> <low> <len> <mapped-int32> <gen> <q>" << endl;
+         << "       zkob_glu prove  <obdir> <seed> <G-int32> <U-int32> <B> <C> <low> <len> <mapped-int32> <gen> <q> [H-int64-out] [--claims <accdir> <obid>]\n"
+         << "       zkob_glu verify <obdir> <seed> <B> <C> <low> <len> <mapped-int32> <gen> <q> [--claims <vaccdir> <obid>]" << endl;
     return 2;
 }

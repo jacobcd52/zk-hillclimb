@@ -47,7 +47,21 @@
 //   zkob_headmerge selftest
 // <Oh-prefix>{hh}.i32.bin is read for hh = 00..NH-1 (file sizes exact).
 // The driver does NOT mkdir the obdir.
+// Both prove and verify accept a trailing [--claims <(v)accdir> <obid>].
+//
+// CLAIM MODE (Stage C of the transport rebuild, flag-selected; the old
+// inline-IPA tail stays compilable and is the DEFAULT): with --claims, prove
+// EMITS its NH+1 terminal claims at the exact old open_prove sites —
+//   per head h: out_h vs com_O{hh} at reverse(ws_h)  (eval S_f2_h, domain HD)
+//   then:       O2    vs com_O2    at u              (eval ev, domain C_pad)
+// — into <accdir>/claims.bin plus witrefs and drvstate (a TWO-domain batch:
+// gen_small=HD and gen_big=C_pad). Verify keeps every round check, the
+// verifier-rebuilt Wm folds, the U_f2 == 1 pins and the sum_h c_h == ev
+// identity UNCHANGED, then recomputes the NH+1 claims from its own FS replay
+// into <vaccdir>; verdict becomes ACCEPT-conditional. All five semantic evil
+// modes die DRIVER-side exactly as before (their loci are not openings).
 #include "zkob_lookup.cuh"
+#include "zkob_claims.cuh"
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -150,7 +164,9 @@ static void prove(const string& obdir, const string& seed,
                   uint perm,
                   const Commitment& gen_big, const Commitment& gen_small,
                   const G1Jacobian_t& Q, const string& o2_out,
-                  int evil = 0, uint evil_h = 0) {
+                  int evil = 0, uint evil_h = 0,
+                  const string& accdir = "", const string& obid = "") {
+    const bool claim_mode = !accdir.empty();
     layout_guards(B, C, HD, gen_big, gen_small);
     const uint C_pad = 1u << ceilLog2(C);
     const uint logB = ceilLog2(B), logCp = ceilLog2(C_pad), logHD = ceilLog2(HD);
@@ -254,10 +270,41 @@ static void prove(const string& obdir, const string& seed,
                 !fr_eq(hp.U_f2, F_ONE))
                 throw runtime_error("merge hadamard terminal != multi_dim_me / 1 (convention bug)");
         }
-        open_prove(out_t[h], HD, gen_small, Q, pt, obdir + "/ipa_O" + hh2(h) + ".bin", tr);
+        if (claim_mode) {
+            // claim emission at the exact old open_prove site (order: heads
+            // ascending, then O2)
+            BoClaim c;
+            c.id = obid + ":O" + hh2(h);
+            c.comref = obdir + "/com_O" + hh2(h) + ".bin";
+            c.domain = HD; c.n_rows = B;
+            c.point = pt;
+            c.eval = hp.S_f2;
+            claim_emit(accdir, c);
+            string wit = accdir + "/wit_" + obid + "_O" + hh2(h) + ".fr";
+            out_t[h].save(wit);
+            witref_emit(accdir, c.comref, wit);
+        } else {
+            open_prove(out_t[h], HD, gen_small, Q, pt, obdir + "/ipa_O" + hh2(h) + ".bin", tr);
+        }
     }
     if (evil == 0 && !fr_eq(csum, ev))   // the section-4.6 identity, honest case
         throw runtime_error("sum of head claims != ev (pi formula bug)");
+    if (claim_mode) {
+        BoClaim c;
+        c.id = obid + ":O2";
+        c.comref = obdir + "/com_O2.bin";
+        c.domain = C_pad; c.n_rows = B;
+        c.point = u;
+        c.eval = ev;
+        claim_emit(accdir, c);
+        string wit = accdir + "/wit_" + obid + "_O2.fr";
+        O2_t.save(wit);
+        witref_emit(accdir, c.comref, wit);
+        drvstate_emit(accdir, obid, tr);
+        cout << "PROVED headmerge obligation (claim mode, " << NH + 1
+             << " claims emitted) -> " << obdir << endl;
+        return;
+    }
     open_prove(O2_t, C_pad, gen_big, Q, u, obdir + "/ipa_O2.bin", tr);
     cout << "PROVED headmerge obligation -> " << obdir << endl;
 }
@@ -270,7 +317,10 @@ static void prove(const string& obdir, const string& seed,
 static bool verify(const string& obdir, const string& seed,
                    uint B, uint C, uint HD, uint perm,
                    const Commitment& gen_big, const Commitment& gen_small,
-                   const G1Jacobian_t& Q, string* reason = nullptr) {
+                   const G1Jacobian_t& Q, string* reason = nullptr,
+                   const string& vaccdir = "", const string& obid = "") {
+    const bool claim_mode = !vaccdir.empty();
+    BoTimer prof("headmerge_verify");
     const uint C_pad = 1u << ceilLog2(C);
     const uint logB = ceilLog2(B), logCp = ceilLog2(C_pad), logHD = ceilLog2(HD);
     const uint NH = C / HD, D = B * C_pad, DH = B * HD;
@@ -316,6 +366,7 @@ static bool verify(const string& obdir, const string& seed,
     cudaMemcpy(Eh.data(), E_u.gpu_data, D * sizeof(Fr_t), cudaMemcpyDeviceToHost);
 
     Fr_t csum = F_ZERO;
+    vector<vector<Fr_t>> pts;    // per-head opening points (claim mode)
     for (uint h = 0; h < NH; h++) {
         absorb_fr(tr, "c" + hh2(h), hps[h].claim_H);
         csum = h_scalar(csum, hps[h].claim_H, 0);
@@ -341,13 +392,44 @@ static bool verify(const string& obdir, const string& seed,
         }
         absorb_fr(tr, "S_f2", hps[h].S_f2); absorb_fr(tr, "U_f2", hps[h].U_f2);
         vector<Fr_t> pt(ws.rbegin(), ws.rend());
-        if (!open_verify(com_O[h], gen_small, HD, Q, pt, hps[h].S_f2,
-                         obdir + "/ipa_O" + hh2(h) + ".bin", tr))
-            RJ("IPA opening of head " << hh2(h) << " terminal vs com_O" << hh2(h));
+        if (claim_mode) {
+            pts.push_back(pt);   // claim recomputation deferred past csum == ev
+        } else {
+            if (!open_verify(com_O[h], gen_small, HD, Q, pt, hps[h].S_f2,
+                             obdir + "/ipa_O" + hh2(h) + ".bin", tr))
+                RJ("IPA opening of head " << hh2(h) << " terminal vs com_O" << hh2(h));
+        }
     }
-    if (!open_verify(com_O2, gen_big, C_pad, Q, u, ev, obdir + "/ipa_O2.bin", tr))
-        RJ("IPA opening of ev vs com_O2");
+    if (!claim_mode) {
+        if (!open_verify(com_O2, gen_big, C_pad, Q, u, ev, obdir + "/ipa_O2.bin", tr))
+            RJ("IPA opening of ev vs com_O2");
+    }
     if (!fr_eq(csum, ev)) RJ("sum of head claims != ev");
+    if (claim_mode) {
+        // ---- claim recomputation (canonical order: heads ascending, then
+        // O2 — the prover's emission order); ACCEPT-conditional verdict ----
+        for (uint h = 0; h < NH; h++) {
+            BoClaim c;
+            c.id = obid + ":O" + hh2(h);
+            c.comref = obdir + "/com_O" + hh2(h) + ".bin";
+            c.domain = HD; c.n_rows = B;
+            c.point = pts[h];
+            c.eval = hps[h].S_f2;
+            claim_emit(vaccdir, c);
+        }
+        BoClaim c;
+        c.id = obid + ":O2";
+        c.comref = obdir + "/com_O2.bin";
+        c.domain = C_pad; c.n_rows = B;
+        c.point = u;
+        c.eval = ev;
+        claim_emit(vaccdir, c);
+        drvstate_emit(vaccdir, obid, tr);
+        prof.lap("claim_emit");
+        cout << "ACCEPT-conditional (" << NH + 1
+             << " claims emitted; final verdict gated on opening_batch)" << endl;
+        return true;
+    }
     cout << "ACCEPT" << endl;
     return true;
 }
@@ -540,6 +622,130 @@ static bool selftest_real(uint perm) {
     return all;
 }
 
+// claim-mode selftest (Stage C): honest ACCEPT goes conditional-ACCEPT +
+// batch ACCEPT over a TWO-domain batch (gen_small=HD + gen_big=C_pad);
+// every forgery still rejects at a NAMED locus.
+static bool selftest_case_claims(uint B, uint C, uint HD, uint perm) {
+    const uint NH = C / HD, C_pad = 1u << ceilLog2(C);
+    cout << "==== selftest (claim mode) B=" << B << " C=" << C << " HD=" << HD
+         << " perm=" << (perm ? "concat" : "pi157") << " ====" << endl;
+    srand(61337 + B * 100 + C * 10 + HD + perm);
+    vector<vector<int>> outs(NH);
+    for (uint h = 0; h < NH; h++) {
+        outs[h].resize((size_t)B * HD);
+        for (auto& x : outs[h]) x = rand() % 257 - 128;
+    }
+    string dir = "/tmp/zkob_headmerge_cm";
+    { string c = "rm -rf " + dir; system(c.c_str()); }
+    mkdir(dir.c_str(), 0755);
+    string acc = dir + "/acc";
+    mkdir(acc.c_str(), 0755);
+    string run_seed = "selftest";
+    string seed = "selftest:merge";
+    string obid = "selftest.merge";
+
+    map<uint32_t, string> genpaths;
+    Commitment gen_big = Commitment::random(C_pad);
+    Commitment gen_small = Commitment::random(HD);
+    genpaths[C_pad] = dir + "/gen" + to_string(C_pad) + ".bin";
+    genpaths[HD] = dir + "/gen" + to_string(HD) + ".bin";
+    gen_big.save(genpaths[C_pad]);
+    gen_small.save(genpaths[HD]);
+    string qpath = dir + "/q.bin";
+    Commitment::random(2).save(qpath);
+    Commitment qg(qpath);
+    G1Jacobian_t Q = qg(0);
+
+    prove(dir, seed, outs, B, C, HD, perm, gen_big, gen_small, Q, "", 0, 0, acc, obid);
+    batch_prove(acc, run_seed, genpaths, qpath);
+
+    int vacc_n = 0;
+    auto pipeline = [&](string& locus) -> bool {
+        string vacc = dir + "/vacc" + to_string(vacc_n++);
+        mkdir(vacc.c_str(), 0755);
+        string reason;
+        if (!verify(dir, seed, B, C, HD, perm, gen_big, gen_small, Q, &reason, vacc, obid)) {
+            locus = "driver:" + reason; return false;
+        }
+        return batch_verify(acc, vacc, run_seed, genpaths, qpath, &locus);
+    };
+    int total = 0, fail = 0;
+    auto expect = [&](const string& what, const string& want) {
+        string locus;
+        bool acc_ok = pipeline(locus);
+        bool ok = (want == "accept") ? acc_ok
+                                     : (!acc_ok && locus.find(want) != string::npos);
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] " << what
+             << " -> expected " << want << ", got " << (acc_ok ? "accept" : locus) << endl;
+    };
+
+    expect("honest (conditional ACCEPT + 2-domain batch ACCEPT)", "accept");
+
+    // forgeries the DRIVER still catches (unchanged loci)
+    tamper_byte(dir + "/hp01.bin", 36, +1);
+    expect("hp01 round-0 eval tamper (driver round check)", "driver:");
+    tamper_byte(dir + "/hp01.bin", 36, -1);
+    tamper_byte(dir + "/ev.bin", 4, +1);
+    expect("ev.bin tamper (driver sum/terminal via divergence)", "driver:");
+    tamper_byte(dir + "/ev.bin", 4, -1);
+    tamper_byte(dir + "/com_O2.bin", 24, +1);
+    expect("com_O2 tamper (driver transcript divergence)", "driver:");
+    tamper_byte(dir + "/com_O2.bin", 24, -1);
+
+    // forgeries that now die in the BATCH
+    tamper_byte(acc + "/claims.bin", -1, +1);
+    expect("prover claims.bin eval tamper", "claims_match");
+    tamper_byte(acc + "/claims.bin", -1, -1);
+    {
+        auto cs = claims_load(acc + "/claims.bin");
+        auto omitted = vector<BoClaim>(cs.begin(), cs.end() - 1);
+        claims_save(acc + "/claims.bin", omitted);
+        expect("claim dropped from prover accumulator", "claims_match");
+        claims_save(acc + "/claims.bin", cs);
+    }
+    tamper_byte(acc + "/ipa_batch_" + to_string(HD) + ".bin", -32, +1);
+    expect("small-domain batched IPA a_final tamper", "ipa" + to_string(HD));
+    tamper_byte(acc + "/ipa_batch_" + to_string(HD) + ".bin", -32, -1);
+    tamper_byte(acc + "/ipa_batch_" + to_string(C_pad) + ".bin", -32, +1);
+    expect("big-domain batched IPA a_final tamper", "ipa" + to_string(C_pad));
+    tamper_byte(acc + "/ipa_batch_" + to_string(C_pad) + ".bin", -32, -1);
+
+    expect("restored", "accept");
+
+    // semantic evils — all die DRIVER-side, unchanged loci (none was an IPA)
+    const uint eh3 = min(3u, NH - 2);
+    struct EvilCM { int mode; uint h; string want; const char* what; };
+    vector<EvilCM> evils = {
+        {3, eh3, "driver:merge hadamard " + hh2(eh3) + " terminal",
+            "Wm gathered with h off by one"},
+        {4, min(7u, NH - 1), "driver:merge hadamard " + hh2(min(7u, NH - 1)) + " U_f2 != 1",
+            "ones-buffer bump"},
+        {5, 0, "driver:sum of head claims != ev", "wrong mode's layout"},
+    };
+    if (perm == 0)
+        evils.push_back({1, 0, "driver:sum of head claims != ev", "O2 := M (no pi)"});
+    for (auto& ev : evils) {
+        string edir = dir + "/evil", eacc = dir + "/eacc", evacc = dir + "/evacc";
+        { string c = "rm -rf " + edir + " " + eacc + " " + evacc; system(c.c_str()); }
+        mkdir(edir.c_str(), 0755); mkdir(eacc.c_str(), 0755); mkdir(evacc.c_str(), 0755);
+        prove(edir, seed, outs, B, C, HD, perm, gen_big, gen_small, Q, "", ev.mode, ev.h, eacc, obid);
+        string reason;
+        bool rej = !verify(edir, seed, B, C, HD, perm, gen_big, gen_small, Q, &reason, evacc, obid);
+        string locus = "driver:" + reason;
+        bool ok = rej && locus.find(ev.want) != string::npos;
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] evil=" << ev.mode << " (" << ev.what
+             << ") -> expected " << ev.want << ", got "
+             << (rej ? locus : string("accept")) << endl;
+    }
+
+    bool ok = fail == 0;
+    cout << (ok ? "CASE PASS" : "CASE FAIL") << " (claim mode, " << (total - fail)
+         << "/" << total << ")" << endl;
+    return ok;
+}
+
 // cross-mode splice (design 4.2): an honest proof made in one mode presented
 // to a verifier running the other mode must REJECT -- first at the dims.bin
 // PERM cross-check, and, with dims.bin forged to match, at the "PERM" absorb
@@ -602,7 +808,20 @@ static bool selftest_splice() {
 int main(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
+    // strip the optional claim-mode flag block: --claims <accdir> <obid>
+    int base_argc = argc;
+    string cm_a, cm_b;
+    for (int i = 2; i < argc; i++)
+        if (string(argv[i]) == "--claims") {
+            base_argc = i;
+            if (i + 1 < argc) cm_a = argv[i + 1];
+            if (i + 2 < argc) cm_b = argv[i + 2];
+            break;
+        }
     if (mode == "selftest") {
+        bo_probe_kernels();
+        cout << "kernel -dlto probes: PASS" << endl;
+        setenv("ZKOB_FOLD_CROSSCHECK", "1", 1);
         bool ok = true;
         for (uint perm = 0; perm < 2; perm++) {
             ok = selftest_case(8, 6, 2, perm) && ok;   // generic pi, padded grid
@@ -615,11 +834,15 @@ int main(int argc, char* argv[]) {
         ok = selftest_splice() && ok;
         ok = selftest_real(0) && ok;
         ok = selftest_real(1) && ok;
+        for (uint perm = 0; perm < 2; perm++) {
+            ok = selftest_case_claims(8, 6, 2, perm) && ok;
+            ok = selftest_case_claims(16, 12, 4, perm) && ok;
+        }
         cout << (ok ? "ZKOB-HEADMERGE SELFTEST: ALL PASS"
                     : "ZKOB-HEADMERGE SELFTEST: FAIL") << endl;
         return ok ? 0 : 1;
     }
-    if (mode == "prove" && (argc == 12 || argc == 13)) {
+    if (mode == "prove" && (base_argc == 12 || base_argc == 13)) {
         string obdir = argv[2], seed = argv[3], prefix = argv[4];
         uint B = stoi(argv[5]), C = stoi(argv[6]), HD = stoi(argv[7]);
         uint perm = parse_perm(argv[8]);
@@ -629,20 +852,25 @@ int main(int argc, char* argv[]) {
         for (uint h = 0; h < NH; h++)
             outs[h] = load_i32_exact(prefix + hh2(h) + ".i32.bin", B * HD);
         Commitment gen_big(argv[9]), gen_small(argv[10]), qg(argv[11]);
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("prove --claims needs <accdir> <obid>");
         prove(obdir, seed, outs, B, C, HD, perm, gen_big, gen_small, qg(0),
-              argc == 13 ? argv[12] : "");
+              base_argc == 13 ? argv[12] : "", 0, 0, cm_a, cm_b);
         return 0;
     }
-    if (mode == "verify" && argc == 11) {
+    if (mode == "verify" && base_argc == 11) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[4]), C = stoi(argv[5]), HD = stoi(argv[6]);
         uint perm = parse_perm(argv[7]);
         Commitment gen_big(argv[8]), gen_small(argv[9]), qg(argv[10]);
-        return verify(obdir, seed, B, C, HD, perm, gen_big, gen_small, qg(0)) ? 0 : 1;
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("verify --claims needs <vaccdir> <obid>");
+        return verify(obdir, seed, B, C, HD, perm, gen_big, gen_small, qg(0),
+                      nullptr, cm_a, cm_b) ? 0 : 1;
     }
     cerr << "usage: zkob_headmerge selftest\n"
-         << "       zkob_headmerge prove  <obdir> <seed> <Oh-prefix> <B> <C> <HD> <perm> <gen_big> <gen_small> <q> [O2-int32-out]\n"
-         << "       zkob_headmerge verify <obdir> <seed> <B> <C> <HD> <perm> <gen_big> <gen_small> <q>\n"
+         << "       zkob_headmerge prove  <obdir> <seed> <Oh-prefix> <B> <C> <HD> <perm> <gen_big> <gen_small> <q> [O2-int32-out] [--claims <accdir> <obid>]\n"
+         << "       zkob_headmerge verify <obdir> <seed> <B> <C> <HD> <perm> <gen_big> <gen_small> <q> [--claims <vaccdir> <obid>]\n"
          << "       <perm> = pi157 | concat" << endl;
     return 2;
 }

@@ -69,6 +69,21 @@
 // table's last entry must be 0 (the sentinel check, replacing glu's mapped(0)
 // check). P chain file: unpadded B x NCOL int32, scale 2^16.
 #include "zkob_lookup.cuh"
+// CLAIM MODE (Stage C of the transport rebuild, flag-selected; the old
+// inline-IPA tail stays compilable and is the DEFAULT): with --claims, prove
+// EMITS its 19 terminal claims at the exact old open_prove sites (order
+// A_E8, comb, m_E8, z_cD1, mx_cD2, Dm, A_L, L_lk, m_L, E_rs, S_rs, E_v1,
+// P_v2, S_v2, L00, L10, L01, L11, S_id) plus witrefs and drvstate. comb =
+// Dm + r*E uses the glu com_comb.bin pattern (verifier g1_eq-checks the file
+// against its own homomorphic combination). Verify keeps every round check,
+// the verifier-rebuilt weight folds, U_f2 == 1 pins, I1/I2 and the Dm/
+// sentinel identities UNCHANGED; claims are recomputed from its own FS
+// replay into <vaccdir>, deferred past every identity. RELOCATED LOCI
+// (the rule of §5.1): evil 6 (V2 broadcast bump, unmasked) now dies at the
+// driver's I1 (which runs before any opening); evil 7 (cD2 broadcast bump
+// at a MASKED idx — invisible to cD2's value and to the Dm identity) now
+// passes ALL driver checks and dies in the batch at round0 (BO-1a class).
+#include "zkob_claims.cuh"
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -140,7 +155,9 @@ static void prove(const string& obdir, const string& seed,
                   const vector<int>& maph, uint LEN_R8,
                   const Commitment& gen, const G1Jacobian_t& Q,
                   const string& p_out,
-                  int evil = 0, uint evil_i = 0, uint evil_j = 0) {
+                  int evil = 0, uint evil_i = 0, uint evil_j = 0,
+                  const string& accdir = "", const string& obid = "") {
+    const bool claim_mode = !accdir.empty();
     const uint D = B * NCOL, DL = 4 * D;
     const uint logB = ceilLog2(B), logC = ceilLog2(NCOL);
     const uint logD = logB + logC, logDL = logD + 2;
@@ -371,9 +388,41 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(pfE.S_f, comb.multi_dim_me({u_row, u_col}, {B, NCOL})))
             throw runtime_error("exp lookup terminal != multi_dim_me (convention bug)");
     }
-    open_prove(A_E,  NCOL, gen, Q, u_ptE, obdir + "/ipa_A_E8.bin", tr);
-    open_prove(comb, NCOL, gen, Q, u_ptE, obdir + "/ipa_comb.bin", tr);
-    open_prove(m_E8, NCOL, gen, Q, u_mE,  obdir + "/ipa_m_E8.bin", tr);
+    auto mkc = [&](const string& tensor, const string& comref, uint32_t nr,
+                   const vector<Fr_t>& point, const Fr_t& eval) {
+        BoClaim c;
+        c.id = obid + ":" + tensor;
+        c.comref = comref;
+        c.domain = NCOL; c.n_rows = nr;
+        c.point = point;
+        c.eval = eval;
+        claim_emit(accdir, c);
+    };
+    auto wref = [&](const string& tag, const string& comref, const FrTensor& t) {
+        string wit = accdir + "/wit_" + obid + "_" + tag + ".fr";
+        t.save(wit);
+        witref_emit(accdir, comref, wit);
+    };
+    if (claim_mode) {
+        {   // com_comb.bin: file stand-in for com_Dm + r*com_E (glu pattern)
+            vector<G1Jacobian_t> hd(B), he(B), hcb(B);
+            cudaMemcpy(hd.data(), com_Dm.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
+            cudaMemcpy(he.data(), com_E.gpu_data, B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
+            for (uint j = 0; j < B; j++) hcb[j] = h_add(hd[j], h_mul(he[j], r));
+            G1TensorJacobian com_comb(B, hcb.data());
+            com_comb.save(obdir + "/com_comb.bin");
+        }
+        mkc("A_E8", obdir + "/com_A_E8.bin", B, u_ptE, pfE.A_f);
+        wref("A_E8", obdir + "/com_A_E8.bin", A_E);
+        mkc("comb", obdir + "/com_comb.bin", B, u_ptE, pfE.S_f);
+        wref("comb", obdir + "/com_comb.bin", comb);
+        mkc("m_E8", obdir + "/com_m_E8.bin", LEN8 / NCOL, u_mE, pfE.m_f);
+        wref("m_E8", obdir + "/com_m_E8.bin", m_E8);
+    } else {
+        open_prove(A_E,  NCOL, gen, Q, u_ptE, obdir + "/ipa_A_E8.bin", tr);
+        open_prove(comb, NCOL, gen, Q, u_ptE, obdir + "/ipa_comb.bin", tr);
+        open_prove(m_E8, NCOL, gen, Q, u_mE,  obdir + "/ipa_m_E8.bin", tr);
+    }
 
     // ---- obligation 2: Dm-binding block (NEW vs softmax; design 4.3) ----
     auto u_d = fs_challenge_vec(tr, logD);
@@ -405,7 +454,12 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(hp_cd1.U_f2, F_ONE))
             throw runtime_error("cD1 terminal != multi_dim_me / 1 (convention bug)");
     }
-    open_prove(z_t, NCOL, gen, Q, pt_cd1, obdir + "/ipa_z_cD1.bin", tr);
+    if (claim_mode) {
+        mkc("z_cD1", obdir + "/com_z.bin", B, pt_cd1, hp_cd1.S_f2);
+        wref("z", obdir + "/com_z.bin", z_t);
+    } else {
+        open_prove(z_t, NCOL, gen, Q, pt_cd1, obdir + "/ipa_z_cD1.bin", tr);
+    }
 
     // cD2: same weight on the never-committed broadcast mxb
     HadamardProof hp_cd2;
@@ -436,14 +490,24 @@ static void prove(const string& obdir, const string& seed,
     }
     // the never-committed broadcast is pinned to com_mx: its MLE at pt_cd2
     // equals the row vector's MLE at the row-bit suffix
-    open_prove(mx_t, B, gen, Q, pt_cd2_rows, obdir + "/ipa_mx_cD2.bin", tr);
+    if (claim_mode) {
+        mkc("mx_cD2", obdir + "/com_mx.bin", 1, pt_cd2_rows, hp_cd2.S_f2);
+        wref("mx", obdir + "/com_mx.bin", mx_t);
+    } else {
+        open_prove(mx_t, B, gen, Q, pt_cd2_rows, obdir + "/ipa_mx_cD2.bin", tr);
+    }
 
     // vDm: opening of com_Dm at u_d (the Dm identity's LHS)
     Fr_t vDm = Dm_t.multi_dim_me({ud_row, ud_col}, {B, NCOL});
     absorb_fr(tr, "vDm", vDm);
     { FILE* f = open_or_die(obdir + "/vdm.bin", "wb");
       fwrite(&vDm, sizeof(Fr_t), 1, f); fclose(f); }
-    open_prove(Dm_t, NCOL, gen, Q, u_d, obdir + "/ipa_Dm.bin", tr);
+    if (claim_mode) {
+        mkc("Dm", obdir + "/com_Dm.bin", B, u_d, vDm);
+        wref("Dm", obdir + "/com_Dm.bin", Dm_t);
+    } else {
+        open_prove(Dm_t, NCOL, gen, Q, u_d, obdir + "/ipa_Dm.bin", tr);
+    }
 
     // ---- obligation 3: limb range lookup ----
     Fr_t beta_L = fs_challenge_fr(tr);
@@ -482,9 +546,18 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(pfL.S_f, L_t.multi_dim_me({u_row, u_col}, {4 * B, NCOL})))
             throw runtime_error("limb lookup terminal != multi_dim_me (convention bug)");
     }
-    open_prove(A_L, NCOL, gen, Q, u_ptL, obdir + "/ipa_A_L.bin", tr);
-    open_prove(L_t, NCOL, gen, Q, u_ptL, obdir + "/ipa_L_lk.bin", tr);
-    open_prove(m_L, NCOL, gen, Q, u_mL,  obdir + "/ipa_m_L.bin", tr);
+    if (claim_mode) {
+        mkc("A_L", obdir + "/com_A_L.bin", 4 * B, u_ptL, pfL.A_f);
+        wref("A_L", obdir + "/com_A_L.bin", A_L);
+        mkc("L_lk", obdir + "/com_L.bin", 4 * B, u_ptL, pfL.S_f);
+        wref("L", obdir + "/com_L.bin", L_t);
+        mkc("m_L", obdir + "/com_m_L.bin", LEN_R8 / NCOL, u_mL, pfL.m_f);
+        wref("m_L", obdir + "/com_m_L.bin", m_L);
+    } else {
+        open_prove(A_L, NCOL, gen, Q, u_ptL, obdir + "/ipa_A_L.bin", tr);
+        open_prove(L_t, NCOL, gen, Q, u_ptL, obdir + "/ipa_L_lk.bin", tr);
+        open_prove(m_L, NCOL, gen, Q, u_mL,  obdir + "/ipa_m_L.bin", tr);
+    }
 
     // ---- obligation 4: row-sum sumcheck (R2; PURE broadcast eq weight) ----
     auto u_b = fs_challenge_vec(tr, logB);
@@ -510,8 +583,15 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(hp_rs.U_f2, F_ONE))
             throw runtime_error("row-sum terminal != multi_dim_me / 1 (convention bug)");
     }
-    open_prove(E_t, NCOL, gen, Q, pt_rs, obdir + "/ipa_E_rs.bin", tr);
-    open_prove(S_t, NCOL, gen, Q, u_b,   obdir + "/ipa_S_rs.bin", tr);
+    if (claim_mode) {
+        mkc("E_rs", obdir + "/com_E.bin", B, pt_rs, hp_rs.S_f2);
+        wref("E", obdir + "/com_E.bin", E_t);
+        mkc("S_rs", obdir + "/com_S.bin", 1, u_b, hp_rs.claim_H);
+        wref("S", obdir + "/com_S.bin", S_t);
+    } else {
+        open_prove(E_t, NCOL, gen, Q, pt_rs, obdir + "/ipa_E_rs.bin", tr);
+        open_prove(S_t, NCOL, gen, Q, u_b,   obdir + "/ipa_S_rs.bin", tr);
+    }
 
     // ---- obligation 5: bracket sumcheck V1 (pure eq weight on E) ----
     auto u_r = fs_challenge_vec(tr, logD);
@@ -536,7 +616,11 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(hp_v1.U_f2, F_ONE))
             throw runtime_error("V1 terminal != multi_dim_me / 1 (convention bug)");
     }
-    open_prove(E_t, NCOL, gen, Q, pt1, obdir + "/ipa_E_v1.bin", tr);
+    if (claim_mode) {
+        mkc("E_v1", obdir + "/com_E.bin", B, pt1, hp_v1.S_f2);
+    } else {
+        open_prove(E_t, NCOL, gen, Q, pt1, obdir + "/ipa_E_v1.bin", tr);
+    }
 
     // ---- obligation 6: bracket sumcheck V2 (P.*S_bcast at u_r) ----
     HadamardProof hp_v2;
@@ -562,8 +646,14 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(hp_v2.U_f2, S_t.multi_dim_me({pt2_rows}, {B})))
             throw runtime_error("V2 terminal != multi_dim_me / bcast suffix (convention bug)");
     }
-    open_prove(P_t, NCOL, gen, Q, pt2,      obdir + "/ipa_P_v2.bin", tr);
-    open_prove(S_t, NCOL, gen, Q, pt2_rows, obdir + "/ipa_S_v2.bin", tr);
+    if (claim_mode) {
+        mkc("P_v2", obdir + "/com_P.bin", B, pt2, hp_v2.S_f2);
+        wref("P", obdir + "/com_P.bin", P_t);
+        mkc("S_v2", obdir + "/com_S.bin", 1, pt2_rows, hp_v2.U_f2);
+    } else {
+        open_prove(P_t, NCOL, gen, Q, pt2,      obdir + "/ipa_P_v2.bin", tr);
+        open_prove(S_t, NCOL, gen, Q, pt2_rows, obdir + "/ipa_S_v2.bin", tr);
+    }
 
     // ---- obligation 7: residual reconstruction (L plane openings + S_id) ----
     Fr_t lv[5];
@@ -587,11 +677,13 @@ static void prove(const string& obdir, const string& seed,
         }
         static const char* fns[4] = {"/ipa_L00.bin", "/ipa_L10.bin",
                                      "/ipa_L01.bin", "/ipa_L11.bin"};
+        static const char* cn[4] = {"L00", "L10", "L01", "L11"};
         for (uint p = 0; p < 4; p++) {
             vector<Fr_t> u_pt(u_r);
             u_pt.push_back((p & 1) ? F_ONE : F_ZERO);
             u_pt.push_back((p >> 1) ? F_ONE : F_ZERO);
-            open_prove(L_t, NCOL, gen, Q, u_pt, obdir + fns[p], tr);
+            if (claim_mode) mkc(cn[p], obdir + "/com_L.bin", 4 * B, u_pt, lv[p]);
+            else open_prove(L_t, NCOL, gen, Q, u_pt, obdir + fns[p], tr);
         }
     }
     lv[4] = S_t.multi_dim_me({ur_row}, {B});                  // S_id
@@ -601,7 +693,8 @@ static void prove(const string& obdir, const string& seed,
     absorb_fr(tr, "S_id", lv[4]);
     { FILE* f = open_or_die(obdir + "/lvals.bin", "wb");
       fwrite(lv, sizeof(Fr_t), 5, f); fclose(f); }
-    open_prove(S_t, NCOL, gen, Q, ur_row, obdir + "/ipa_S_id.bin", tr);
+    if (claim_mode) mkc("S_id", obdir + "/com_S.bin", 1, ur_row, lv[4]);
+    else open_prove(S_t, NCOL, gen, Q, ur_row, obdir + "/ipa_S_id.bin", tr);
 
     if (evil == 0) {    // convention sanity: the Dm identity holds in the field
         FrTensor eq_d = build_eq_tensor(u_d);
@@ -615,6 +708,12 @@ static void prove(const string& obdir, const string& seed,
         rhs = h_scalar(rhs, h_scalar(F_SENT, h_scalar(F_ONE, k_MK, 1), 2), 0);
         if (!fr_eq(vDm, rhs))
             throw runtime_error("Dm identity violated on honest witness (convention bug)");
+    }
+    if (claim_mode) {
+        drvstate_emit(accdir, obid, tr);
+        cout << "PROVED softmax8 obligation (claim mode, 19 claims emitted) -> "
+             << obdir << endl;
+        return;
     }
     cout << "PROVED softmax8 obligation -> " << obdir << endl;
 }
@@ -647,7 +746,10 @@ static bool verify(const string& obdir, const string& seed,
                    uint B, uint NCOL, int LOW8, uint LEN8,
                    const vector<int>& maph, uint LEN_R8,
                    const Commitment& gen, const G1Jacobian_t& Q,
-                   string* reason = nullptr) {
+                   string* reason = nullptr,
+                   const string& vaccdir = "", const string& obid = "") {
+    const bool claim_mode = !vaccdir.empty();
+    BoTimer prof("softmax8_verify");
     const uint D = B * NCOL, DL = 4 * D;
     const uint logB = ceilLog2(B), logC = ceilLog2(NCOL);
     const uint logD = logB + logC, logDL = logD + 2;
@@ -793,12 +895,25 @@ static bool verify(const string& obdir, const string& seed,
     absorb_fr(tr, "A_f", pfE.A_f); absorb_fr(tr, "S_f", pfE.S_f); absorb_fr(tr, "m_f", pfE.m_f);
     vector<Fr_t> u_ptE(ws_E.rbegin(), ws_E.rend());
     vector<Fr_t> u_mE(ws_E.rbegin(), ws_E.rend() - n1_E);
-    if (!open_verify(com_AE, gen, NCOL, Q, u_ptE, pfE.A_f, obdir + "/ipa_A_E8.bin", tr))
-        RJ("IPA opening of A_f vs com_A_E8");
-    if (!open_verify(com_comb, gen, NCOL, Q, u_ptE, pfE.S_f, obdir + "/ipa_comb.bin", tr))
-        RJ("IPA opening of S_f vs com_Dm + r*com_E");
-    if (!open_verify(com_mE, gen, NCOL, Q, u_mE, pfE.m_f, obdir + "/ipa_m_E8.bin", tr))
-        RJ("IPA opening of m_f vs com_m_E8");
+    if (claim_mode) {
+        // com_comb.bin must g1_eq-equal com_Dm + r*com_E (glu pattern)
+        G1TensorJacobian com_comb_file(obdir + "/com_comb.bin");
+        if (com_comb_file.size != B) RJ("com_comb.bin row count");
+        vector<G1Jacobian_t> hfile(B);
+        cudaMemcpy(hfile.data(), com_comb_file.gpu_data,
+                   B * sizeof(G1Jacobian_t), cudaMemcpyDeviceToHost);
+        for (uint j = 0; j < B; j++)
+            if (!g1_eq(hfile[j], hcomb[j]))
+                RJ("com_comb.bin != com_Dm + r*com_E (row " << j << ")");
+    }
+    if (!claim_mode) {
+        if (!open_verify(com_AE, gen, NCOL, Q, u_ptE, pfE.A_f, obdir + "/ipa_A_E8.bin", tr))
+            RJ("IPA opening of A_f vs com_A_E8");
+        if (!open_verify(com_comb, gen, NCOL, Q, u_ptE, pfE.S_f, obdir + "/ipa_comb.bin", tr))
+            RJ("IPA opening of S_f vs com_Dm + r*com_E");
+        if (!open_verify(com_mE, gen, NCOL, Q, u_mE, pfE.m_f, obdir + "/ipa_m_E8.bin", tr))
+            RJ("IPA opening of m_f vs com_m_E8");
+    }
 
     // ---- obligation 2: Dm-binding block ----
     auto u_d = fs_challenge_vec(tr, logD);
@@ -827,8 +942,10 @@ static bool verify(const string& obdir, const string& seed,
     }
     absorb_fr(tr, "S_f2", hp_cd1.S_f2); absorb_fr(tr, "U_f2", hp_cd1.U_f2);
     vector<Fr_t> pt_cd1(ws_cd1.rbegin(), ws_cd1.rend());
-    if (!open_verify(com_z, gen, NCOL, Q, pt_cd1, hp_cd1.S_f2, obdir + "/ipa_z_cD1.bin", tr))
-        RJ("IPA opening of cD1 terminal vs com_z");
+    if (!claim_mode) {
+        if (!open_verify(com_z, gen, NCOL, Q, pt_cd1, hp_cd1.S_f2, obdir + "/ipa_z_cD1.bin", tr))
+            RJ("IPA opening of cD1 terminal vs com_z");
+    }
     // cD2
     absorb_fr(tr, "cD2", hp_cd2.claim_H);
     cur = hp_cd2.claim_H;
@@ -857,13 +974,17 @@ static bool verify(const string& obdir, const string& seed,
     vector<Fr_t> pt_cd2_rows(pt_cd2.begin() + logC, pt_cd2.end());
     // the never-committed broadcast is pinned to com_mx here: its MLE at
     // pt_cd2 equals the row vector's MLE at the row-bit suffix
-    if (!open_verify(com_mx, gen, B, Q, pt_cd2_rows, hp_cd2.S_f2,
-                     obdir + "/ipa_mx_cD2.bin", tr))
-        RJ("IPA opening of cD2 terminal vs com_mx");
+    if (!claim_mode) {
+        if (!open_verify(com_mx, gen, B, Q, pt_cd2_rows, hp_cd2.S_f2,
+                         obdir + "/ipa_mx_cD2.bin", tr))
+            RJ("IPA opening of cD2 terminal vs com_mx");
+    }
     // vDm
     absorb_fr(tr, "vDm", vDm);
-    if (!open_verify(com_Dm, gen, NCOL, Q, u_d, vDm, obdir + "/ipa_Dm.bin", tr))
-        RJ("IPA opening of vDm vs com_Dm");
+    if (!claim_mode) {
+        if (!open_verify(com_Dm, gen, NCOL, Q, u_d, vDm, obdir + "/ipa_Dm.bin", tr))
+            RJ("IPA opening of vDm vs com_Dm");
+    }
 
     // ---- obligation 3: limb lookup rounds ----
     Fr_t beta_L = fs_challenge_fr(tr);
@@ -906,12 +1027,14 @@ static bool verify(const string& obdir, const string& seed,
     absorb_fr(tr, "A_f", pfL.A_f); absorb_fr(tr, "S_f", pfL.S_f); absorb_fr(tr, "m_f", pfL.m_f);
     vector<Fr_t> u_ptL(ws_L.rbegin(), ws_L.rend());
     vector<Fr_t> u_mL(ws_L.rbegin(), ws_L.rend() - n1_L);
-    if (!open_verify(com_AL, gen, NCOL, Q, u_ptL, pfL.A_f, obdir + "/ipa_A_L.bin", tr))
-        RJ("IPA opening of A_f vs com_A_L");
-    if (!open_verify(com_L, gen, NCOL, Q, u_ptL, pfL.S_f, obdir + "/ipa_L_lk.bin", tr))
-        RJ("IPA opening of S_f vs com_L");
-    if (!open_verify(com_mL, gen, NCOL, Q, u_mL, pfL.m_f, obdir + "/ipa_m_L.bin", tr))
-        RJ("IPA opening of m_f vs com_m_L");
+    if (!claim_mode) {
+        if (!open_verify(com_AL, gen, NCOL, Q, u_ptL, pfL.A_f, obdir + "/ipa_A_L.bin", tr))
+            RJ("IPA opening of A_f vs com_A_L");
+        if (!open_verify(com_L, gen, NCOL, Q, u_ptL, pfL.S_f, obdir + "/ipa_L_lk.bin", tr))
+            RJ("IPA opening of S_f vs com_L");
+        if (!open_verify(com_mL, gen, NCOL, Q, u_mL, pfL.m_f, obdir + "/ipa_m_L.bin", tr))
+            RJ("IPA opening of m_f vs com_m_L");
+    }
 
     // ---- obligation 4: row-sum sumcheck (pure broadcast eq weight:
     //      rmsnorm eq_acc shortcut, row rounds only) ----
@@ -936,10 +1059,12 @@ static bool verify(const string& obdir, const string& seed,
         RJ("row-sum terminal identity");
     absorb_fr(tr, "S_f2", hp_rs.S_f2); absorb_fr(tr, "U_f2", hp_rs.U_f2);
     vector<Fr_t> pt_rs(ws_rs.rbegin(), ws_rs.rend());
-    if (!open_verify(com_E, gen, NCOL, Q, pt_rs, hp_rs.S_f2, obdir + "/ipa_E_rs.bin", tr))
-        RJ("IPA opening of E (row-sum) vs com_E");
-    if (!open_verify(com_S, gen, NCOL, Q, u_b, hp_rs.claim_H, obdir + "/ipa_S_rs.bin", tr))
-        RJ("IPA opening of ev_S vs com_S");
+    if (!claim_mode) {
+        if (!open_verify(com_E, gen, NCOL, Q, pt_rs, hp_rs.S_f2, obdir + "/ipa_E_rs.bin", tr))
+            RJ("IPA opening of E (row-sum) vs com_E");
+        if (!open_verify(com_S, gen, NCOL, Q, u_b, hp_rs.claim_H, obdir + "/ipa_S_rs.bin", tr))
+            RJ("IPA opening of ev_S vs com_S");
+    }
 
     // ---- obligation 5: bracket sumcheck V1 (pure eq weight) ----
     auto u_r = fs_challenge_vec(tr, logD);
@@ -963,8 +1088,10 @@ static bool verify(const string& obdir, const string& seed,
         RJ("V1 terminal identity");
     absorb_fr(tr, "S_f2", hp_v1.S_f2); absorb_fr(tr, "U_f2", hp_v1.U_f2);
     vector<Fr_t> pt1(ws_v1.rbegin(), ws_v1.rend());
-    if (!open_verify(com_E, gen, NCOL, Q, pt1, hp_v1.S_f2, obdir + "/ipa_E_v1.bin", tr))
-        RJ("IPA opening of E (V1) vs com_E");
+    if (!claim_mode) {
+        if (!open_verify(com_E, gen, NCOL, Q, pt1, hp_v1.S_f2, obdir + "/ipa_E_v1.bin", tr))
+            RJ("IPA opening of E (V1) vs com_E");
+    }
 
     // ---- obligation 6: bracket sumcheck V2 (pure eq weight) ----
     absorb_fr(tr, "c2", hp_v2.claim_H);
@@ -986,12 +1113,16 @@ static bool verify(const string& obdir, const string& seed,
     absorb_fr(tr, "S_f2", hp_v2.S_f2); absorb_fr(tr, "U_f2", hp_v2.U_f2);
     vector<Fr_t> pt2(ws_v2.rbegin(), ws_v2.rend());
     vector<Fr_t> pt2_rows(pt2.begin() + logC, pt2.end());
-    if (!open_verify(com_P, gen, NCOL, Q, pt2, hp_v2.S_f2, obdir + "/ipa_P_v2.bin", tr))
-        RJ("IPA opening of P (V2) vs com_P");
+    if (!claim_mode) {
+        if (!open_verify(com_P, gen, NCOL, Q, pt2, hp_v2.S_f2, obdir + "/ipa_P_v2.bin", tr))
+            RJ("IPA opening of P (V2) vs com_P");
+    }
     // the never-committed broadcast tensor is pinned to com_S here: its MLE at
     // pt2 equals the row vector's MLE at the row-bit suffix of pt2
-    if (!open_verify(com_S, gen, NCOL, Q, pt2_rows, hp_v2.U_f2, obdir + "/ipa_S_v2.bin", tr))
-        RJ("IPA opening of V2 U_f2 vs com_S");
+    if (!claim_mode) {
+        if (!open_verify(com_S, gen, NCOL, Q, pt2_rows, hp_v2.U_f2, obdir + "/ipa_S_v2.bin", tr))
+            RJ("IPA opening of V2 U_f2 vs com_S");
+    }
 
     // ---- obligation 7: L plane openings + S_id ----
     {
@@ -1004,13 +1135,17 @@ static bool verify(const string& obdir, const string& seed,
             vector<Fr_t> u_pt(u_r);
             u_pt.push_back((p & 1) ? F_ONE : F_ZERO);
             u_pt.push_back((p >> 1) ? F_ONE : F_ZERO);
-            if (!open_verify(com_L, gen, NCOL, Q, u_pt, lv[p], obdir + fns[p], tr))
-                RJ("IPA opening of " << names[p] << " vs com_L");
+            if (!claim_mode) {
+                if (!open_verify(com_L, gen, NCOL, Q, u_pt, lv[p], obdir + fns[p], tr))
+                    RJ("IPA opening of " << names[p] << " vs com_L");
+            }
         }
     }
     absorb_fr(tr, "S_id", lv[4]);
-    if (!open_verify(com_S, gen, NCOL, Q, ur_row, lv[4], obdir + "/ipa_S_id.bin", tr))
-        RJ("IPA opening of S_id vs com_S");
+    if (!claim_mode) {
+        if (!open_verify(com_S, gen, NCOL, Q, ur_row, lv[4], obdir + "/ipa_S_id.bin", tr))
+            RJ("IPA opening of S_id vs com_S");
+    }
 
     // ---- verifier-only plain-field identities (Schwartz-Zippel) ----
     const Fr_t F_LENR = {LEN_R8, 0, 0, 0, 0, 0, 0, 0};
@@ -1040,6 +1175,46 @@ static bool verify(const string& obdir, const string& seed,
         Fr_t rhs = h_scalar(hp_cd1.claim_H, hp_cd2.claim_H, 1);  // cD1 - cD2
         rhs = h_scalar(rhs, h_scalar(F_SENT, h_scalar(F_ONE, k_MK, 1), 2), 0);
         if (!fr_eq(vDm, rhs)) RJ("Dm identity");
+    }
+    if (claim_mode) {
+        // ---- claim recomputation, deferred past I1/I2/Dm (canonical order
+        // = the prover's emission order); ACCEPT-conditional verdict ----
+        auto mkc = [&](const string& tensor, const string& comref, uint32_t nr,
+                       const vector<Fr_t>& point, const Fr_t& eval) {
+            BoClaim c;
+            c.id = obid + ":" + tensor;
+            c.comref = comref;
+            c.domain = NCOL; c.n_rows = nr;
+            c.point = point;
+            c.eval = eval;
+            claim_emit(vaccdir, c);
+        };
+        mkc("A_E8", obdir + "/com_A_E8.bin", B, u_ptE, pfE.A_f);
+        mkc("comb", obdir + "/com_comb.bin", B, u_ptE, pfE.S_f);
+        mkc("m_E8", obdir + "/com_m_E8.bin", LEN8 / NCOL, u_mE, pfE.m_f);
+        mkc("z_cD1", obdir + "/com_z.bin", B, pt_cd1, hp_cd1.S_f2);
+        mkc("mx_cD2", obdir + "/com_mx.bin", 1, pt_cd2_rows, hp_cd2.S_f2);
+        mkc("Dm", obdir + "/com_Dm.bin", B, u_d, vDm);
+        mkc("A_L", obdir + "/com_A_L.bin", 4 * B, u_ptL, pfL.A_f);
+        mkc("L_lk", obdir + "/com_L.bin", 4 * B, u_ptL, pfL.S_f);
+        mkc("m_L", obdir + "/com_m_L.bin", LEN_R8 / NCOL, u_mL, pfL.m_f);
+        mkc("E_rs", obdir + "/com_E.bin", B, pt_rs, hp_rs.S_f2);
+        mkc("S_rs", obdir + "/com_S.bin", 1, u_b, hp_rs.claim_H);
+        mkc("E_v1", obdir + "/com_E.bin", B, pt1, hp_v1.S_f2);
+        mkc("P_v2", obdir + "/com_P.bin", B, pt2, hp_v2.S_f2);
+        mkc("S_v2", obdir + "/com_S.bin", 1, pt2_rows, hp_v2.U_f2);
+        static const char* cn[4] = {"L00", "L10", "L01", "L11"};
+        for (uint p = 0; p < 4; p++) {
+            vector<Fr_t> u_pt(u_r);
+            u_pt.push_back((p & 1) ? F_ONE : F_ZERO);
+            u_pt.push_back((p >> 1) ? F_ONE : F_ZERO);
+            mkc(cn[p], obdir + "/com_L.bin", 4 * B, u_pt, lv[p]);
+        }
+        mkc("S_id", obdir + "/com_S.bin", 1, ur_row, lv[4]);
+        drvstate_emit(vaccdir, obid, tr);
+        prof.lap("claim_emit");
+        cout << "ACCEPT-conditional (19 claims emitted; final verdict gated on opening_batch)" << endl;
+        return true;
     }
     cout << "ACCEPT" << endl;
     return true;
@@ -1416,21 +1591,188 @@ static vector<int> load_i32(const string& path, uint expect) {
     return v;
 }
 
+
+// claim-mode selftest (Stage C): honest ACCEPT goes conditional-ACCEPT +
+// batch ACCEPT (19 claims; com_E x2, com_S x3, com_L x5 multi-claim).
+// RELOCATED loci: evil 6 (V2 broadcast, unmasked) -> driver I1; evil 7
+// (cD2 broadcast at MASKED idx, invisible to the Dm identity) -> batch
+// round0 under the honest-procedure batch (BO-1a class).
+static bool selftest_case_claims(uint B, int LOW8, uint LEN8, uint LEN_R8) {
+    const uint NCOL = B, D = B * NCOL;
+    cout << "==== selftest (claim mode) B=NCOL=" << B << " LOW8=" << LOW8
+         << " LEN8=" << LEN8 << " LEN_R8=" << LEN_R8 << " ====" << endl;
+    vector<int> maph = toy_table(LEN8);
+    const int R = (-LOW8) / 2;
+    srand(98242 + B);
+    vector<int> zh(D);
+    for (uint k = 0; k < D; k++) zh[k] = (rand() % (2 * R + 1)) - R;
+    vector<int> mxh = host_mx(zh, B, NCOL);
+
+    string dir = "/tmp/zkob_softmax8_cm";
+    { string c = "rm -rf " + dir; system(c.c_str()); }
+    mkdir(dir.c_str(), 0755);
+    string acc = dir + "/acc";
+    mkdir(acc.c_str(), 0755);
+    string run_seed = "selftest";
+    string seed = "selftest:softmax8";
+    string obid = "selftest.softmax8";
+
+    map<uint32_t, string> genpaths;
+    Commitment gen = Commitment::random(NCOL);
+    genpaths[NCOL] = dir + "/gen" + to_string(NCOL) + ".bin";
+    gen.save(genpaths[NCOL]);
+    string qpath = dir + "/q.bin";
+    Commitment::random(2).save(qpath);
+    Commitment qg(qpath);
+    G1Jacobian_t Q = qg(0);
+
+    prove(dir, seed, zh, mxh, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, Q, "",
+          0, 0, 0, acc, obid);
+    batch_prove(acc, run_seed, genpaths, qpath);
+
+    int vacc_n = 0;
+    auto pipeline = [&](string& locus) -> bool {
+        string vacc = dir + "/vacc" + to_string(vacc_n++);
+        mkdir(vacc.c_str(), 0755);
+        string reason;
+        if (!verify(dir, seed, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, Q,
+                    &reason, vacc, obid)) {
+            locus = "driver:" + reason; return false;
+        }
+        return batch_verify(acc, vacc, run_seed, genpaths, qpath, &locus);
+    };
+    int total = 0, fail = 0;
+    auto expect = [&](const string& what, const string& want) {
+        string locus;
+        bool acc_ok = pipeline(locus);
+        bool ok = (want == "accept") ? acc_ok
+                                     : (!acc_ok && locus.find(want) != string::npos);
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] " << what
+             << " -> expected " << want << ", got " << (acc_ok ? "accept" : locus) << endl;
+    };
+
+    expect("honest (conditional ACCEPT + batch ACCEPT, 19 claims)", "accept");
+
+    tamper_byte(dir + "/lookup_E8.bin", 4 + 32, +1);
+    expect("exp lookup round-0 tamper (driver round check)", "driver:");
+    tamper_byte(dir + "/lookup_E8.bin", 4 + 32, -1);
+    tamper_byte(dir + "/hp_cD1.bin", 36, +1);
+    expect("cD1 round-0 eval tamper (driver round check)", "driver:");
+    tamper_byte(dir + "/hp_cD1.bin", 36, -1);
+    tamper_byte(dir + "/vdm.bin", 4, +1);
+    expect("vdm tamper (driver Dm identity)", "driver:");
+    tamper_byte(dir + "/vdm.bin", 4, -1);
+    tamper_byte(dir + "/com_comb.bin", 24, +1);
+    expect("com_comb.bin tamper (driver homomorphic-combination check)", "driver:");
+    tamper_byte(dir + "/com_comb.bin", 24, -1);
+
+    tamper_byte(acc + "/claims.bin", -1, +1);
+    expect("prover claims.bin eval tamper", "claims_match");
+    tamper_byte(acc + "/claims.bin", -1, -1);
+    {
+        auto cs = claims_load(acc + "/claims.bin");
+        auto omitted = vector<BoClaim>(cs.begin(), cs.end() - 1);
+        claims_save(acc + "/claims.bin", omitted);
+        expect("claim dropped from prover accumulator", "claims_match");
+        claims_save(acc + "/claims.bin", cs);
+    }
+    tamper_byte(acc + "/ipa_batch_" + to_string(NCOL) + ".bin", -32, +1);
+    expect("batched IPA a_final tamper", "ipa" + to_string(NCOL));
+    tamper_byte(acc + "/ipa_batch_" + to_string(NCOL) + ".bin", -32, -1);
+
+    expect("restored", "accept");
+
+    // semantic evils 1-5, 8: driver-side, unchanged loci; evil 6 RELOCATES
+    // to driver I1; evil 7 RELOCATES to the batch (round0)
+    struct EvilCM { int mode; uint i, j; const char* want; };
+    vector<EvilCM> evils = {
+        {1, 2, 1, "driver:exp lookup round 0"},
+        {2, 2, 0, "driver:Dm identity"},
+        {3, 0, 1, "driver:bracket r1 identity"},
+        {4, 1, 1, "driver:bracket sum identity"},
+        {5, 1, 0, "driver:row-sum round 0"},
+        {6, 2, 0, "driver:bracket r1 identity"},   // RELOCATED (was the V2 IPA)
+        {8, 3, 1, "driver:limb lookup round 0"},
+    };
+    for (auto& ev : evils) {
+        string edir = dir + "/evil", eacc = dir + "/eacc", evacc = dir + "/evacc";
+        { string c = "rm -rf " + edir + " " + eacc + " " + evacc; system(c.c_str()); }
+        mkdir(edir.c_str(), 0755); mkdir(eacc.c_str(), 0755); mkdir(evacc.c_str(), 0755);
+        prove(edir, seed, zh, mxh, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, Q, "",
+              ev.mode, ev.i, ev.j, eacc, obid);
+        string reason;
+        bool rej = !verify(edir, seed, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, Q,
+                           &reason, evacc, obid);
+        string locus = "driver:" + reason;
+        bool ok = rej && locus.find(ev.want) != string::npos;
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] evil=" << ev.mode
+             << (ev.mode == 6 ? " (RELOCATED locus)" : "")
+             << " -> expected " << ev.want << ", got "
+             << (rej ? locus : string("accept")) << endl;
+    }
+    // evil 7 — RELOCATED to the batch: driver-local checks all pass, the
+    // false mx_cD2 claim dies at batch round0
+    {
+        string edir = dir + "/evil7", eacc = dir + "/eacc7", evacc = dir + "/evacc7";
+        mkdir(edir.c_str(), 0755); mkdir(eacc.c_str(), 0755); mkdir(evacc.c_str(), 0755);
+        prove(edir, seed, zh, mxh, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, Q, "",
+              7, 0, 1, eacc, obid);
+        string reason;
+        bool drv_ok = verify(edir, seed, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, Q,
+                             &reason, evacc, obid);
+        bool batch_rej = false; string locus = "(driver rejected: " + reason + ")";
+        if (drv_ok) {
+            batch_prove(eacc, run_seed, genpaths, qpath, /*evil=*/1);
+            batch_rej = !batch_verify(eacc, evacc, run_seed, genpaths, qpath, &locus);
+        }
+        bool ok = drv_ok && batch_rej && locus.substr(0, 5) == "round";
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL")
+             << "] evil=7 (cD2 masked broadcast bump; RELOCATED locus) -> expected "
+                "driver conditional-ACCEPT + batch round0, got driver "
+             << (drv_ok ? "accept" : "reject") << " + batch "
+             << (batch_rej ? locus : string("accept")) << endl;
+    }
+
+    bool ok = fail == 0;
+    cout << (ok ? "CASE PASS" : "CASE FAIL") << " (claim mode, " << (total - fail)
+         << "/" << total << ")" << endl;
+    return ok;
+}
+
 int main(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
+    // strip the optional claim-mode flag block: --claims <accdir> <obid>
+    int base_argc = argc;
+    string cm_a, cm_b;
+    for (int i = 2; i < argc; i++)
+        if (string(argv[i]) == "--claims") {
+            base_argc = i;
+            if (i + 1 < argc) cm_a = argv[i + 1];
+            if (i + 2 < argc) cm_b = argv[i + 2];
+            break;
+        }
     if (mode == "selftest") {
+        bo_probe_kernels();
+        cout << "kernel -dlto probes: PASS" << endl;
+        setenv("ZKOB_FOLD_CROSSCHECK", "1", 1);
         bool a = selftest_case(8,  -14, 16, 32);   // n1_E = 2, n1_L = 3
         bool b = selftest_case(4,  -14, 16, 32);   // n1_E = 0 (pure phase2)
         bool c = selftest_case(16, -62, 64, 64);   // bigger grid
         bool g = selftest_guards();
         bool d = selftest_real();
-        bool ok = a && b && c && g && d;
+        bool e = selftest_case_claims(8,  -14, 16, 32);
+        bool f = selftest_case_claims(4,  -14, 16, 32);
+        bool h = selftest_case_claims(16, -62, 64, 64);
+        bool ok = a && b && c && g && d && e && f && h;
         cout << (ok ? "ZKOB-SOFTMAX8 SELFTEST: ALL PASS"
                     : "ZKOB-SOFTMAX8 SELFTEST: FAIL") << endl;
         return ok ? 0 : 1;
     }
-    if (mode == "prove" && (argc == 14 || argc == 15)) {
+    if (mode == "prove" && (base_argc == 14 || base_argc == 15)) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[6]), NCOL = stoi(argv[7]);
         int LOW8 = stoi(argv[8]); uint LEN8 = (uint)stoul(argv[9]);
@@ -1439,18 +1781,23 @@ int main(int argc, char* argv[]) {
         vector<int> mxh = load_i32(argv[5], B);
         vector<int> maph = load_expmap8(argv[10], LEN8);
         Commitment gen(argv[12]), qg(argv[13]);
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("prove --claims needs <accdir> <obid>");
         prove(obdir, seed, zh, mxh, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, qg(0),
-              argc == 15 ? argv[14] : "");
+              base_argc == 15 ? argv[14] : "", 0, 0, 0, cm_a, cm_b);
         return 0;
     }
-    if (mode == "verify" && argc == 12) {
+    if (mode == "verify" && base_argc == 12) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[4]), NCOL = stoi(argv[5]);
         int LOW8 = stoi(argv[6]); uint LEN8 = (uint)stoul(argv[7]);
         uint LEN_R8 = (uint)stoul(argv[9]);
         vector<int> maph = load_expmap8(argv[8], LEN8);
         Commitment gen(argv[10]), qg(argv[11]);
-        return verify(obdir, seed, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, qg(0)) ? 0 : 1;
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("verify --claims needs <vaccdir> <obid>");
+        return verify(obdir, seed, B, NCOL, LOW8, LEN8, maph, LEN_R8, gen, qg(0),
+                      nullptr, cm_a, cm_b) ? 0 : 1;
     }
     cerr << "usage: zkob_softmax8 selftest\n"
          << "       zkob_softmax8 prove  <obdir> <seed> <z-int32> <mx-int32> <B> <NCOL> <LOW8> <LEN8> <expmap8-int32> <LEN_R8> <gen> <q> [P-int32-out]\n"

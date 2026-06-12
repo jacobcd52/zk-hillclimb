@@ -34,11 +34,31 @@
 // Usage:
 //   zkob_rope prove   <obdir> <seed> <T-int32.bin> <B> <C> <HD>
 //                     <cos-int32.bin> <sin-int32.bin> <gen.bin> <q.bin> [Y64-i64-out.bin]
+//                     [--claims <accdir> <obid>]
 //   zkob_rope verify  <obdir> <seed> <B> <C> <HD>
 //                     <cos-int32.bin> <sin-int32.bin> <gen.bin> <q.bin>
+//                     [--claims <vaccdir> <obid>]
 //   zkob_rope selftest
 // The driver does NOT mkdir the obdir.
+//
+// CLAIM MODE (Stage C of the transport rebuild, flag-selected; the old
+// inline-IPA tail stays compilable and is the DEFAULT): with --claims, prove
+// EMITS its three terminal claims at the exact old open_prove sites —
+//   T  vs com_T   at pt1            (eval hp1.S_f2)
+//   T  vs com_T   at pt2' (flipped) (eval hp2.S_f2)   <- same tensor, 2nd pt
+//   Y  vs com_Y64 at u              (eval ev)
+// — into <accdir>/claims.bin plus witrefs and drvstate; the inline-IPA
+// absorbs vanish from the transcript on BOTH sides symmetrically. Verify in
+// claim mode keeps every round check, the U_f2 == 1 pins, both verifier-
+// rebuilt weight terminals and the c1 + c2 == ev identity UNCHANGED, then
+// recomputes the three claims from its own FS replay into <vaccdir>.
+// RELOCATED LOCUS (the §5.1 relocation rule): semantic evil 2 (unpermuted
+// rotate_half) used to die at "IPA opening of h2 terminal vs com_T at the
+// flipped point"; in claim mode every driver-local check passes and the
+// FALSE T@pt2' claim dies in the batch at round0 (BO-1a class) — pinned in
+// the claim-mode selftest.
 #include "zkob_lookup.cuh"
+#include "zkob_claims.cuh"
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -131,7 +151,9 @@ static void prove(const string& obdir, const string& seed,
                   const vector<int>& cosT, const vector<int>& sinT,
                   const Commitment& gen, const G1Jacobian_t& Q,
                   const string& y_out,
-                  int evil = 0, size_t evil_idx = 0) {
+                  int evil = 0, size_t evil_idx = 0,
+                  const string& accdir = "", const string& obid = "") {
+    const bool claim_mode = !accdir.empty();
     layout_guards(B, C, HD, gen.size);
     const uint C_pad = 1u << ceilLog2(C);
     const uint logB = ceilLog2(B), logCp = ceilLog2(C_pad), logD = logB + logCp;
@@ -225,7 +247,26 @@ static void prove(const string& obdir, const string& seed,
             !fr_eq(hp1.U_f2, F_ONE))
             throw runtime_error("h1 terminal != multi_dim_me / 1 (convention bug)");
     }
-    open_prove(T_t, C_pad, gen, Q, pt1, obdir + "/ipa_T1.bin", tr);
+    auto mk_claim = [&](const string& tensor, const string& comref,
+                        const vector<Fr_t>& point, const Fr_t& eval) {
+        BoClaim c;
+        c.id = obid + ":" + tensor;
+        c.comref = comref;
+        c.domain = C_pad; c.n_rows = B;
+        c.point = point;
+        c.eval = eval;
+        claim_emit(accdir, c);
+    };
+    if (claim_mode) {
+        // claim T@pt1 at the exact old open_prove site (witref once; the
+        // second T claim shares the tensor)
+        string witT = accdir + "/wit_" + obid + "_T.fr";
+        T_t.save(witT);
+        mk_claim("T1", obdir + "/com_T.bin", pt1, hp1.S_f2);
+        witref_emit(accdir, obdir + "/com_T.bin", witT);
+    } else {
+        open_prove(T_t, C_pad, gen, Q, pt1, obdir + "/ipa_T1.bin", tr);
+    }
 
     // ---- hadamard 2: E = eq(u) .* W2, S = Tx, U = 1 ----
     FrTensor E2 = E_u * W2_t;
@@ -252,6 +293,16 @@ static void prove(const string& obdir, const string& seed,
         if (evil == 0 && !fr_eq(hp2.U_f2, F_ONE))
             throw runtime_error("h2 U_f2 != 1 (convention bug)");
     }
+    if (claim_mode) {
+        mk_claim("T2", obdir + "/com_T.bin", pt2p, hp2.S_f2);
+        string witY = accdir + "/wit_" + obid + "_Y.fr";
+        Y_t.save(witY);
+        mk_claim("Y", obdir + "/com_Y64.bin", u, ev);
+        witref_emit(accdir, obdir + "/com_Y64.bin", witY);
+        drvstate_emit(accdir, obid, tr);
+        cout << "PROVED rope obligation (claim mode, 3 claims emitted) -> " << obdir << endl;
+        return;
+    }
     open_prove(T_t, C_pad, gen, Q, pt2p, obdir + "/ipa_T2.bin", tr);
 
     // ---- Y64 opening at u ----
@@ -268,7 +319,10 @@ static bool verify(const string& obdir, const string& seed,
                    uint B, uint C, uint HD,
                    const vector<int>& cosT, const vector<int>& sinT,
                    const Commitment& gen, const G1Jacobian_t& Q,
-                   string* reason = nullptr) {
+                   string* reason = nullptr,
+                   const string& vaccdir = "", const string& obid = "") {
+    const bool claim_mode = !vaccdir.empty();
+    BoTimer prof("rope_verify");
     const uint C_pad = 1u << ceilLog2(C);
     const uint logB = ceilLog2(B), logCp = ceilLog2(C_pad), logD = logB + logCp;
     const uint D = B * C_pad;
@@ -336,8 +390,12 @@ static bool verify(const string& obdir, const string& seed,
     }
     absorb_fr(tr, "S_f2", hp1.S_f2); absorb_fr(tr, "U_f2", hp1.U_f2);
     vector<Fr_t> pt1(ws1.rbegin(), ws1.rend());
-    if (!open_verify(com_T, gen, C_pad, Q, pt1, hp1.S_f2, obdir + "/ipa_T1.bin", tr))
-        RJ("IPA opening of h1 terminal vs com_T");
+    if (!claim_mode) {
+        if (!open_verify(com_T, gen, C_pad, Q, pt1, hp1.S_f2, obdir + "/ipa_T1.bin", tr))
+            RJ("IPA opening of h1 terminal vs com_T");
+    }
+    // (claim mode: the T@pt1 claim is recomputed at the end of verify, after
+    // every local check has passed; the IPA absorbs vanish symmetrically)
 
     // ---- hadamard 2 replay ----
     absorb_fr(tr, "c2", hp2.claim_H);
@@ -367,14 +425,37 @@ static bool verify(const string& obdir, const string& seed,
     vector<Fr_t> pt2(ws2.rbegin(), ws2.rend());
     vector<Fr_t> pt2p(pt2);
     pt2p[fb] = h_scalar(F_ONE, pt2[fb], 1);
-    if (!open_verify(com_T, gen, C_pad, Q, pt2p, hp2.S_f2, obdir + "/ipa_T2.bin", tr))
-        RJ("IPA opening of h2 terminal vs com_T at the flipped point");
-
-    // ---- Y64 opening + the sum identity ----
-    if (!open_verify(com_Y, gen, C_pad, Q, u, ev, obdir + "/ipa_Y.bin", tr))
-        RJ("IPA opening of ev vs com_Y64");
+    if (!claim_mode) {
+        if (!open_verify(com_T, gen, C_pad, Q, pt2p, hp2.S_f2, obdir + "/ipa_T2.bin", tr))
+            RJ("IPA opening of h2 terminal vs com_T at the flipped point");
+        // ---- Y64 opening ----
+        if (!open_verify(com_Y, gen, C_pad, Q, u, ev, obdir + "/ipa_Y.bin", tr))
+            RJ("IPA opening of ev vs com_Y64");
+    }
+    // ---- the sum identity (both modes) ----
     if (!fr_eq(h_scalar(hp1.claim_H, hp2.claim_H, 0), ev))
         RJ("c1 + c2 != ev");
+    if (claim_mode) {
+        // ---- claim recomputation (canonical order T1, T2, Y — the prover's
+        // emission order); verdict becomes ACCEPT-conditional ----
+        auto mk_claim = [&](const string& tensor, const string& comref,
+                            const vector<Fr_t>& point, const Fr_t& eval) {
+            BoClaim c;
+            c.id = obid + ":" + tensor;
+            c.comref = comref;
+            c.domain = C_pad; c.n_rows = B;
+            c.point = point;
+            c.eval = eval;
+            claim_emit(vaccdir, c);
+        };
+        mk_claim("T1", obdir + "/com_T.bin", pt1, hp1.S_f2);
+        mk_claim("T2", obdir + "/com_T.bin", pt2p, hp2.S_f2);
+        mk_claim("Y", obdir + "/com_Y64.bin", u, ev);
+        drvstate_emit(vaccdir, obid, tr);
+        prof.lap("claim_emit");
+        cout << "ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)" << endl;
+        return true;
+    }
     cout << "ACCEPT" << endl;
     return true;
 }
@@ -497,6 +578,145 @@ static bool selftest_case(uint B, uint C, uint HD) {
     return all;
 }
 
+// claim-mode selftest (Stage C): honest ACCEPT goes conditional-ACCEPT +
+// batch ACCEPT; every forgery still rejects at a NAMED locus. Evil 2 is the
+// RELOCATED one: its old locus was the h2 flipped-point IPA; driver-local
+// checks now pass and the false T@pt2' claim dies in the batch at round0
+// (honest-procedure batch over the false list, ZKOB_EVIL=1 class).
+static bool selftest_case_claims(uint B, uint C, uint HD) {
+    const uint C_pad = 1u << ceilLog2(C);
+    cout << "==== selftest (claim mode) B=" << B << " C=" << C << " HD=" << HD
+         << " ====" << endl;
+    srand(3026 + B * 100 + C * 10 + HD);
+    vector<int> cosT((size_t)B * HD), sinT((size_t)B * HD);
+    for (auto& v : cosT) v = rand() % 257 - 128;
+    for (auto& v : sinT) v = rand() % 257 - 128;
+    vector<int> Th((size_t)B * C);
+    for (auto& v : Th) v = rand() % 257 - 128;
+
+    string dir = "/tmp/zkob_rope_cm";
+    { string c = "rm -rf " + dir; system(c.c_str()); }
+    mkdir(dir.c_str(), 0755);
+    string acc = dir + "/acc";
+    mkdir(acc.c_str(), 0755);
+    string run_seed = "selftest";
+    string seed = "selftest:rope";
+    string obid = "selftest.rope.q";
+
+    map<uint32_t, string> genpaths;
+    Commitment gen = Commitment::random(C_pad);
+    genpaths[C_pad] = dir + "/gen" + to_string(C_pad) + ".bin";
+    gen.save(genpaths[C_pad]);
+    string qpath = dir + "/q.bin";
+    Commitment::random(2).save(qpath);
+    Commitment qg(qpath);
+    G1Jacobian_t Q = qg(0);
+
+    prove(dir, seed, Th, B, C, HD, cosT, sinT, gen, Q, "", 0, 0, acc, obid);
+    batch_prove(acc, run_seed, genpaths, qpath);
+
+    int vacc_n = 0;
+    auto pipeline = [&](string& locus) -> bool {
+        string vacc = dir + "/vacc" + to_string(vacc_n++);
+        mkdir(vacc.c_str(), 0755);
+        string reason;
+        if (!verify(dir, seed, B, C, HD, cosT, sinT, gen, Q, &reason, vacc, obid)) {
+            locus = "driver:" + reason; return false;
+        }
+        return batch_verify(acc, vacc, run_seed, genpaths, qpath, &locus);
+    };
+    int total = 0, fail = 0;
+    auto expect = [&](const string& what, const string& want) {
+        string locus;
+        bool acc_ok = pipeline(locus);
+        bool ok = (want == "accept") ? acc_ok
+                                     : (!acc_ok && locus.find(want) != string::npos);
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] " << what
+             << " -> expected " << want << ", got " << (acc_ok ? "accept" : locus) << endl;
+    };
+
+    expect("honest (conditional ACCEPT + batch ACCEPT)", "accept");
+
+    // forgeries the DRIVER still catches (unchanged loci)
+    tamper_byte(dir + "/ev.bin", 4, +1);
+    expect("ev.bin tamper (driver weight terminal via transcript divergence)", "driver:");
+    tamper_byte(dir + "/ev.bin", 4, -1);
+    tamper_byte(dir + "/hp1.bin", 36, +1);
+    expect("hp1 round-0 eval tamper (driver round check)", "driver:");
+    tamper_byte(dir + "/hp1.bin", 36, -1);
+    tamper_byte(dir + "/com_T.bin", 24, +1);
+    expect("com_T tamper (driver transcript divergence)", "driver:");
+    tamper_byte(dir + "/com_T.bin", 24, -1);
+
+    // forgeries that now die in the BATCH (the relocated opening layer)
+    tamper_byte(acc + "/claims.bin", -1, +1);
+    expect("prover claims.bin eval tamper", "claims_match");
+    tamper_byte(acc + "/claims.bin", -1, -1);
+    {
+        auto cs = claims_load(acc + "/claims.bin");
+        auto omitted = vector<BoClaim>(cs.begin(), cs.end() - 1);
+        claims_save(acc + "/claims.bin", omitted);
+        expect("claim dropped from prover accumulator", "claims_match");
+        claims_save(acc + "/claims.bin", cs);
+    }
+    tamper_byte(acc + "/ipa_batch_" + to_string(C_pad) + ".bin", -32, +1);
+    expect("batched IPA a_final tamper", "ipa" + to_string(C_pad));
+    tamper_byte(acc + "/ipa_batch_" + to_string(C_pad) + ".bin", -32, -1);
+
+    expect("restored", "accept");
+
+    // semantic evil battery in claim mode
+    size_t real_idx = (size_t)1 * C_pad + 1;
+    struct EvilCM { int mode; size_t idx; const char* want; const char* what; };
+    vector<EvilCM> evils = {
+        {1, real_idx, "driver:c1 + c2 != ev", "Y64[idx]+=1 (driver sum identity)"},
+        {3, real_idx, "driver:h1 weight terminal", "bumped cos table used consistently"},
+        {4, real_idx, "driver:h1 U_f2 != 1", "corrupted h1 ones-buffer"},
+        {5, real_idx, "driver:h2 weight terminal", "sigma sign flip used consistently"},
+    };
+    for (auto& ev : evils) {
+        string edir = dir + "/evil", eacc = dir + "/eacc", evacc = dir + "/evacc";
+        { string c = "rm -rf " + edir + " " + eacc + " " + evacc; system(c.c_str()); }
+        mkdir(edir.c_str(), 0755); mkdir(eacc.c_str(), 0755); mkdir(evacc.c_str(), 0755);
+        prove(edir, seed, Th, B, C, HD, cosT, sinT, gen, Q, "", ev.mode, ev.idx, eacc, obid);
+        string reason;
+        bool rej = !verify(edir, seed, B, C, HD, cosT, sinT, gen, Q, &reason, evacc, obid);
+        string locus = "driver:" + reason;
+        bool ok = rej && locus.find(ev.want) != string::npos;
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] evil=" << ev.mode << " (" << ev.what
+             << ") -> expected " << ev.want << ", got "
+             << (rej ? locus : string("accept")) << endl;
+    }
+    // evil 2 — the RELOCATED locus: driver-local checks pass (conditional
+    // ACCEPT), the false T@pt2' claim dies in the batch at round0
+    {
+        string edir = dir + "/evil2", eacc = dir + "/eacc2", evacc = dir + "/evacc2";
+        mkdir(edir.c_str(), 0755); mkdir(eacc.c_str(), 0755); mkdir(evacc.c_str(), 0755);
+        prove(edir, seed, Th, B, C, HD, cosT, sinT, gen, Q, "", 2, 0, eacc, obid);
+        string reason;
+        bool drv_ok = verify(edir, seed, B, C, HD, cosT, sinT, gen, Q, &reason, evacc, obid);
+        bool batch_rej = false; string locus = "(driver rejected)";
+        if (drv_ok) {
+            batch_prove(eacc, run_seed, genpaths, qpath, /*evil=*/1);
+            batch_rej = !batch_verify(eacc, evacc, run_seed, genpaths, qpath, &locus);
+        }
+        bool ok = drv_ok && batch_rej && locus.substr(0, 5) == "round";
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL")
+             << "] evil=2 (unpermuted rotate_half; RELOCATED locus) -> expected "
+                "driver conditional-ACCEPT + batch round0, got driver "
+             << (drv_ok ? "accept" : "reject") << " + batch "
+             << (batch_rej ? locus : string("accept")) << endl;
+    }
+
+    bool ok = fail == 0;
+    cout << (ok ? "CASE PASS" : "CASE FAIL") << " (claim mode, " << (total - fail)
+         << "/" << total << ")" << endl;
+    return ok;
+}
+
 static bool selftest_real() {
     const uint B = 1024, C = 768, HD = 64;
     cout << "==== selftest real-scale case B=1024 C=768 HD=64 ====" << endl;
@@ -576,37 +796,58 @@ static vector<int> load_i32(const string& path, uint expect) {
 int main(int argc, char* argv[]) {
     vrf_selfcheck();
     string mode = argc > 1 ? argv[1] : "";
+    // strip the optional claim-mode flag block: --claims <accdir> <obid>
+    int base_argc = argc;
+    string cm_a, cm_b;
+    for (int i = 2; i < argc; i++)
+        if (string(argv[i]) == "--claims") {
+            base_argc = i;
+            if (i + 1 < argc) cm_a = argv[i + 1];
+            if (i + 2 < argc) cm_b = argv[i + 2];
+            break;
+        }
     if (mode == "selftest") {
+        bo_probe_kernels();
+        cout << "kernel -dlto probes: PASS" << endl;
+        setenv("ZKOB_FOLD_CROSSCHECK", "1", 1);
         bool a = selftest_case(8, 6, 2);     // padding cols + flip bit 0
         bool b = selftest_case(4, 8, 4);     // C == C_pad (no padding)
         bool c = selftest_case(16, 12, 4);   // padded 16x16 grid
         bool d = selftest_real();
-        bool ok = a && b && c && d;
+        bool e = selftest_case_claims(8, 6, 2);
+        bool f = selftest_case_claims(4, 8, 4);
+        bool g = selftest_case_claims(16, 12, 4);
+        bool ok = a && b && c && d && e && f && g;
         cout << (ok ? "ZKOB-ROPE SELFTEST: ALL PASS"
                     : "ZKOB-ROPE SELFTEST: FAIL") << endl;
         return ok ? 0 : 1;
     }
-    if (mode == "prove" && (argc == 12 || argc == 13)) {
+    if (mode == "prove" && (base_argc == 12 || base_argc == 13)) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[5]), C = stoi(argv[6]), HD = stoi(argv[7]);
         vector<int> Th = load_i32(argv[4], B * C);
         vector<int> cosT = load_table(argv[8], B, HD);
         vector<int> sinT = load_table(argv[9], B, HD);
         Commitment gen(argv[10]), qg(argv[11]);
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("prove --claims needs <accdir> <obid>");
         prove(obdir, seed, Th, B, C, HD, cosT, sinT, gen, qg(0),
-              argc == 13 ? argv[12] : "");
+              base_argc == 13 ? argv[12] : "", 0, 0, cm_a, cm_b);
         return 0;
     }
-    if (mode == "verify" && argc == 11) {
+    if (mode == "verify" && base_argc == 11) {
         string obdir = argv[2], seed = argv[3];
         uint B = stoi(argv[4]), C = stoi(argv[5]), HD = stoi(argv[6]);
         vector<int> cosT = load_table(argv[7], B, HD);
         vector<int> sinT = load_table(argv[8], B, HD);
         Commitment gen(argv[9]), qg(argv[10]);
-        return verify(obdir, seed, B, C, HD, cosT, sinT, gen, qg(0)) ? 0 : 1;
+        if (!cm_a.empty() && cm_b.empty())
+            throw runtime_error("verify --claims needs <vaccdir> <obid>");
+        return verify(obdir, seed, B, C, HD, cosT, sinT, gen, qg(0),
+                      nullptr, cm_a, cm_b) ? 0 : 1;
     }
     cerr << "usage: zkob_rope selftest\n"
-         << "       zkob_rope prove  <obdir> <seed> <T-int32> <B> <C> <HD> <cos-int32> <sin-int32> <gen> <q> [Y64-i64-out]\n"
-         << "       zkob_rope verify <obdir> <seed> <B> <C> <HD> <cos-int32> <sin-int32> <gen> <q>" << endl;
+         << "       zkob_rope prove  <obdir> <seed> <T-int32> <B> <C> <HD> <cos-int32> <sin-int32> <gen> <q> [Y64-i64-out] [--claims <accdir> <obid>]\n"
+         << "       zkob_rope verify <obdir> <seed> <B> <C> <HD> <cos-int32> <sin-int32> <gen> <q> [--claims <vaccdir> <obid>]" << endl;
     return 2;
 }
