@@ -157,6 +157,17 @@ static std::vector<uint8_t> bo_read_file(const std::string& path) {
 static bool bo_file_exists(const std::string& path) {
     struct stat st; return stat(path.c_str(), &st) == 0;
 }
+// Stage C2: checked device allocation. Unchecked cudaMalloc failures at full
+// walk scale (the 38 GB round-0 residency flag) showed up as garbage round
+// evals ("round 0 inconsistency") instead of a loud OOM; every batch_prove
+// allocation goes through this so an over-budget batch THROWS by name.
+static void bo_malloc(Fr_t** p, size_t n_elems, const char* what) {
+    cudaError_t e = cudaMalloc(p, n_elems * sizeof(Fr_t));
+    if (e != cudaSuccess)
+        throw std::runtime_error(std::string("batch_prove: cudaMalloc failed (") + what +
+                                 ", " + std::to_string(n_elems) + " Fr elems): " +
+                                 cudaGetErrorString(e));
+}
 static std::vector<BoClaim> claims_parse(const std::vector<uint8_t>& bytes) {
     BoReader r(bytes);
     char magic[4]; r.bytes(magic, 4);
@@ -848,15 +859,18 @@ static void batch_prove(const std::string& accdir, const std::string& run_seed,
     rho_pows[0] = F_ONE;
     for (uint i = 1; i < cs.size(); i++) rho_pows[i] = h_scalar(rho_pows[i - 1], rho, 2);
 
-    // witness tensors (kept alive; reused for the G5 row-folds)
-    std::vector<FrTensor> wit;
-    wit.reserve(nT);
-    for (auto& t : tensors) {
-        auto it = wits.find(t.comref);
-        if (it == wits.end()) throw std::runtime_error("batch_prove: no witref for " + t.comref);
-        wit.emplace_back(it->second);
-        if (wit.back().size != (size_t)t.n_rows * t.domain)
-            throw std::runtime_error("batch_prove: witness size mismatch for " + t.comref);
+    // Stage C2 streaming (the §2.2 38 GB round-0 residency item): witness
+    // tensors are loaded TRANSIENTLY — each seeds its P-hat table and is
+    // freed; G5 reloads each tensor once for its row-fold. Residency drops
+    // from 3x sum 2^vars (wit + M + P) to 2x during the rounds, and the M/P
+    // tables are freed before G5 (host-side bo_Mj_at_r/kappa need no GPU
+    // state). Transcript, challenges and artifacts are byte-identical to the
+    // resident path: only WHEN tensors occupy device memory changed.
+    std::vector<std::string> witpath(nT);
+    for (uint j = 0; j < nT; j++) {
+        auto it = wits.find(tensors[j].comref);
+        if (it == wits.end()) throw std::runtime_error("batch_prove: no witref for " + tensors[j].comref);
+        witpath[j] = it->second;
     }
 
     // per-tensor M and P tables (size 2^vars_j), c2 factors, lazy S
@@ -864,13 +878,18 @@ static void batch_prove(const std::string& accdir, const std::string& run_seed,
     std::vector<uint> cur_size(nT);
     std::vector<Fr_t> c2(nT, F_ONE), S(nT, F_ZERO);
     Fr_t* d_eq = nullptr; uint eq_cap = 1u << m_max;
-    cudaMalloc(&d_eq, eq_cap * sizeof(Fr_t));
+    bo_malloc(&d_eq, eq_cap, "eq table");
     for (uint j = 0; j < nT; j++) {
         uint n = 1u << tensors[j].vars;
-        cudaMalloc(&d_M[j], n * sizeof(Fr_t));
-        cudaMalloc(&d_P[j], n * sizeof(Fr_t));
+        bo_malloc(&d_M[j], n, ("M[" + tensors[j].comref + "]").c_str());
+        bo_malloc(&d_P[j], n, ("P[" + tensors[j].comref + "]").c_str());
         cudaMemset(d_M[j], 0, n * sizeof(Fr_t));
-        cudaMemcpy(d_P[j], wit[j].gpu_data, n * sizeof(Fr_t), cudaMemcpyDeviceToDevice);
+        {   // transient witness load: freed at scope end (FrTensor dtor)
+            FrTensor w(witpath[j]);
+            if (w.size != (size_t)tensors[j].n_rows * tensors[j].domain)
+                throw std::runtime_error("batch_prove: witness size mismatch for " + tensors[j].comref);
+            cudaMemcpy(d_P[j], w.gpu_data, n * sizeof(Fr_t), cudaMemcpyDeviceToDevice);
+        }
         cur_size[j] = n;
         for (uint32_t idx : tensors[j].claim_idx) {
             bo_build_eq(d_eq, cs_tr[idx].point);
@@ -892,10 +911,10 @@ static void batch_prove(const std::string& accdir, const std::string& run_seed,
     BatchSumcheck bs; bs.n_claims = (uint32_t)cs.size(); bs.m_max = m_max;
     std::vector<Fr_t> r(m_max, F_ZERO);
     std::vector<Fr_t*> scratch(3);
-    cudaMalloc(&scratch[0], (1u << (m_max - 1)) * sizeof(Fr_t));
-    cudaMalloc(&scratch[1], (1u << (m_max - 1)) * sizeof(Fr_t));
-    cudaMalloc(&scratch[2], (1u << (m_max - 1)) * sizeof(Fr_t));
-    Fr_t* d_fold; cudaMalloc(&d_fold, (1u << (m_max - 1)) * sizeof(Fr_t));
+    bo_malloc(&scratch[0], 1u << (m_max - 1), "round scratch 0");
+    bo_malloc(&scratch[1], 1u << (m_max - 1), "round scratch 1");
+    bo_malloc(&scratch[2], 1u << (m_max - 1), "round scratch 2");
+    Fr_t* d_fold; bo_malloc(&d_fold, 1u << (m_max - 1), "fold scratch");
     for (uint t = 0; t < m_max; t++) {
         uint v = m_max - 1 - t;
         Fr_t p0 = F_ZERO, p1 = F_ZERO, p2 = F_ZERO;
@@ -976,6 +995,10 @@ static void batch_prove(const std::string& accdir, const std::string& run_seed,
         if (!fr_eq(chk, cur))
             throw std::runtime_error("batch_prove: G3 terminal self-check failed");
     }
+    // Stage C2 streaming: nothing after G3 needs the M/P tables or the round
+    // scratch (bo_Mj_at_r and bo_kappa are host-side; G5 reloads witnesses).
+    for (uint j = 0; j < nT; j++) { cudaFree(d_M[j]); cudaFree(d_P[j]); }
+    cudaFree(scratch[0]); cudaFree(scratch[1]); cudaFree(scratch[2]); cudaFree(d_fold);
     T.lap("terminal");
 
     // G4 + G5: per generator-domain group, ascending; weights rho'^j by the
@@ -988,20 +1011,23 @@ static void batch_prove(const std::string& accdir, const std::string& run_seed,
     for (auto& t : tensors) domains.insert(t.domain);
     for (uint32_t G : domains) {
         uint logG = ceilLog2(G);
-        Fr_t* d_a; cudaMalloc(&d_a, G * sizeof(Fr_t));
+        Fr_t* d_a; bo_malloc(&d_a, G, "group RLC vector");
         cudaMemset(d_a, 0, G * sizeof(Fr_t));
         Fr_t vstar = F_ZERO;
         for (uint j = 0; j < nT; j++) {
             if (tensors[j].domain != G) continue;
             Fr_t coef = h_scalar(rhop_pows[j], bo_kappa(tensors[j].vars, r), 2);
             std::vector<Fr_t> u_row(r.begin() + logG, r.begin() + tensors[j].vars);
-            if (u_row.empty()) {
-                k_bo_axpy<<<(G + 255) / 256, 256>>>(d_a, wit[j].gpu_data, coef, G);
-                cudaDeviceSynchronize();
-            } else {
-                FrTensor rf = wit[j].partial_me(u_row, G);
-                k_bo_axpy<<<(G + 255) / 256, 256>>>(d_a, rf.gpu_data, coef, G);
-                cudaDeviceSynchronize();
+            {   // Stage C2 streaming: per-tensor witness reload for the row-fold
+                FrTensor w(witpath[j]);
+                if (u_row.empty()) {
+                    k_bo_axpy<<<(G + 255) / 256, 256>>>(d_a, w.gpu_data, coef, G);
+                    cudaDeviceSynchronize();
+                } else {
+                    FrTensor rf = w.partial_me(u_row, G);
+                    k_bo_axpy<<<(G + 255) / 256, 256>>>(d_a, rf.gpu_data, coef, G);
+                    cudaDeviceSynchronize();
+                }
             }
             vstar = h_scalar(vstar, h_scalar(coef, vfin[j], 2), 0);
         }
@@ -1031,8 +1057,6 @@ static void batch_prove(const std::string& accdir, const std::string& run_seed,
         write_ipa(accdir + "/ipa_batch_" + std::to_string(G) + ".bin", pf);
         cudaFree(d_a);
     }
-    for (uint j = 0; j < nT; j++) { cudaFree(d_M[j]); cudaFree(d_P[j]); }
-    cudaFree(scratch[0]); cudaFree(scratch[1]); cudaFree(scratch[2]); cudaFree(d_fold);
     T.lap("ipa");
 }
 
