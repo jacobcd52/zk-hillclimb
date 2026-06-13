@@ -14,6 +14,14 @@ original 8 prompts; **120 additional distinct dolly prompts were generated** thr
 identical pipeline to push the analysis from 8 192 → **131 072 tokens / 128 prompt-blocks**
 (flagged per the brief; see §6 *Honest caveats* and *Reproduce*).
 
+> **Decoding regime + temperature (clarification, 2026-06-13).** Capacity is measured in the
+> **verifiable sampled-decoding regime** (served token = `argmax_v(M_int/FP8 logits + T·g_σ)`,
+> `g_σ` a public *committed*-seed Gumbel draw; committing the seed closes the sampling channel).
+> **All buffer numbers here are at T = 1.** Greedy is the T→0 limit; per `CAPACITY_TEMPERATURE.md`
+> the faithful worst-case capacity is ~T-insensitive (0.38–0.45 bits/tok over T ∈ [0.05, 2.0]) and
+> does not vanish at greedy, so the benign-mean μ and buffer curve below are not greedy-only and
+> change little with T. (See `THREAT_MODEL_NOTES.md §0` for the regime reconciliation.)
+
 ---
 
 ## Bottom line (plain language)

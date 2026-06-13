@@ -4,3 +4,5 @@ __pycache__/
 
 # large/re-downloadable artifacts (not for GitHub)
 zkllm-src/model-storage/
+# recomputable logit cache for the temperature sweep (~850 MB; regenerated in ~40s)
+capacity/z_int_*.npz

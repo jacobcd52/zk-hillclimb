@@ -28,6 +28,18 @@ agreement rate is symmetric by construction, so `p₀` is **identical** to the s
 per scheme (0.93408 / 0.06323 / 0.03992) — a built-in cross-check that both runs see the
 same logits and noise.
 
+> **Decoding regime + temperature (clarification, 2026-06-13).** These numbers are in the
+> **verifiable sampled-decoding regime** (shared-seed Gumbel-max, the DiFR setting): the
+> served token is `argmax_v(logits + T·g_σ)` with `g_σ` a public, *committed*-seed Gumbel
+> draw — committing the seed is what closes the sampling-randomness channel; this capacity is
+> the residual *within the DiFR margin* after that. **All values here are at T = 1** (the
+> "metric temperature 1.0" above means `g_σ` enters at scale 1). Greedy decoding is the
+> degenerate T→0 limit. `CAPACITY_TEMPERATURE.md` sweeps T and finds the faithful worst-case
+> capacity is **~T-insensitive** (0.38–0.45 bits/tok over T ∈ [0.05, 2.0]) and does *not*
+> vanish at greedy — the FP8-vs-`M_int` argmax disagreement (~5.5 %) is a deterministic
+> integerization gap, not a sampling channel. (Earlier "greedy pinned" wording is corrected
+> in `THREAT_MODEL_NOTES.md §0`.)
+
 ---
 
 ## 1. Headline: corrected vs swapped, side by side

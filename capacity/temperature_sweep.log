@@ -1,0 +1,24 @@
+[z_int] loaded cache /workspace/projects/zk-hillclimb/capacity/z_int_faithful_seed20260611.npz
+[T=0.05] min_simple C = 0.4077 b/tok @ b*=0.49 (p*=0.005859); min_topK = 0.3257; p(b=0)=0.0568; margin_mean=0.01321 p99=0.3856 max=1.37
+[T=0.1] min_simple C = 0.4115 b/tok @ b*=0.55 (p*=0.004883); min_topK = 0.3264; p(b=0)=0.0577; margin_mean=0.01343 p99=0.3963 max=1.399
+[T=0.2] min_simple C = 0.3775 b/tok @ b*=0.48 (p*=0.005127); min_topK = 0.3089; p(b=0)=0.0547; margin_mean=0.01218 p99=0.3767 max=2.591
+[T=0.3] min_simple C = 0.4026 b/tok @ b*=0.43 (p*=0.007568); min_topK = 0.3032; p(b=0)=0.0526; margin_mean=0.01181 p99=0.3635 max=2.179
+[T=0.5] min_simple C = 0.4195 b/tok @ b*=0.44 (p*=0.008057); min_topK = 0.3253; p(b=0)=0.0576; margin_mean=0.01351 p99=0.3952 max=1.521
+[T=0.7] min_simple C = 0.4006 b/tok @ b*=0.5 (p*=0.005615); min_topK = 0.3375; p(b=0)=0.0587; margin_mean=0.01366 p99=0.4181 max=1.72
+[T=1.0] min_simple C = 0.4325 b/tok @ b*=0.6 (p*=0.003662); min_topK = 0.3576; p(b=0)=0.0632; margin_mean=0.01478 p99=0.4212 max=1.881
+[T=1.3] min_simple C = 0.4545 b/tok @ b*=0.5 (p*=0.00647); min_topK = 0.3693; p(b=0)=0.0759; margin_mean=0.0168 p99=0.4204 max=1.535
+[T=2.0] min_simple C = 0.3927 b/tok @ b*=0.55 (p*=0.005005); min_topK = 0.3198; p(b=0)=0.0630; margin_mean=0.01459 p99=0.4195 max=1.121
+wrote /workspace/projects/zk-hillclimb/capacity/capacity_temperature_results_seed20260611.json
+wrote /workspace/projects/zk-hillclimb/capacity_vs_T.png
+
+=== T-sweep summary (faithful, corrected orientation) ===
+    T   min_simple   min_topK  b*_simple    p(b=0)  margin_mean  margin_max
+ 0.05       0.4077     0.3257       0.49    0.0568      0.01321        1.37
+  0.1       0.4115     0.3264       0.55    0.0577      0.01343       1.399
+  0.2       0.3775     0.3089       0.48    0.0547      0.01218       2.591
+  0.3       0.4026     0.3032       0.43    0.0526      0.01181       2.179
+  0.5       0.4195     0.3253       0.44    0.0576      0.01351       1.521
+  0.7       0.4006     0.3375        0.5    0.0587      0.01366        1.72
+  1.0       0.4325     0.3576        0.6    0.0632      0.01478       1.881
+  1.3       0.4545     0.3693        0.5    0.0759       0.0168       1.535
+  2.0       0.3927     0.3198       0.55    0.0630      0.01459       1.121

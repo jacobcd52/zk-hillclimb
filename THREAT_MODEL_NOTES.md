@@ -1,26 +1,52 @@
 # Threat-model pins and the capacity-budget framing
 
-Status: PINNED 2026-06-10 (coordinator). These two decisions shape what the experiment
-measures and how results are reported. Change only deliberately, in writing, here.
+Status: PINNED 2026-06-10 (coordinator); **§1 decoding regime CORRECTED 2026-06-13** (see
+the reconciliation summary below). These decisions shape what the experiment measures and
+how results are reported. Change only deliberately, in writing, here.
 
-## 1. The decoding/sampling assumption (PINNED)
+## 0. Regime reconciliation (2026-06-13) — READ FIRST
+
+An earlier version of §1 pinned **greedy** decoding (served = argmax(logits)). That was an
+oversimplification and is corrected here. The protocol — and the entire covert-capacity
+analysis — actually operates in the **verifiable sampled-decoding regime** (shared-seed
+Gumbel-max, the DiFR setting): the datacenter samples each token as
+`argmax_v(logits[v] + T·g_σ[v])`, where `g_σ` is a public function of a **committed** seed
+σ. **The committed seed is what closes the sampling-randomness channel** (an *uncommitted*
+sampler RNG would be a steganographic channel that dominates everything). The covert
+capacity we measure is the *residual* after that channel is closed: the verifier
+reconstructs post-Gumbel scores (proven `M_int` logits + committed-seed Gumbel) and bounds
+each served token's margin from the post-Gumbel argmax; capacity = bits hidden by deviating
+within the tolerated margin. **Greedy (T→0) is the degenerate special case** of this regime
+(no sampler freedom), not a separate model. Temperature T is a parameter; the headline
+numbers are at **T=1**, and `CAPACITY_TEMPERATURE.md` shows the faithful worst-case capacity
+is **nearly T-independent** (0.38–0.45 bits/tok over T ∈ [0.05, 2.0], within ±9 % of the
+T=1 value) — it does *not* vanish at greedy, because the served FP8 model and the proven
+`M_int` deterministically disagree at ~5.5 % of positions (an integerization gap, not a
+sampling channel). See also the `statement.logit_binding` follow-up flagged in
+`STAGE3_FAITHFUL_DESIGN.md §3.3`.
+
+## 1. The decoding/sampling assumption (CORRECTED 2026-06-13)
 
 The system proves that committed weights applied to public inputs produce specific
 **logits**. Tokens are what the network observer sees. The link between logits and tokens
 is therefore part of the threat model, not a detail:
 
-- **Pinned assumption: greedy decoding.** The served token is argmax(logits), and the
-  verifier's token-level check (DiFR logit-margin) is interpreted against that. The final
-  statement obligation must bind served-token == argmax within the DiFR tolerance.
-- **Sampled decoding is explicitly OUT OF SCOPE, and we say why loudly:** with free
-  sampling, the sampler's randomness is itself a covert channel of ~entropy(distribution)
-  bits per token (steganographic sampling), which dwarfs everything the ZK layer controls.
-  No proof of logits constrains it. The known mitigation (commit to a PRF seed at
-  registration; prove tokens = sample(logits, PRF(seed, position)) — "verifiable
-  sampling") is compatible with our architecture but is future work. One paragraph in the
-  writeup; no engineering now.
-- Consequence for the experiment: all covert-capacity numbers are reported **per greedy
-  token**; any channel is exercised only through argmax flips (or DiFR-margin abuse).
+- **Regime: verifiable sampled decoding (shared-seed Gumbel-max).** The served token is
+  `argmax_v(logits[v] + T·g_σ[v])` with `g_σ` a public, reproducible Gumbel draw from a
+  **committed** seed σ. The verifier reconstructs the post-Gumbel scores from the *proven*
+  logits and the committed seed and checks the served token's DiFR logit-margin against
+  them. Greedy decoding is exactly the **T→0** limit of this rule.
+- **The committed seed is load-bearing.** With a *free* (uncommitted) sampler, the RNG is
+  itself a covert channel of ~entropy(distribution) bits per token (steganographic
+  sampling), which dwarfs everything the ZK layer controls and no proof of logits
+  constrains. Committing σ at registration and deriving `g_σ` deterministically — proving
+  `tokens = argmax(logits + T·g_σ)` — **closes that channel**; this is the regime we
+  analyse, not future work. (The PRF-seed "verifiable sampling" framing is the same
+  mechanism.)
+- Consequence for the experiment: covert-capacity numbers are the **residual within the
+  DiFR margin** after the sampling channel is closed, reported per served token at **T=1**
+  (sampled regime); the channel is exercised through margin abuse / argmax flips of the
+  post-Gumbel scores. `CAPACITY_TEMPERATURE.md` reports the full T-sensitivity.
 
 ## 2. The headline output: one capacity-budget table (PINNED)
 
@@ -36,9 +62,14 @@ extractable by the network observer**:
 | matmul / skip / glu | none (exact) | 0 (proven) | 0 |
 | RoPE binding | design pending | TBD | TBD |
 | **DiFR logit-margin tolerance δ** | acceptance threshold of the token check | n/a (defined at the logit level) | TBD as a CURVE in δ — same measurement run |
-| sampling randomness | out of scope (greedy pinned, §1) | — | — (would dominate; see §1) |
+| sampling randomness | **closed by the committed seed σ** (verifiable sampled regime, §1) | — | **0** (would dominate if σ were free; committing it removes the channel — §0/§1) |
 
 Reporting rules:
+- **All token-level capacities are reported in the verifiable sampled regime at T=1**
+  (post-Gumbel score = `logits + 1·g_σ`, committed seed). T is a parameter; the headline
+  numbers are at T=1 and `CAPACITY_TEMPERATURE.md` shows they are ~T-insensitive
+  (±9 % over T ∈ [0.05, 2.0]). They are the residual *within the DiFR margin* after the
+  committed seed closes the sampling channel — not a greedy-only number.
 - Tensor-level freedom (what the ZK verifier tolerates) and token-level capacity (what an
   adversary can push through argmax) are DIFFERENT numbers and both get reported. The
   token-level one is the threat-model-relevant result; the tensor-level one is the proven

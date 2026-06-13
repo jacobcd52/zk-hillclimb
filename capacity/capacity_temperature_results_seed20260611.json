@@ -1,0 +1,396 @@
+{
+  "scheme": "faithful",
+  "seed": 20260611,
+  "temps": [
+    0.05,
+    0.1,
+    0.2,
+    0.3,
+    0.5,
+    0.7,
+    1.0,
+    1.3,
+    2.0
+  ],
+  "orientation": "corrected: ref=M_int post-Gumbel, served=FP8 argmax(logits+T*g)",
+  "results": [
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.0567626953125,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.0567626953125,
+        "C_simple": 1.1639559231580547,
+        "C_topK": 0.54150845094518,
+        "C0_formula_check_H(p0)+p0*log2V": 1.1639559231580547,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.965784284663771,
+        "C_topK": 14.965784284663771,
+        "mean_Nb_at_binf": 32000.0,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.4076598110569823,
+        "b_star": 0.49,
+        "p_star": 0.005859375,
+        "bits_per_forward_pass(x1024)": 417.44364652234987
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.3257327206511622,
+        "b_star": 0.41,
+        "p_star": 0.008544921875,
+        "bits_per_forward_pass(x1024)": 333.5503059467901
+      },
+      "T": 0.05,
+      "exact_postgumbel_agreement": 0.9432373046875,
+      "p_at_b0": 0.0567626953125,
+      "margin_mean_unclamped": 0.013209569617174566,
+      "margin_p99_unclamped": 0.3856364631652833,
+      "margin_max_unclamped": 1.3697919845581055,
+      "bgrid_max": 55.0
+    },
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.0577392578125,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.0577392578125,
+        "C_simple": 1.1825177427424105,
+        "C_topK": 0.5493614968140453,
+        "C0_formula_check_H(p0)+p0*log2V": 1.1825177427424105,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.965784284663771,
+        "C_topK": 14.965784284663771,
+        "mean_Nb_at_binf": 32000.0,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.41154730734976647,
+        "b_star": 0.55,
+        "p_star": 0.0048828125,
+        "bits_per_forward_pass(x1024)": 421.42444272616086
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.3263581767953954,
+        "b_star": 0.41,
+        "p_star": 0.0091552734375,
+        "bits_per_forward_pass(x1024)": 334.1907730384849
+      },
+      "T": 0.1,
+      "exact_postgumbel_agreement": 0.9422607421875,
+      "p_at_b0": 0.0577392578125,
+      "margin_mean_unclamped": 0.013425090408418328,
+      "margin_p99_unclamped": 0.3963109016418459,
+      "margin_max_unclamped": 1.3994035720825195,
+      "bgrid_max": 55.0
+    },
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.0546875,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.0546875,
+        "C_simple": 1.1244262017812925,
+        "C_topK": 0.5247348737138346,
+        "C0_formula_check_H(p0)+p0*log2V": 1.1244262017812925,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.965784284663771,
+        "C_topK": 14.965784284663771,
+        "mean_Nb_at_binf": 32000.0,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.3774594172064907,
+        "b_star": 0.48,
+        "p_star": 0.005126953125,
+        "bits_per_forward_pass(x1024)": 386.51844321944645
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.30889297751242983,
+        "b_star": 0.32,
+        "p_star": 0.01220703125,
+        "bits_per_forward_pass(x1024)": 316.30640897272815
+      },
+      "T": 0.2,
+      "exact_postgumbel_agreement": 0.9453125,
+      "p_at_b0": 0.0546875,
+      "margin_mean_unclamped": 0.01218279410386458,
+      "margin_p99_unclamped": 0.3766567420959473,
+      "margin_max_unclamped": 2.591414451599121,
+      "bgrid_max": 55.0
+    },
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.0526123046875,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.0526123046875,
+        "C_simple": 1.0847762739981432,
+        "C_topK": 0.5078410900761023,
+        "C0_formula_check_H(p0)+p0*log2V": 1.0847762739981432,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.965784284663771,
+        "C_topK": 14.965784284663771,
+        "mean_Nb_at_binf": 32000.0,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.4025550278031317,
+        "b_star": 0.43,
+        "p_star": 0.007568359375,
+        "bits_per_forward_pass(x1024)": 412.21634847040684
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.3032095100847563,
+        "b_star": 0.33,
+        "p_star": 0.010986328125,
+        "bits_per_forward_pass(x1024)": 310.4865383267904
+      },
+      "T": 0.3,
+      "exact_postgumbel_agreement": 0.9473876953125,
+      "p_at_b0": 0.0526123046875,
+      "margin_mean_unclamped": 0.011809492309112102,
+      "margin_p99_unclamped": 0.3634751987457283,
+      "margin_max_unclamped": 2.1794347763061523,
+      "bgrid_max": 55.0
+    },
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.0576171875,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.0576171875,
+        "C_simple": 1.1801989065944456,
+        "C_topK": 0.5483812573805167,
+        "C0_formula_check_H(p0)+p0*log2V": 1.1801989065944456,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.965784284663771,
+        "C_topK": 14.965784284663771,
+        "mean_Nb_at_binf": 32000.0,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.41954690605488,
+        "b_star": 0.44,
+        "p_star": 0.008056640625,
+        "bits_per_forward_pass(x1024)": 429.6160318001971
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.32532071034624116,
+        "b_star": 0.4,
+        "p_star": 0.009521484375,
+        "bits_per_forward_pass(x1024)": 333.12840739455095
+      },
+      "T": 0.5,
+      "exact_postgumbel_agreement": 0.9423828125,
+      "p_at_b0": 0.0576171875,
+      "margin_mean_unclamped": 0.013507328578270972,
+      "margin_p99_unclamped": 0.39524244308471707,
+      "margin_max_unclamped": 1.520878791809082,
+      "bgrid_max": 55.0
+    },
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.0587158203125,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.0587158203125,
+        "C_simple": 1.201054272150996,
+        "C_topK": 0.5571892525071406,
+        "C0_formula_check_H(p0)+p0*log2V": 1.201054272150996,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.965784284663771,
+        "C_topK": 14.965784284663771,
+        "mean_Nb_at_binf": 32000.0,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.40062716504812024,
+        "b_star": 0.5,
+        "p_star": 0.005615234375,
+        "bits_per_forward_pass(x1024)": 410.2422170092751
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.33748178894869907,
+        "b_star": 0.39,
+        "p_star": 0.0113525390625,
+        "bits_per_forward_pass(x1024)": 345.58135188346785
+      },
+      "T": 0.7,
+      "exact_postgumbel_agreement": 0.9412841796875,
+      "p_at_b0": 0.0587158203125,
+      "margin_mean_unclamped": 0.013663806486874819,
+      "margin_p99_unclamped": 0.4181205081939701,
+      "margin_max_unclamped": 1.7203435897827148,
+      "bgrid_max": 55.0
+    },
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.063232421875,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.063232421875,
+        "C_simple": 1.2864677641334827,
+        "C_topK": 0.5930746660554846,
+        "C0_formula_check_H(p0)+p0*log2V": 1.2864677641334827,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.965784284663771,
+        "C_topK": 14.965784284663771,
+        "mean_Nb_at_binf": 32000.0,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.4324959030709311,
+        "b_star": 0.6,
+        "p_star": 0.003662109375,
+        "bits_per_forward_pass(x1024)": 442.87580474463346
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.3575624971335307,
+        "b_star": 0.47,
+        "p_star": 0.0072021484375,
+        "bits_per_forward_pass(x1024)": 366.14399706473546
+      },
+      "T": 1.0,
+      "exact_postgumbel_agreement": 0.936767578125,
+      "p_at_b0": 0.063232421875,
+      "margin_mean_unclamped": 0.014776126714423299,
+      "margin_p99_unclamped": 0.42122687339782766,
+      "margin_max_unclamped": 1.8808460235595703,
+      "bgrid_max": 55.0
+    },
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.075927734375,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.075927734375,
+        "C_simple": 1.5239832871764238,
+        "C_topK": 0.6913761307970513,
+        "C0_formula_check_H(p0)+p0*log2V": 1.5239832871764238,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.965784284663771,
+        "C_topK": 14.965784284663771,
+        "mean_Nb_at_binf": 32000.0,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.4544802767540732,
+        "b_star": 0.5,
+        "p_star": 0.0064697265625,
+        "bits_per_forward_pass(x1024)": 465.38780339617097
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.36927202735396464,
+        "b_star": 0.4,
+        "p_star": 0.0106201171875,
+        "bits_per_forward_pass(x1024)": 378.1345560104598
+      },
+      "T": 1.3,
+      "exact_postgumbel_agreement": 0.924072265625,
+      "p_at_b0": 0.075927734375,
+      "margin_mean_unclamped": 0.016799465869553387,
+      "margin_p99_unclamped": 0.42035514831542986,
+      "margin_max_unclamped": 1.5345439910888672,
+      "bgrid_max": 55.0
+    },
+    {
+      "scheme": "faithful",
+      "V": 32000,
+      "n_positions": 8192,
+      "log2V": 14.965784284662087,
+      "p0_postgumbel": 0.06298828125,
+      "endpoint_b0": {
+        "b": 0.0,
+        "p": 0.06298828125,
+        "C_simple": 1.281863829625427,
+        "C_topK": 0.5911479249763015,
+        "C0_formula_check_H(p0)+p0*log2V": 1.281863829625427,
+        "mean_Nb_at_b0": 1.0
+      },
+      "endpoint_binf": {
+        "b": 55.0,
+        "p": 0.0,
+        "C_simple": 14.96577976896449,
+        "C_topK": 14.96577976896449,
+        "mean_Nb_at_binf": 31999.901000976562,
+        "log2V_target": 14.965784284662087
+      },
+      "min_simple": {
+        "C_min_bits_per_token": 0.39268995577971005,
+        "b_star": 0.55,
+        "p_star": 0.0050048828125,
+        "bits_per_forward_pass(x1024)": 402.1145147184231
+      },
+      "min_topK": {
+        "C_min_bits_per_token": 0.31976722217851095,
+        "b_star": 0.44,
+        "p_star": 0.008544921875,
+        "bits_per_forward_pass(x1024)": 327.4416355107952
+      },
+      "T": 2.0,
+      "exact_postgumbel_agreement": 0.93701171875,
+      "p_at_b0": 0.06298828125,
+      "margin_mean_unclamped": 0.014585376833565533,
+      "margin_p99_unclamped": 0.419545516967774,
+      "margin_max_unclamped": 1.120584487915039,
+      "bgrid_max": 55.0
+    }
+  ]
+}

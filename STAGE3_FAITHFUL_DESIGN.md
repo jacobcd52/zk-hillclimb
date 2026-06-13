@@ -657,6 +657,19 @@ The arithmetic:
 
 ### 3.3 statement.logit_binding — the greedy pinned statement
 
+> **Follow-up flagged (2026-06-13): decoding-regime mismatch — DOCUMENTED, not silently
+> fixed.** This binding proves greedy argmax (`served = argmax(logits)`), but
+> `THREAT_MODEL_NOTES.md §0/§1` was corrected: the protocol runs in the **verifiable
+> sampled-decoding regime** (`served = argmax_v(logits + T·g_σ)`, committed seed σ), of
+> which greedy is the T→0 case. Two honest readings: **(a)** for the treaty protocol the
+> served token is *observed at the network tap* and checked against the proven logits
+> *externally* (the DiFR margin check), so the in-proof greedy binding is **superfluous** to
+> that external check; or **(b)** it should be recast as a **verifiable-sampled binding**
+> `served = argmax_v(logits + T·g_σ)` — which the existing `zkob_rowmax` argmax-driver
+> extends to almost directly: feed it `logits + T·g_σ` (the committed-seed Gumbel grid added
+> to the proven logits) instead of `logits`, with **no new driver**. This is an identified
+> design follow-up; the text below is left as-is and describes the current greedy binding.
+
 THREAT_MODEL_NOTES §1 (pinned): "The final statement obligation must bind served-token
 == argmax." The binding:
 

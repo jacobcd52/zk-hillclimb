@@ -34,12 +34,17 @@ and its width is the real security number. Four headline results:
 The system proves that **committed weights applied to public inputs produce specific logits**. The
 network observer, however, sees **tokens**, so the logit→token link is part of the threat model:
 
-- **Greedy decoding is pinned.** The served token is `argmax(logits)`, and the final obligation binds
-  served-token == argmax within the token check's tolerance. **Sampling is out of scope and we say why
-  loudly:** free sampling is itself a steganographic channel of ~entropy(distribution) bits/token that
-  dwarfs everything the ZK layer controls; the mitigation (verifiable sampling against a committed PRF
-  seed) is compatible with the architecture but is future work. All capacity numbers are **per greedy
-  token**.
+- **Verifiable sampled decoding (shared-seed Gumbel-max) is the regime.** The served token is
+  `argmax_v(logits[v] + T·g_σ[v])`, where `g_σ` is a public Gumbel draw from a **committed** seed σ;
+  the verifier reconstructs the post-Gumbel scores from the *proven* logits and the committed seed and
+  checks each served token's margin against them. **Committing σ is load-bearing:** a free sampler RNG
+  would be a steganographic channel of ~entropy(distribution) bits/token that dwarfs everything the ZK
+  layer controls — committing the seed (equivalently, proving `tokens = argmax(logits + T·g_σ)`) closes
+  that channel, and the measured capacity is the *residual within the DiFR margin* after it is closed.
+  **Greedy is the T→0 special case** (no sampler freedom), not a separate model. All headline capacity
+  numbers are at **T=1**; the worst-case faithful capacity is **nearly T-independent** (±9 % over
+  T ∈ [0.05, 2.0], §3.2 / `CAPACITY_TEMPERATURE.md`) and notably does *not* vanish at greedy, because
+  the served FP8 stream and the proven `M_int` deterministically disagree at ~5.5 % of positions.
 - **Integerization error *is* the covert-channel capacity.** Every tolerance the verifier must accept
   is converted to *bits per served token extractable by an observer*. Two distinct numbers are
   reported per channel: the **tensor-level freedom** the verifier tolerates (the proven ceiling) and
@@ -179,6 +184,19 @@ integerization" depends on which model the threat is defined against — and bot
 faithful ≪ baseline and that term (b), the near-ties, dominates. (`CAPACITY_CORRECTED.md` remains the
 protocol-accurate report since the deployment serves FP8; the FP16 run bounds the "teacher-error
 laundering" effect.)
+
+**Temperature sensitivity (the headline is at T=1).** Capacity is measured in the verifiable sampled
+regime (post-Gumbel score `logits + T·g_σ`); the headline numbers use **T=1**. Sweeping the sampling
+temperature for the faithful scheme (corrected orientation, same seed/prompts) leaves the worst-case
+capacity **nearly flat — 0.38–0.45 bits/tok (simple), 0.30–0.37 (top-K=16) over T ∈ [0.05, 2.0]**,
+within ±9 % of the T=1 value and mildly non-monotone (a shallow peak near T≈1.3). Crucially it does
+**not** vanish at greedy (T→0): the served FP8 stream and the proven `M_int` deterministically disagree
+at ~5.5 % of positions (an integerization gap), so the residual-margin channel persists independent of
+T — the sampling-randomness channel that *would* vanish at T→0 is the one already closed by committing
+the Gumbel seed. The headline ~0.4 bits/token is therefore robust to the decoding temperature, not an
+artifact of T=1 (`CAPACITY_TEMPERATURE.md`).
+
+![Faithful covert capacity vs sampling temperature: ~flat over T∈[0.05,2.0], does not vanish at greedy](capacity_vs_T.png)
 
 ### 3.3 The treaty: buffer vs false-shutdown rate vs audit size
 
