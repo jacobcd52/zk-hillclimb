@@ -1,0 +1,24 @@
+loaded 131072 tokens, 128 prompt-blocks, extra=True, V=32000
+
+[optimum_K4] b*=0.3466 K=4: mu(C)=0.3058  p=0.01351 q=0.0271  n_viol=1771 n_tail=48
+  s: mean=0.20012 std=0.5457 max=14.966 frac_zero=0.8371 skew=8.70 exkurt=197.4
+  tau_acf=1.15 (win 6)  tau_var_inflation=7.47  sigma2=0.29774  varY=2278.6258
+  crossover N (per-tok buffer<mu): {'bernstein_emp': 16384, 'gaussian': 1024, 'subexp': 4096}
+  deep valid N=4096 1e-6: emp=683.3 subexp=699.4 gauss=453.8
+  N=    1024: buffer eps=1e-10  bern_emp=3516.4 gauss=303.7 subexp=1497.2 | per-tok subexp=1.4621 mu=0.3058
+  N=    4096: buffer eps=1e-10  bern_emp=3603.1 gauss=607.3 subexp=1114.8 | per-tok subexp=0.2722 mu=0.3058
+  N=   65536: buffer eps=1e-10  bern_emp=4866.6 gauss=2429.3 subexp=3346.7 | per-tok subexp=0.0511 mu=0.3058
+  N= 1048576: buffer eps=1e-10  bern_emp=12254.8 gauss=9717.1 subexp=n/a | per-tok subexp=n/a mu=0.3058
+
+[conservative_K16] b*=0.4654 K=16: mu(C)=0.3297  p=0.00800 q=0.0000  n_viol=1049 n_tail=0
+  s: mean=0.26248 std=0.5961 max=4.000 frac_zero=0.7963 skew=3.00 exkurt=12.0
+  tau_acf=1.20 (win 6)  tau_var_inflation=9.09  sigma2=0.35536  varY=3307.1248
+  crossover N (per-tok buffer<mu): {'bernstein_emp': 16384, 'gaussian': 2048, 'subexp': 4096}
+  deep valid N=4096 1e-6: emp=659.8 subexp=700.5 gauss=546.7
+  N=    1024: buffer eps=1e-10  bern_emp=3270.8 gauss=365.8 subexp=985.4 | per-tok subexp=0.9623 mu=0.3297
+  N=    4096: buffer eps=1e-10  bern_emp=3403.2 gauss=731.7 subexp=1103.3 | per-tok subexp=0.2694 mu=0.3297
+  N=   65536: buffer eps=1e-10  bern_emp=5125.8 gauss=2926.6 subexp=3734.7 | per-tok subexp=0.0570 mu=0.3297
+  N= 1048576: buffer eps=1e-10  bern_emp=14203.9 gauss=11706.4 subexp=n/a | per-tok subexp=n/a mu=0.3297
+
+wrote /workspace/projects/zk-hillclimb/buffer/buffer_results.json
+plots -> buffer_rt_dist_acf.png, buffer_varRN.png, buffer_vs_N.png, buffer_tail_validation.png

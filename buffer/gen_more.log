@@ -1,0 +1,46 @@
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+`torch_dtype` is deprecated! Use `dtype` instead!
+drew 120 distinct prompts, periods min=18 med=123 max=2450
+teacher: 14 linears -> FP8
+  teacher prompt 0: 0.52s
+  teacher prompt 8: 0.17s
+  teacher prompt 16: 0.16s
+  teacher prompt 24: 0.15s
+  teacher prompt 32: 0.15s
+  teacher prompt 40: 0.15s
+  teacher prompt 48: 0.15s
+  teacher prompt 56: 0.15s
+  teacher prompt 64: 0.15s
+  teacher prompt 72: 0.15s
+  teacher prompt 80: 0.15s
+  teacher prompt 88: 0.15s
+  teacher prompt 96: 0.16s
+  teacher prompt 104: 0.15s
+  teacher prompt 112: 0.15s
+[faithful] registered-weight provenance guard: OK
+  [faithful] chain prompt 0: 5.1s
+  [faithful] chain prompt 8: 5.3s
+  [faithful] chain prompt 16: 5.2s
+  [faithful] chain prompt 24: 5.2s
+  [faithful] chain prompt 32: 5.6s
+  [faithful] chain prompt 40: 5.3s
+  [faithful] chain prompt 48: 5.5s
+  [faithful] chain prompt 56: 5.4s
+  [faithful] chain prompt 64: 5.2s
+  [faithful] chain prompt 72: 5.4s
+  [faithful] chain prompt 80: 5.1s
+  [faithful] chain prompt 88: 5.1s
+  [faithful] chain prompt 96: 5.2s
+  [faithful] chain prompt 104: 5.1s
+  [faithful] chain prompt 112: 5.4s
+{
+  "nprompts": 120,
+  "n_positions": 122880,
+  "exact_agree": 0.9421223958333333,
+  "margin_mean": 0.014022127569963535,
+  "margin_max": 2.9811906814575195,
+  "max_cand_rank": 9,
+  "out": "/workspace/projects/zk-hillclimb/buffer/faithful_extra_corrected.npz"
+}
+wrote /workspace/projects/zk-hillclimb/buffer/faithful_extra_corrected.npz
