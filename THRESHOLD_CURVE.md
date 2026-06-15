@@ -13,18 +13,19 @@ actually reads off:
 > buffer(N)/N falls ≈ 1/√N and **THRESHOLD(N) relaxes down toward the scheme's benign
 > mean μ** — audit more, and you can hold a tighter line without false teardowns.
 
-**`threshold_curve.png`** — the deliverable: two panels (optimum K=4, conservative
-K=16), each overlaying **FAITHFUL** (μ≈0.31) and **CODEBOOK** (μ≈0.19), each curve
-approaching its own μ, with the rigorous (Bernstein) and validated (sub-exp tail-fit)
-variants shown.
+**`threshold_curve.png`** — the deliverable: a **single panel** at the **K=4 optimum**,
+overlaying **FAITHFUL** (μ≈0.31) and **CODEBOOK** (μ≈0.19), each curve approaching its
+own μ. Each scheme's curve is drawn **solid in the OBSERVED region** (N ≤ N_data, where
+the variance is measured directly from the real tokens) and **dashed in the
+EXTRAPOLATED region** (N > N_data, where the variance is projected by the fitted 1/N
+law), with a vertical line at the **data limit N_data = 131 072 tokens = 128 prompts**.
 
 This extends `BUFFER_FPR.md` (faithful only) to **both schemes** and to **more benign
 tokens**: **131 072 tokens / 128 distinct dolly prompt-blocks per scheme** (8 original +
-**120 newly generated here** for *each* scheme; the faithful extra pre-existed, the
-**120 codebook prompts were generated for this analysis** — `gen_more_codebook.py`,
-identical workload to the faithful extra: same 120 dolly rows, same tiling, same
-per-prompt Gumbel seed, so the FP8-served token stream is byte-identical and only the
-reference M_int differs).
+**120 newly generated**). The 120 codebook prompts were generated for this analysis
+(`gen_more_codebook.py`, identical workload to the faithful extra: same 120 dolly rows,
+same tiling, same per-prompt Gumbel seed, so the FP8-served token stream is
+byte-identical and only the reference M_int differs).
 
 > **Decoding regime (per `THREAT_MODEL_NOTES.md` §0/§1).** This is the **benign-workload
 > capacity arising from the M_int-vs-served-model gap** in the verifiable **sampled**
@@ -37,32 +38,33 @@ reference M_int differs).
 
 ## Bottom line (plain language)
 
-- **Each scheme has its own benign mean μ** (128-prompt, this larger sample):
-  - **FAITHFUL:** μ = **0.306** bits/tok (optimum K=4, b*=0.347); **0.330** (conservative K=16).
-  - **CODEBOOK:** μ = **0.191** bits/tok (optimum K=4, b*=0.220); **0.201** (conservative K=16).
+- **Each scheme has its own benign mean μ** (128-prompt sample, K=4 optimum):
+  - **FAITHFUL:** μ = **0.306** bits/tok (b*=0.347).
+  - **CODEBOOK:** μ = **0.191** bits/tok (b*=0.220).
   - Codebook's μ is **~37 % lower** than faithful's — codebook tracks the FP8 teacher
     more tightly post-Gumbel (96.3 % exact agreement vs 94.2 %), so the honest
     datacenter affords less covert capacity and the treaty can hold a lower line.
-- **The threshold relaxes toward μ as you audit more** (per-token, FPR ≤ 1e-10,
-  **validated sub-exp** estimate):
+- **The threshold relaxes toward μ as you audit more** (per-token, FPR ≤ 1e-10). The
+  numbers below are **consistent with the figure**: solid where the variance is
+  **observed** (N ≤ 131 072), dashed where it is **extrapolated** (N > 131 072):
 
-  | N (tokens) | FAITHFUL K=4 THRESHOLD | CODEBOOK K=4 THRESHOLD |
-  |---|---|---|
-  | 16 384  | 0.420 | 0.253 |
-  | 65 536  | 0.356 | 0.221 |
-  | 262 144 | 0.330 | 0.205 |
-  | →∞      | → μ = 0.306 | → μ = 0.191 |
+  | N (tokens) | FAITHFUL K=4 | CODEBOOK K=4 | region |
+  |---|---|---|---|
+  | 1e4   | 0.435 | 0.269 | observed |
+  | 1e5   | 0.347 | 0.215 | observed |
+  | 1e6   | 0.319 | 0.198 | extrapolated |
+  | 1e7   | 0.310 | 0.193 | extrapolated |
+  | 1e8   | 0.307 | 0.191 | extrapolated |
+  | →∞    | → μ = 0.306 | → μ = 0.191 | (asymptote) |
 
-- **To bring the threshold within X % of μ at FPR 1e-10** (the user's "how many tokens
-  to reach the 1e-10 number" — from the √N variance-scaling fit; tokens, rounded):
-  - **within 10 % of μ:** ≈ **1.8×10⁵ tokens** (~170 prompts) — *both* schemes
-    (1.6–1.8×10⁵ tail-fit, 1.9–2.3×10⁵ rigorous Bernstein).
-  - **within 1 % of μ:**  ≈ **1.6–1.8×10⁷ tokens** (~16 000 prompts) — *both* schemes
-    (1.2–1.5×10⁷ rigorous, 1.6–2.0×10⁷ tail-fit).
+- **To bring the threshold within X % of μ at FPR 1e-10** (from the √N variance-scaling
+  fit; tokens, rounded):
+  - **within 10 % of μ:** ≈ **1.7–1.8×10⁵ tokens** (~170 prompts) — *both* schemes.
+  - **within 1 % of μ:**  ≈ **1.6–1.8×10⁷ tokens** (~16 000 prompts) — *both* schemes.
   - It is **nearly scheme-independent** because the buffer coefficient scales with μ:
-    `c_subexp/μ ≈ 42` (faithful) ≈ `40` (codebook), and
-    `N_within(frac) = (c/(frac·μ))² ≈ ((c/μ)/frac)²`. So "within 10 %" ≈ (420)² ≈
-    1.8×10⁵ and "within 1 %" ≈ (4200)² ≈ 1.8×10⁷ for **either** scheme.
+    `c_subexp/μ ≈ 42` (faithful) ≈ `41` (codebook), and
+    `N_within(frac) = (c/(frac·μ))²`. So "within 10 %" ≈ (420)² ≈ 1.8×10⁵ and
+    "within 1 %" ≈ (4200)² ≈ 1.8×10⁷ for **either** scheme.
 - **A single-prompt audit certifies nothing at 1e-10.** Below N ≈ 4 k tokens the buffer
   dwarfs μ (THRESHOLD ≫ μ); the operational regime is many distinct prompts.
 
@@ -81,10 +83,10 @@ s_t = log2 N_b(t)   if margin_t ≤ b*           (compliant: #vocab within margi
 
 `mean_t(r_t) = C(b*,K*) = μ` exactly. The buffer is driven entirely by the stochastic
 `s_t`; the `overhead` constant contributes nothing to it. **(b*, K*)** are each scheme's
-own published optima from `capacity/topk_corrected_results_seed20260611.json` (K=4 is the
-U-shaped K-sweep floor = optimum; K=16 = conservative). Machinery imported byte-identically
+own published K=4 optimum (the U-shaped K-sweep floor) from
+`capacity/topk_corrected_results_seed20260611.json`. Machinery imported byte-identically
 from `analyze_buffer.py` / `capacity/topk_breakdown.py`; **verified to reproduce the
-published 8-prompt optima exactly** (faithful K4 0.3367, codebook K4 0.2203, K16 0.2283).
+published 8-prompt optima exactly** (faithful K4 0.3367, codebook K4 0.2203).
 
 **Why the 128-prompt μ sits below the 8-prompt headline** (faithful 0.337→0.306,
 codebook 0.220→0.191): the 120 additional prompts are, on average, slightly *easier*
@@ -94,36 +96,58 @@ deeper, not a code change. These larger-sample μ are the honest operating means
 
 ---
 
-## 2. The per-token / per-session distribution (128 prompts/scheme)
+## 2. The per-token / per-session distribution (128 prompts/scheme, K=4)
 
-| quantity | FAITHFUL K=4 | FAITHFUL K=16 | CODEBOOK K=4 | CODEBOOK K=16 |
-|---|---|---|---|---|
-| μ (bits/tok) | 0.306 | 0.330 | 0.191 | 0.201 |
-| σ²(s_t) per-token | 0.298 | 0.355 | 0.158 | 0.214 |
-| violations / 131072 | 1771 | 1049 | 991 | 709 |
-| **tail-violations** (rank ≥ K) | **48** | **0** | **12** | **0** |
-| session-sum Var(Y), L=1024 | 2279 | 3308 | 933 | 1360 |
-| max session deviation M (bits) | 227 | 210 | 93 | 108 |
+| quantity | FAITHFUL K=4 | CODEBOOK K=4 |
+|---|---|---|
+| μ (bits/tok) | 0.306 | 0.191 |
+| σ²(s_t) per-token | 0.298 | 0.158 |
+| violations / 131072 | 1771 | 991 |
+| **tail-violations** (rank ≥ K) | **48** | **12** |
+| session-sum Var(Y), L=1024 | 2279 | 933 |
+| max session deviation M (bits) | 227 | 93 |
 
-As in faithful, **K=4 carries a heavy ~15-bit discrete tail** (tail-violations priced at
-log2(V−4)≈14.97) — 48 in faithful, **12 in codebook** — while **K=16 has q=0 (no
-tail-violations, s_t bounded by 4 bits)** for both schemes: conservative in the mean,
-better-behaved in the tail. Codebook's tail is lighter than faithful's (12 vs 48 spikes,
-lower σ²) — its variance and thus its buffer are smaller in absolute bits.
+**K=4 carries a heavy ~15-bit discrete tail** (tail-violations priced at
+log2(V−4)≈14.97) — 48 in faithful, **12 in codebook**. Codebook's tail is lighter than
+faithful's (12 vs 48 spikes, lower σ²) — its variance and thus its buffer are smaller in
+absolute bits. *(A conservative K=16 variant — q=0, no tail-violations, s_t bounded by 4
+bits, μ slightly higher — is retained in `threshold_results.json`; it is dropped from
+the figure here, which shows the K=4 optimum only.)*
 
 ---
 
-## 3. Variance scaling — the √N fit that grounds the 1e-10 extrapolation
+## 3. The buffer, decomposed: observed variance × a single validated tail multiplier
+
+This is the **key methodological framing** of the new figure. The FPR-1e-10 buffer is
+written as **variance × a single tail multiplier**, so the part we can *measure* and the
+part we must *model* are cleanly separated:
+
+> **buffer_per_token(N) = z_eff · √Var(R̄_N)** ,  **THRESHOLD(N) = μ + z_eff · √Var(R̄_N)**
+
+where **R̄_N = R(N)/N** is the N-token *average* capacity and **Var(R̄_N) = Var(R(N))/N²**.
+
+### 3a. The variance Var(R̄_N) — OBSERVED, then EXTRAPOLATED (the solid/dashed split)
 
 The operative non-i.i.d. effect is **between-prompt heterogeneity**: across independent
-sessions (distinct prompts) the cumulative-budget variance is linear with an **inflated**
-slope,
+sessions (distinct prompts) the cumulative-budget variance is linear with an
+autocorrelation/heterogeneity-**inflated** slope,
 
-> **Var(R(N)) = (N/L)·Var(Y) = N · σ² · τ_var,  N_eff = N / τ_var.**
+> **Var(R(N)) = (N/L)·Var(Y),   N_eff = N/τ_var,   τ_var = Var(Y)/(L·σ²).**
 
-| | FAITHFUL K=4 | FAITHFUL K=16 | CODEBOOK K=4 | CODEBOOK K=16 |
-|---|---|---|---|---|
-| **τ_var** (= N/N_eff) | 7.47 | 9.09 | **5.76** | **6.21** |
+| | FAITHFUL K=4 | CODEBOOK K=4 |
+|---|---|---|
+| **τ_var** (= N/N_eff) | 7.47 | **5.76** |
+
+- **OBSERVED region — N ≤ N_data = 131 072 tokens (128 prompts).** Var(R̄_N) is
+  **measured directly from the real tokens**: within a prompt (N ≤ L) from the empirical
+  variance of length-N within-block window sums; across prompts from the empirical
+  between-session variance Var(Y). The directly-bootstrapped between-session cumulative
+  variance **tracks the (N/L)·Var(Y) law to ~1 %** out to all 128 sessions (measured /
+  law ratio = 0.993 for *both* schemes — see the run printout), so the line is anchored
+  in data across the whole solid segment.
+- **EXTRAPOLATED region — N > N_data.** The **same** law Var(R(N)) = (N/L)·Var(Y) is
+  continued to **more sessions than were measured**, using the established
+  autocorrelation-corrected slope Var(Y)/L = σ²·τ_var. This is the dashed segment.
 
 **Codebook's heterogeneity is milder** (τ_var ≈ 5.8 vs faithful 7.5) — its per-prompt
 difficulty varies less, so its effective sample size is larger per token. (τ_var is
@@ -132,51 +156,25 @@ tokens — and is therefore a *conservative* upper bound on what non-repeated na
 traffic would show within a session; the genuine, persistent component is
 conversation-to-conversation difficulty variation. See `BUFFER_FPR.md` §3/§6.3.)
 
-**The √N law (the "how many tokens to reach 1e-10" fit).** With the independent-session
-variance model, the **per-token buffer falls as c/√N**. The **asymptotic** coefficient
-**c (bits·√tok)** is closed-form for Gaussian (`c = z·√(Var(Y)/L)`, z=6.36) and Bernstein
-(`c = √(2·ln(1/ε)·Var(Y)/L)`); for the validated sub-exp model we fit c from the buffer
-curve (N ≥ 16 384, no a-term so the fit is clean):
+### 3b. The tail multiplier z_eff — the single validated sub-exp model (ALWAYS a model)
 
-| model | FAITHFUL K=4 | CODEBOOK K=4 | FAITHFUL K=16 | CODEBOOK K=16 |
-|---|---|---|---|---|
-| Bernstein asymptotic c | 10.1 | 6.5 | 12.2 | 7.8 |
-| **sub-exp (validated) c** | **12.9** | **7.7** | **14.9** | **9.5** |
-| Gaussian (unsafe) c | 9.5 | 6.1 | 11.4 | 7.3 |
+Converting a variance into an FPR-1e-10 buffer needs a tail shape. We use **one**
+multiplier — the **bootstrap-validated sub-exponential tail** — in **both** regions:
 
-Asymptotically **Gaussian < Bernstein < sub-exp** — the validated heavy tail is heavier
-than even the rigorous Bernstein √N term. **But Bernstein also carries a constant-in-N
-term** `a = ln(1/ε)·M/3` (≈1742 bits faithful K=4, ≈714 codebook K=4) that **dominates at
-moderate N** and makes Bernstein the most conservative there; the exact numeric inversion
-in §5 keeps it. Inverting `c/√N = frac·μ` gives **N_within(frac) = (c/(frac·μ))²**. The
-ratio **c_subexp/μ ≈ 42 (faithful) ≈ 40 (codebook)** is what makes the token budget to
-reach within a *relative* fraction of μ nearly scheme-independent.
+> **z_eff = c_sub / √(Var(Y)/L)** , with **c_sub** the sub-exp √N coefficient (bits·√tok).
 
----
+| | FAITHFUL K=4 | CODEBOOK K=4 |
+|---|---|---|
+| **z_eff (sub-exp, validated)** | **8.65** | **8.21** |
+| z (Gaussian, known-unsafe floor) | 6.36 | 6.36 |
+| c_sub (bits·√tok) | 12.9 | 7.8 |
 
-## 4. buffer(N) for FPR ≤ 1e-10 — rigorous vs validated tail-fit (kept honest)
+The validated heavy tail gives **z_eff ≈ 8.2–8.7**, well above the Gaussian z=6.36 — the
+honest tail is heavier than Gaussian. With this, **buffer_per_token = z_eff·√Var(R̄_N) =
+c_sub/√N** exactly, reproducing the validated √N curve.
 
-Identical methodology to `BUFFER_FPR.md` §5; with only ~131 k real tokens we **cannot
-observe 1e-10 events directly**, so we quote a bracket:
-
-- **(a) Rigorous Bernstein** on B = N/L **independent sessions**, empirical session
-  variance Var(Y) and **empirical-support** deviation bound M (observed max — the data
-  never exceeds it):
-  `buffer = (ln(1/ε)·M/3) + √[(ln(1/ε)·M/3)² + 2·ln(1/ε)·B·Var(Y)]`, ε=1e-10.
-  Rigorous **given** session independence (true for distinct prompts) and `|Y−μ_Y| ≤ M`.
-  The fully a-priori M (a pathological honest session of 1024 tail-violations) is vacuous
-  — which is exactly why **the protocol's safety depends on auditing enough independent
-  prompts that no single session dominates the budget.**
-- **(b) Validated sub-exponential tail-fit**: fit `ln S(t) ≈ c − t/λ` to the
-  block-bootstrap survival curve in the **observable** window [1e-5, 1e-2], extrapolate
-  to S = ε. In `BUFFER_FPR.md` this fit was **validated against a 4×10⁷-resample
-  bootstrap to 1e-6** (tracks empirical to a few %, slightly conservative; the Gaussian
-  underestimates by ~30 % and is a **known-unsafe** lower bound). We carry that
-  validation here.
-
-**Validation at observable FPRs (this analysis, both schemes).** Deep block-bootstrap
-(4×10⁷ resamples) at N=4096, buffer in bits, sub-exp/Gaussian vs empirical at the FPR
-the bootstrap can see:
+**Validation at observable FPRs (both schemes).** Deep block-bootstrap (4×10⁷ resamples)
+at N=4096, sub-exp vs empirical at the FPR the bootstrap can see:
 
 | scheme (K=4) | ε | empirical | sub-exp | Gaussian |
 |---|---|---|---|---|
@@ -186,67 +184,77 @@ the bootstrap can see:
 For **both** schemes the **sub-exp fit is slightly conservative** (tracks the empirical
 honest tail to within +3…+9 %) while the **Gaussian underestimates** (a known-unsafe
 floor). Codebook's Gaussian error is milder (−9 % vs faithful's −34 %) because codebook's
-tail is **lighter** (12 vs 48 tail-violations) — closer to Gaussian, so the sub-exp fit is
-if anything *more* reliable for codebook.
+tail is **lighter** (12 vs 48 tail-violations) — closer to Gaussian, so the sub-exp fit
+is if anything *more* reliable for codebook. This is the fit that, in `BUFFER_FPR.md`,
+was validated against a 4×10⁷-resample bootstrap to 1e-6; we carry that validation here.
 
-**The trustworthy estimate is the sub-exp fit; Bernstein is the rigorous upper bound;
-Gaussian is a known-unsafe floor.** The two honest curves (Bernstein, sub-exp) are both
-plotted; the gap between them (≈1.1–1.3× at N ≥ 65 k) is the price of rigor over
-trusting the validated tail model.
+### 3c. Honesty: "observed" means the VARIANCE, not the 1e-10 event
+
+**1e-10 is never directly observed** — seeing it would need ~10¹⁰ honest samples; we
+have ~10⁵. What *is* observed is the **variance** Var(R̄_N), out to N_data. The 1e-10
+buffer multiplier z_eff is **always** the validated sub-exp tail model, in the solid
+region as much as the dashed one. So the solid/dashed split is purely *"was the variance
+measured directly (solid) or projected by the law (dashed)"* — it is **not** a claim
+that 1e-10-rare events were observed anywhere on the curve.
 
 ---
 
-## 5. THRESHOLD(N) and the N-to-reach-μ numbers
+## 4. Bernstein — the rigorous conservative cross-check (text only, not plotted)
 
-**THRESHOLD(N) = μ + buffer(N)/N (bits/token), FPR ≤ 1e-10** — `threshold_curve.png`:
+The earlier two-line figure overlaid a **rigorous Bernstein** buffer alongside the
+sub-exp fit; the second line was found confusing, so it is **moved here as a text
+cross-check** and **dropped from the plot**. Bernstein on B = N/L **independent
+sessions**, with empirical session variance Var(Y) and the **empirical-support**
+deviation bound M (observed max session deviation):
 
-**FAITHFUL** (optimum K=4, μ=0.306):
+> `buffer = a + √[a² + 2·ln(1/ε)·(N/L)·Var(Y)]` ,  `a = ln(1/ε)·M/3` ,  ε = 1e-10.
 
-| N | THRESHOLD sub-exp | THRESHOLD Bernstein |
-|---|---|---|
-| 16 384  | 0.420 | 0.545 |
-| 65 536  | 0.356 | 0.380 |
-| 262 144 | 0.330 | 0.333 |
-| 1 048 576 | — † | 0.318 |
-| 16 777 216 | — † | 0.308 |
+It is rigorous **given** session independence (true for distinct prompts) and
+`|Y−μ_Y| ≤ M`. The constant-in-N `a`-term (≈1743 bits faithful, ≈714 codebook)
+**dominates at moderate N** and makes Bernstein the most conservative there; its
+asymptotic √N coefficient (10.1 faithful, 6.5 codebook) is *below* the validated sub-exp
+coefficient (12.9 / 7.8), so the validated tail is heavier asymptotically. THRESHOLD(N)
+under each model:
 
-**CODEBOOK** (optimum K=4, μ=0.191):
+| N | FAITHFUL sub-exp (plotted) | FAITHFUL Bernstein (rigorous) | CODEBOOK sub-exp (plotted) | CODEBOOK Bernstein (rigorous) |
+|---|---|---|---|---|
+| 1e4 | 0.435 | 0.682 | 0.269 | 0.358 |
+| 1e5 | 0.347 | 0.360 | 0.215 | 0.220 |
+| 1e6 | 0.319 | 0.318 | 0.198 | 0.198 |
+| 1e7 | 0.310 | 0.309 | 0.193 | 0.193 |
+| 1e8 | 0.307 | 0.307 | 0.191 | 0.191 |
 
-| N | THRESHOLD sub-exp | THRESHOLD Bernstein |
-|---|---|---|
-| 16 384  | 0.253 | 0.301 |
-| 65 536  | 0.221 | 0.229 |
-| 262 144 | 0.205 | 0.206 |
-| 1 048 576 | — † | 0.198 |
-| 16 777 216 | — † | 0.192 |
+The two honest models **bracket** the truth: Bernstein is the conservative ceiling at
+moderate N (its `a`-term), the validated sub-exp is the trustworthy operating estimate
+and the heavier asymptotic tail. The plotted curve is the **sub-exp** line; the Gaussian
+(z=6.36) would sit below both and is a **known-unsafe floor**, not shown.
 
-† sub-exp not fit beyond N = 262 144 (bootstrap cost; m > 256 sessions); the
-Bernstein/Gaussian envelope brackets it. Conservative-K=16 curves (faithful μ=0.330,
-codebook μ=0.201) are in `threshold_results.json` and the right panel of the PNG — same
-shape, buffers ~5–15 % larger.
+---
 
-**N needed to bring the threshold within X % of μ at FPR 1e-10** (tokens; from the §3
-√N fit, `N=(c/(frac·μ))²`):
+## 5. N to bring the threshold within X % of μ at FPR 1e-10
+
+From the §3 √N law, `N_within(frac) = (c/(frac·μ))²`:
 
 | target | model | FAITHFUL K=4 | CODEBOOK K=4 |
 |---|---|---|---|
-| **within 10 % of μ** | sub-exp (validated) | 1.78×10⁵ | 1.63×10⁵ |
+| **within 10 % of μ** | sub-exp (validated) | 1.78×10⁵ | 1.69×10⁵ |
 | | Bernstein (rigorous) | 2.25×10⁵ | 1.91×10⁵ |
-| **within 1 % of μ** | sub-exp (validated) | 1.78×10⁷ | 1.63×10⁷ |
+| **within 1 % of μ** | sub-exp (validated) | 1.78×10⁷ | 1.69×10⁷ |
 | | Bernstein (rigorous) | 1.22×10⁷ | 1.24×10⁷ |
 
 (At **within-10 %** (N ~ 2×10⁵) Bernstein needs *more* tokens than sub-exp because its
 constant-in-N `a`-term is still active. At **within-1 %** (N ~ 1.5×10⁷) the `a`-term has
-washed out and Bernstein's asymptotic √N coefficient (10.1) is *below* sub-exp's (12.9),
-so Bernstein needs *fewer* — the validated sub-exp tail is heavier asymptotically. Take
-the **larger** of the two as the safe answer at each target.)
+washed out and Bernstein's asymptotic √N coefficient is *below* sub-exp's, so Bernstein
+needs *fewer* — the validated sub-exp tail is heavier asymptotically. Take the **larger**
+of the two as the safe answer at each target.)
 
 **Reading:** to hold an honest-FPR-1e-10 treaty line that sits within **10 % above the
 benign mean**, audit **~1.8×10⁵ tokens ≈ 170 distinct prompts/conversations**; to hold
 it within **1 %**, audit **~1.8×10⁷ tokens ≈ 16 k prompts** — **for either scheme**, since
-the budget scales with μ. At the **131 k tokens / 128 prompts we actually have**, the
-threshold is already within **~8 % (codebook) / ~16 % (faithful)** of μ on the validated
-fit at N=65 k, and converging.
+the budget scales with μ. At the **131 k tokens / 128 prompts we actually have** (the end
+of the solid region), the threshold is already within **~11 % (codebook) / ~12 %
+(faithful)** of μ — and everything to the right of N_data on the plot is the dashed
+extrapolation of the validated √N law, not new measurement.
 
 ---
 
@@ -258,6 +266,10 @@ fit at N=65 k, and converging.
   would tear up honest datacenters. As the audit accumulates tokens, that margin shrinks
   like 1/√N and the line **descends toward μ**: with enough evidence, a datacenter
   running even slightly above its honest mean is distinguishable at 1e-10.
+- **Solid = measured variance, dashed = extrapolated variance.** The solid part of each
+  curve (up to 131 072 tokens) rests on a directly-measured variance; the dashed part
+  projects the same √N law to longer audits than we have data for. The 1e-10 tail
+  multiplier is the validated sub-exp model throughout — we never *observe* a 1e-10 event.
 - **Codebook runs a lower, tighter line than faithful.** Because codebook matches the
   served FP8 model more closely, its honest mean (μ≈0.19) and its variance are both lower
   — its whole threshold curve sits **below** faithful's (μ≈0.31). A covert channel has
@@ -271,7 +283,7 @@ fit at N=65 k, and converging.
   an adversary holding the exact model *could* embed while perfectly mimicking the honest
   margin/rank profile — realized leak is far smaller (Rinberg: < 0.5 %). This curve
   protects an **honest** datacenter from false teardown; it does not by itself bound a
-  real adversary's throughput. And Bernstein rigor rests on **session independence + the
+  real adversary's throughput. And the rigor rests on **session independence + the
   empirical support bound M** — i.e. on auditing enough distinct prompts that no single
   honest session dominates the budget.
 
@@ -287,18 +299,25 @@ cd /workspace/projects/zk-hillclimb/buffer
 IMA_TEACHER_KERNEL=fp8_scaled_mm /root/int-model-env/bin/python gen_more_codebook.py \
     --nprompts 120 --rowseed 20260612 --gseed-base 30000000 \
     --out codebook_extra_corrected.npz
-# 3. both-scheme threshold curve + N-to-within-μ + plot + threshold_results.json
+# 3. both-scheme buffer/variance/tail machinery + threshold_results.json (all models,
+#    incl. K=16 + Bernstein cross-check):
 /root/int-model-env/bin/python analyze_threshold.py
+# 4. the single-panel observed/extrapolated K=4 figure (this deliverable):
+/root/int-model-env/bin/python plot_threshold_observed.py
 ```
 
 Inputs per scheme: `../capacity/capacity_dump_corrected_<scheme>_seed20260611.npz`
 (8 prompts) + `<scheme>_extra_corrected.npz` (120 prompts, rows disjoint from the
-original 8, identical 248-pt bgrid). Outputs: `threshold_results.json` (all numbers) and
-`../threshold_curve.png`. Buffer/variance/tail machinery imported byte-identically from
-`analyze_buffer.py`; only the threshold framing, the √N coefficient fit, and the
-N-to-within-μ inversion are added. `int-model-approximation` used **read-only**; nothing
-committed or pushed.
+original 8, identical 248-pt bgrid). Outputs: `threshold_results.json` (all numbers,
+both schemes, K=4 + K=16, sub-exp + Bernstein + Gaussian), `threshold_observed_table.json`
+(the K=4 decade table + z_eff + observed/law variance ratios for the figure), and
+`../threshold_curve.png` (the single-panel observed/extrapolated figure). Buffer/variance/
+tail machinery imported byte-identically from `analyze_buffer.py`; the figure's only
+reframing is the variance × single-tail-multiplier decomposition and the
+observed-vs-extrapolated split at N_data. `int-model-approximation` used **read-only**;
+nothing committed or pushed.
 
 **Tokens generated for this deliverable:** 120 new codebook prompt-blocks =
 **122 880 tokens** (the 120 faithful prompts pre-existed). Total analyzed:
-**262 144 tokens = 256 prompt-blocks** across both schemes (131 072 / 128 each).
+**262 144 tokens = 256 prompt-blocks** across both schemes (131 072 / 128 each). The plot
+rework is a **plotting + buffer-methodology change only — no re-measurement.**

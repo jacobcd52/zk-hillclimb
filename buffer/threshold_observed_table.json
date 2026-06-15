@@ -1,0 +1,77 @@
+{
+  "eps": 1e-10,
+  "table": {
+    "faithful": {
+      "1e+04": {
+        "threshold": 0.43492218098901997,
+        "region": "observed"
+      },
+      "1e+05": {
+        "threshold": 0.34665300370647073,
+        "region": "observed"
+      },
+      "1e+06": {
+        "threshold": 0.31873983896626595,
+        "region": "extrapolated"
+      },
+      "1e+07": {
+        "threshold": 0.309912921238011,
+        "region": "extrapolated"
+      },
+      "1e+08": {
+        "threshold": 0.3071216047639906,
+        "region": "extrapolated"
+      }
+    },
+    "codebook": {
+      "1e+04": {
+        "threshold": 0.26903211136387,
+        "region": "observed"
+      },
+      "1e+05": {
+        "threshold": 0.21543203093365093,
+        "region": "observed"
+      },
+      "1e+06": {
+        "threshold": 0.1984821972408799,
+        "region": "extrapolated"
+      },
+      "1e+07": {
+        "threshold": 0.193122189197858,
+        "region": "extrapolated"
+      },
+      "1e+08": {
+        "threshold": 0.1914272058285809,
+        "region": "extrapolated"
+      }
+    }
+  },
+  "z_eff_subexp": {
+    "faithful": 8.653404022779506,
+    "codebook": 8.214416718920074
+  },
+  "z_gaussian": {
+    "faithful": 6.361340902404057,
+    "codebook": 6.361340902404057
+  },
+  "N_data_tokens": {
+    "faithful": 131072,
+    "codebook": 131072
+  },
+  "mu": {
+    "faithful": 0.3058306898526266,
+    "codebook": 0.190643317893881
+  },
+  "varY_session": {
+    "faithful": 2278.8788041609146,
+    "codebook": 932.5120549552568
+  },
+  "c_sub": {
+    "faithful": 12.909149113639334,
+    "codebook": 7.8388793469989
+  },
+  "obs_var_over_law_ratio": {
+    "faithful": 0.9926758990110602,
+    "codebook": 0.9933037785147847
+  }
+}
