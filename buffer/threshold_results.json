@@ -1,0 +1,781 @@
+{
+  "eps": 1e-10,
+  "schemes": {
+    "faithful": {
+      "n_tokens": 131072,
+      "n_blocks": 128,
+      "configs": {
+        "optimum": {
+          "b_star": 0.3466331658291457,
+          "K": 4,
+          "mu": 0.3058306898526266,
+          "p": 0.01351165771484375,
+          "q": 0.02710333145115754,
+          "overhead": 0.10569097196954869,
+          "sigma2": 0.2977623799550907,
+          "varY_session": 2278.8788041609146,
+          "tau_var": 7.473971636457379,
+          "N_eff_factor": 7.473971636457379,
+          "M_emp_session_dev": 227.13728844582835,
+          "n_sessions": 128,
+          "n_viol": 1771,
+          "n_tail": 48,
+          "s_max_observed": 14.965603936509982,
+          "sqrt_law_coeff_bits_sqrt_tok": {
+            "bernstein_asymptotic": 10.123565063443307,
+            "subexp": 12.909149113639334,
+            "gaussian": 9.489849087787059,
+            "subexp_rel_spread": 0.06196537861111079,
+            "bernstein_a_term_const_bits": 1743.3431147948434
+          },
+          "buffer_curve": {
+            "1024": {
+              "bernstein": 3516.529924797277,
+              "gaussian": 303.6751708091859,
+              "subexp": 1497.254089579451,
+              "threshold_bernstein": 3.7399419445374678,
+              "threshold_gaussian": 0.6023884738459722,
+              "threshold_subexp": 1.7679928867075592,
+              "per_token_bernstein": 3.434111254684841,
+              "per_token_gaussian": 0.2965577839933456
+            },
+            "2048": {
+              "bernstein": 3545.8795805648506,
+              "gaussian": 429.46154511431683,
+              "subexp": 846.0332004189531,
+              "threshold_bernstein": 2.0372172038003074,
+              "threshold_gaussian": 0.5155287099279766,
+              "threshold_subexp": 0.7189328384946936,
+              "per_token_bernstein": 1.731386513947681,
+              "per_token_gaussian": 0.20969802007535002
+            },
+            "4096": {
+              "bernstein": 3603.189937777496,
+              "gaussian": 607.3503416183718,
+              "subexp": 1141.1278296695502,
+              "threshold_bernstein": 1.1855157332553357,
+              "threshold_gaussian": 0.4541095818492994,
+              "threshold_subexp": 0.5844263513930441,
+              "per_token_bernstein": 0.879685043402709,
+              "per_token_gaussian": 0.1482788919966728
+            },
+            "8192": {
+              "bernstein": 3712.813905137962,
+              "gaussian": 858.9230902286337,
+              "subexp": 1448.2994888355229,
+              "threshold_bernstein": 0.759055043507163,
+              "threshold_gaussian": 0.4106796998903016,
+              "threshold_subexp": 0.48262506104836916,
+              "per_token_bernstein": 0.4532243536545364,
+              "per_token_gaussian": 0.10484901003767501
+            },
+            "16384": {
+              "bernstein": 3915.5275388543923,
+              "gaussian": 1214.7006832367435,
+              "subexp": 1862.6300909864033,
+              "threshold_bernstein": 0.5448155249877824,
+              "threshold_gaussian": 0.379970135850963,
+              "threshold_subexp": 0.41951660849193345,
+              "per_token_bernstein": 0.23898483513515578,
+              "per_token_gaussian": 0.0741394459983364
+            },
+            "32768": {
+              "bernstein": 4272.676056175088,
+              "gaussian": 1717.8461804572673,
+              "subexp": 2466.4228536006485,
+              "threshold_bernstein": 0.4362224151997668,
+              "threshold_gaussian": 0.3582551948714641,
+              "threshold_subexp": 0.38109994197666985,
+              "per_token_bernstein": 0.13039172534714014,
+              "per_token_gaussian": 0.052424505018837504
+            },
+            "65536": {
+              "bernstein": 4866.771526140282,
+              "gaussian": 2429.401366473487,
+              "subexp": 3304.7421730916694,
+              "threshold_bernstein": 0.3800917299853824,
+              "threshold_gaussian": 0.34290041285179484,
+              "threshold_subexp": 0.35625705357778026,
+              "per_token_bernstein": 0.07426104013275577,
+              "per_token_gaussian": 0.0370697229991682
+            },
+            "131072": {
+              "bernstein": 5801.959241715101,
+              "gaussian": 3435.6923609145347,
+              "subexp": 4581.279211334509,
+              "threshold_bernstein": 0.3500961259619032,
+              "threshold_gaussian": 0.3320429423620454,
+              "threshold_subexp": 0.3407830764137114,
+              "per_token_bernstein": 0.044265436109276586,
+              "per_token_gaussian": 0.026212252509418752
+            },
+            "262144": {
+              "bernstein": 7211.933839606108,
+              "gaussian": 4858.802732946974,
+              "subexp": 6259.068948525658,
+              "threshold_bernstein": 0.33334203415044045,
+              "threshold_gaussian": 0.32436555135221073,
+              "threshold_subexp": 0.3297071430559258,
+              "per_token_bernstein": 0.02751134429781383,
+              "per_token_gaussian": 0.0185348614995841
+            },
+            "524288": {
+              "bernstein": 9278.044423744059,
+              "gaussian": 6871.384721829069,
+              "subexp": null,
+              "threshold_bernstein": 0.3235271551994285,
+              "threshold_gaussian": 0.318936816107336,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.01769646534680187,
+              "per_token_gaussian": 0.013106126254709376
+            },
+            "1048576": {
+              "bernstein": 12255.44102217087,
+              "gaussian": 9717.605465893948,
+              "subexp": null,
+              "threshold_bernstein": 0.31751838919170255,
+              "threshold_gaussian": 0.31509812060241865,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.011687699339075918,
+              "per_token_gaussian": 0.00926743074979205
+            },
+            "4194304": {
+              "bernstein": 22549.569923356987,
+              "gaussian": 19435.210931787897,
+              "subexp": null,
+              "threshold_bernstein": 0.3112069262731047,
+              "threshold_gaussian": 0.31046440522752267,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.005376236420478102,
+              "per_token_gaussian": 0.004633715374896025
+            },
+            "16777216": {
+              "bernstein": 43246.09676307235,
+              "gaussian": 38870.42186357579,
+              "subexp": null,
+              "threshold_bernstein": 0.30840835808811173,
+              "threshold_gaussian": 0.3081475475400746,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.002577668235485098,
+              "per_token_gaussian": 0.0023168576874480124
+            }
+          },
+          "tail_validation_N4096": {
+            "1e-04": {
+              "empirical": 493.92988555716465,
+              "subexp": 485.76393042595504,
+              "gaussian": 355.0738700502981,
+              "subexp_rel_err": -0.01653262005395406,
+              "gaussian_rel_err": -0.2811249522798841
+            },
+            "1e-05": {
+              "empirical": 582.2953356963724,
+              "subexp": 593.8883049818888,
+              "gaussian": 407.1913328328569,
+              "subexp_rel_err": 0.01990908835230898,
+              "gaussian_rel_err": -0.30071338739834996
+            },
+            "1e-06": {
+              "empirical": 682.9653851353266,
+              "subexp": 702.0126795378225,
+              "gaussian": 453.8341714605513,
+              "subexp_rel_err": 0.027889106559509935,
+              "gaussian_rel_err": -0.3354946219263718
+            }
+          },
+          "N_to_within": {
+            "within10pct": {
+              "bernstein": 225068.0,
+              "gaussian": 96284.52307070239,
+              "subexp": 178169.39530748752
+            },
+            "within1pct": {
+              "bernstein": 12196805.0,
+              "gaussian": 9628452.30707024,
+              "subexp": 17816939.53074875
+            }
+          }
+        },
+        "conservative": {
+          "b_star": 0.46542713567839195,
+          "K": 16,
+          "mu": 0.32973738961802135,
+          "p": 0.00800323486328125,
+          "q": 0.0,
+          "overhead": 0.0672440396815665,
+          "sigma2": 0.35537315744360604,
+          "varY_session": 3307.4924251375055,
+          "tau_var": 9.088961852544836,
+          "N_eff_factor": 9.088961852544836,
+          "M_emp_session_dev": 210.05510591764823,
+          "n_sessions": 128,
+          "n_viol": 1049,
+          "n_tail": 0,
+          "s_max_observed": 4.0,
+          "sqrt_law_coeff_bits_sqrt_tok": {
+            "bernstein_asymptotic": 12.196136966295178,
+            "subexp": 14.837665856871594,
+            "gaussian": 11.43268191973827,
+            "subexp_rel_spread": 0.03095412279204668,
+            "bernstein_a_term_const_bits": 1612.2325186442074
+          },
+          "buffer_curve": {
+            "1024": {
+              "bernstein": 3271.030079903595,
+              "gaussian": 365.84582143162464,
+              "subexp": 985.5817238187327,
+              "threshold_bernstein": 3.5241027020238755,
+              "threshold_gaussian": 0.6870086996098423,
+              "threshold_subexp": 1.2922195417847524,
+              "per_token_bernstein": 3.1943653124058544,
+              "per_token_gaussian": 0.35727130999182094
+            },
+            "2048": {
+              "bernstein": 3316.3231865097227,
+              "gaussian": 517.3841224061291,
+              "subexp": 820.7004104306195,
+              "threshold_bernstein": 1.949035820530972,
+              "threshold_gaussian": 0.5823663556366391,
+              "threshold_subexp": 0.7304700118985973,
+              "per_token_bernstein": 1.6192984309129506,
+              "per_token_gaussian": 0.25262896601861773
+            },
+            "4096": {
+              "bernstein": 3403.476866699166,
+              "gaussian": 731.6916428632493,
+              "subexp": 1095.2208671786423,
+              "threshold_bernstein": 1.1606643590269974,
+              "threshold_gaussian": 0.5083730446139318,
+              "threshold_subexp": 0.597125296644057,
+              "per_token_bernstein": 0.830926969408976,
+              "per_token_gaussian": 0.17863565499591047
+            },
+            "8192": {
+              "bernstein": 3566.156502504332,
+              "gaussian": 1034.7682448122582,
+              "subexp": 1515.357947481741,
+              "threshold_bernstein": 0.7650592283026322,
+              "threshold_gaussian": 0.4560518726273302,
+              "threshold_subexp": 0.514717607816476,
+              "per_token_bernstein": 0.43532183868461083,
+              "per_token_gaussian": 0.12631448300930886
+            },
+            "16384": {
+              "bernstein": 3856.4125861151297,
+              "gaussian": 1463.3832857264986,
+              "subexp": 1992.0587011469984,
+              "threshold_bernstein": 0.5651141343760249,
+              "threshold_gaussian": 0.4190552171159766,
+              "threshold_subexp": 0.4513230037017004,
+              "per_token_bernstein": 0.23537674475800352,
+              "per_token_gaussian": 0.08931782749795524
+            },
+            "32768": {
+              "bernstein": 4345.9835417430095,
+              "gaussian": 2069.5364896245164,
+              "subexp": 2722.516833230634,
+              "threshold_bernstein": 0.46236628188312784,
+              "threshold_gaussian": 0.39289463112267575,
+              "threshold_subexp": 0.41282200977276484,
+              "per_token_bernstein": 0.1326288922651065,
+              "per_token_gaussian": 0.06315724150465443
+            },
+            "65536": {
+              "bernstein": 5126.132861342282,
+              "gaussian": 2926.766571452997,
+              "subexp": 3798.442459359128,
+              "threshold_bernstein": 0.4079559696555928,
+              "threshold_gaussian": 0.374396303366999,
+              "threshold_subexp": 0.387697021871426,
+              "per_token_bernstein": 0.07821858003757144,
+              "per_token_gaussian": 0.04465891374897762
+            },
+            "131072": {
+              "bernstein": 6312.83860112479,
+              "gaussian": 4139.072979249033,
+              "subexp": 5181.5561130122815,
+              "threshold_bernstein": 0.37790052591810674,
+              "threshold_gaussian": 0.36131601037034855,
+              "threshold_subexp": 0.36926952549000225,
+              "per_token_bernstein": 0.048163136300085375,
+              "per_token_gaussian": 0.031578620752327216
+            },
+            "262144": {
+              "bernstein": 8061.426374556204,
+              "gaussian": 5853.533142905994,
+              "subexp": 7361.899300266662,
+              "threshold_bernstein": 0.36048929076607816,
+              "threshold_gaussian": 0.35206684649251013,
+              "threshold_subexp": 0.3578208067485552,
+              "per_token_bernstein": 0.030751901148056808,
+              "per_token_gaussian": 0.02232945687448881
+            },
+            "524288": {
+              "bernstein": 10589.142292508053,
+              "gaussian": 8278.145958498066,
+              "subexp": null,
+              "threshold_bernstein": 0.3499345756922936,
+              "threshold_gaussian": 0.34552669999418495,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.020197186074272257,
+              "per_token_gaussian": 0.015789310376163608
+            },
+            "1048576": {
+              "bernstein": 14204.711404154028,
+              "gaussian": 11707.066285811989,
+              "subexp": null,
+              "threshold_bernstein": 0.343284058056126,
+              "threshold_gaussian": 0.34090211805526577,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.013546668438104656,
+              "per_token_gaussian": 0.011164728437244404
+            },
+            "4194304": {
+              "bernstein": 26641.899253251784,
+              "gaussian": 23414.132571623977,
+              "subexp": null,
+              "threshold_bernstein": 0.3360893133825486,
+              "threshold_gaussian": 0.33531975383664353,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.006351923764527269,
+              "per_token_gaussian": 0.005582364218622202
+            },
+            "16777216": {
+              "bernstein": 51593.61891697817,
+              "gaussian": 46828.265143247954,
+              "subexp": null,
+              "threshold_bernstein": 0.3328126089462447,
+              "threshold_gaussian": 0.33252857172733247,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.003075219328223358,
+              "per_token_gaussian": 0.002791182109311101
+            }
+          },
+          "tail_validation_N4096": {
+            "1e-04": {
+              "empirical": 497.71838094005784,
+              "subexp": 498.4720973468907,
+              "gaussian": 427.7672465329122,
+              "subexp_rel_err": 0.0015143431219262204,
+              "gaussian_rel_err": -0.14054360273981947
+            },
+            "1e-05": {
+              "empirical": 582.9391031258225,
+              "subexp": 600.5715446090276,
+              "gaussian": 490.55458581985727,
+              "subexp_rel_err": 0.030247484494789978,
+              "gaussian_rel_err": -0.158480563082118
+            },
+            "1e-06": {
+              "empirical": 666.5395917013238,
+              "subexp": 702.6709918711645,
+              "gaussian": 546.7464949778628,
+              "subexp_rel_err": 0.05420743286624008,
+              "gaussian_rel_err": -0.17972390269825156
+            }
+          },
+          "N_to_within": {
+            "within10pct": {
+              "bernstein": 234625.0,
+              "gaussian": 120215.32930190035,
+              "subexp": 202485.89786102175
+            },
+            "within1pct": {
+              "bernstein": 14809299.0,
+              "gaussian": 12021532.930190034,
+              "subexp": 20248589.786102172
+            }
+          }
+        }
+      }
+    },
+    "codebook": {
+      "n_tokens": 131072,
+      "n_blocks": 128,
+      "configs": {
+        "optimum": {
+          "b_star": 0.21954773869346733,
+          "K": 4,
+          "mu": 0.190643317893881,
+          "p": 0.00756072998046875,
+          "q": 0.012108980827447022,
+          "overhead": 0.06486317558394146,
+          "sigma2": 0.15799049521023834,
+          "varY_session": 932.5120549552568,
+          "tau_var": 5.7639942355736675,
+          "N_eff_factor": 5.7639942355736675,
+          "M_emp_session_dev": 92.97248925194728,
+          "n_sessions": 128,
+          "n_viol": 991,
+          "n_tail": 12,
+          "s_max_observed": 14.965603936509982,
+          "sqrt_law_coeff_bits_sqrt_tok": {
+            "bernstein_asymptotic": 6.475899365594331,
+            "subexp": 7.8388793469989,
+            "gaussian": 6.070520345555371,
+            "subexp_rel_spread": 0.02034061900942182,
+            "bernstein_a_term_const_bits": 713.5902260336098
+          },
+          "buffer_curve": {
+            "1024": {
+              "bernstein": 1456.6614055488988,
+              "gaussian": 194.25665105777188,
+              "subexp": 212.5500398929338,
+              "threshold_bernstein": 1.6131642217502273,
+              "threshold_gaussian": 0.38034707869248635,
+              "threshold_subexp": 0.39821171622682416,
+              "per_token_bernstein": 1.4225209038563464,
+              "per_token_gaussian": 0.18970376079860535
+            },
+            "2048": {
+              "bernstein": 1485.0165316272078,
+              "gaussian": 274.7203905070788,
+              "subexp": 357.81087446088156,
+              "threshold_bernstein": 0.9157490462274785,
+              "threshold_gaussian": 0.32478413357116553,
+              "threshold_subexp": 0.36535565893923333,
+              "per_token_bernstein": 0.7251057283335975,
+              "per_token_gaussian": 0.13414081567728456
+            },
+            "4096": {
+              "bernstein": 1538.809032916291,
+              "gaussian": 388.51330211554375,
+              "subexp": 545.6825961132006,
+              "threshold_bernstein": 0.5663291169457099,
+              "threshold_gaussian": 0.2854951982931837,
+              "threshold_subexp": 0.32386660796058037,
+              "per_token_bernstein": 0.37568579905182886,
+              "per_token_gaussian": 0.09485188039930267
+            },
+            "8192": {
+              "bernstein": 1637.040900284841,
+              "gaussian": 549.4407810141576,
+              "subexp": 734.8031191604853,
+              "threshold_bernstein": 0.3904774121669329,
+              "threshold_gaussian": 0.25771372573252327,
+              "threshold_subexp": 0.28034096427577615,
+              "per_token_bernstein": 0.19983409427305188,
+              "per_token_gaussian": 0.06707040783864228
+            },
+            "16384": {
+              "bernstein": 1807.350384779305,
+              "gaussian": 777.0266042310875,
+              "subexp": 1033.5723849361682,
+              "threshold_bernstein": 0.30095523102738353,
+              "threshold_gaussian": 0.23806925809353235,
+              "threshold_subexp": 0.2537275699041452,
+              "per_token_bernstein": 0.1103119131335025,
+              "per_token_gaussian": 0.04742594019965134
+            },
+            "32768": {
+              "bernstein": 2085.964649807282,
+              "gaussian": 1098.881562028315,
+              "subexp": 1418.988734250521,
+              "threshold_bernstein": 0.254301907060363,
+              "threshold_gaussian": 0.22417852181320214,
+              "threshold_subexp": 0.23394741744986614,
+              "per_token_bernstein": 0.063658589166482,
+              "per_token_gaussian": 0.03353520391932114
+            },
+            "65536": {
+              "bernstein": 2518.47584771869,
+              "gaussian": 1554.053208462175,
+              "subexp": 2023.3909705871154,
+              "threshold_bernstein": 0.22907220961322136,
+              "threshold_gaussian": 0.21435628799370668,
+              "threshold_subexp": 0.22151781390503694,
+              "per_token_bernstein": 0.038428891719340365,
+              "per_token_gaussian": 0.02371297009982567
+            },
+            "131072": {
+              "bernstein": 3164.3071015703126,
+              "gaussian": 2197.76312405663,
+              "subexp": 2813.4794400003334,
+              "threshold_bernstein": 0.2147850651897971,
+              "threshold_gaussian": 0.20741091985354157,
+              "threshold_subexp": 0.21210846254720386,
+              "per_token_bernstein": 0.02414174729591608,
+              "per_token_gaussian": 0.01676760195966057
+            },
+            "262144": {
+              "bernstein": 4105.170299891524,
+              "gaussian": 3108.10641692435,
+              "subexp": 3885.392117499426,
+              "threshold_bernstein": 0.20630329981180218,
+              "threshold_gaussian": 0.20249980294379383,
+              "threshold_subexp": 0.205464912580387,
+              "per_token_bernstein": 0.01565998191792116,
+              "per_token_gaussian": 0.011856485049912834
+            },
+            "524288": {
+              "bernstein": 5456.62931337934,
+              "gaussian": 4395.52624811326,
+              "subexp": null,
+              "threshold_bernstein": 0.2010510123545197,
+              "threshold_gaussian": 0.1990271188737113,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.010407694460638694,
+              "per_token_gaussian": 0.008383800979830285
+            },
+            "1048576": {
+              "bernstein": 7383.195053719291,
+              "gaussian": 6216.2128338487,
+              "subexp": null,
+              "threshold_bernstein": 0.19768448138963077,
+              "threshold_gaussian": 0.19657156041883742,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.007041163495749751,
+              "per_token_gaussian": 0.005928242524956417
+            },
+            "4194304": {
+              "bernstein": 13995.415446908955,
+              "gaussian": 12432.4256676974,
+              "subexp": null,
+              "threshold_bernstein": 0.19398008495866909,
+              "threshold_gaussian": 0.19360743915635922,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.0033367670647880925,
+              "per_token_gaussian": 0.0029641212624782086
+            },
+            "16777216": {
+              "bernstein": 27248.47088827609,
+              "gaussian": 24864.8513353948,
+              "subexp": null,
+              "threshold_bernstein": 0.19226745332184927,
+              "threshold_gaussian": 0.1921253785251201,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.001624135427968269,
+              "per_token_gaussian": 0.0014820606312391043
+            }
+          },
+          "tail_validation_N4096": {
+            "1e-04": {
+              "empirical": 250.0680011813672,
+              "subexp": 250.49691874388722,
+              "gaussian": 227.13566173453833,
+              "subexp_rel_err": 0.001715203706566637,
+              "gaussian_rel_err": -0.0917044137534282
+            },
+            "1e-05": {
+              "empirical": 285.53459203308887,
+              "subexp": 298.0059153444439,
+              "gaussian": 260.4744551393157,
+              "subexp_rel_err": 0.04367710133667391,
+              "gaussian_rel_err": -0.08776567741000396
+            },
+            "1e-06": {
+              "empirical": 317.3159359849838,
+              "subexp": 345.51491194500045,
+              "gaussian": 290.3112099964893,
+              "subexp_rel_err": 0.08886719121900977,
+              "gaussian_rel_err": -0.08510359211764396
+            }
+          },
+          "N_to_within": {
+            "within10pct": {
+              "bernstein": 190575.0,
+              "gaussian": 101393.16096969567,
+              "subexp": 169069.31168622972
+            },
+            "within1pct": {
+              "bernstein": 12367067.0,
+              "gaussian": 10139316.096969567,
+              "subexp": 16906931.168622967
+            }
+          }
+        },
+        "conservative": {
+          "b_star": 0.2593467336683417,
+          "K": 16,
+          "mu": 0.20060350173309904,
+          "p": 0.00540924072265625,
+          "q": 0.0,
+          "overhead": 0.04851626019823232,
+          "sigma2": 0.21389301763035873,
+          "varY_session": 1359.7471155466342,
+          "tau_var": 6.208141141010947,
+          "N_eff_factor": 6.208141141010947,
+          "M_emp_session_dev": 108.42169609975673,
+          "n_sessions": 128,
+          "n_viol": 709,
+          "n_tail": 0,
+          "s_max_observed": 4.0,
+          "sqrt_law_coeff_bits_sqrt_tok": {
+            "bernstein_asymptotic": 7.819913280893215,
+            "subexp": 9.409232703397912,
+            "gaussian": 7.3304015384099825,
+            "subexp_rel_spread": 0.01939065716741105,
+            "bernstein_a_term_const_bits": 832.1672706547683
+          },
+          "buffer_curve": {
+            "1024": {
+              "bernstein": 1701.1442755973576,
+              "gaussian": 234.57284922911944,
+              "subexp": 149.7218628799956,
+              "threshold_bernstein": 1.8618772083711437,
+              "threshold_gaussian": 0.429678549808411,
+              "threshold_subexp": 0.3468162584518447,
+              "per_token_bernstein": 1.6612737066380445,
+              "per_token_gaussian": 0.22907504807531195
+            },
+            "2048": {
+              "bernstein": 1736.456883494029,
+              "gaussian": 331.73610474431996,
+              "subexp": 413.75482475138045,
+              "threshold_bernstein": 1.0484828393766679,
+              "threshold_gaussian": 0.3625840216277865,
+              "threshold_subexp": 0.40263222475623406,
+              "per_token_bernstein": 0.8478793376435688,
+              "per_token_gaussian": 0.16198051989468748
+            },
+            "4096": {
+              "bernstein": 1803.2373203571328,
+              "gaussian": 469.1456984582389,
+              "subexp": 636.8161005656199,
+              "threshold_bernstein": 0.6408469881484147,
+              "threshold_gaussian": 0.31514102577075503,
+              "threshold_subexp": 0.3560761825352523,
+              "per_token_bernstein": 0.44024348641531563,
+              "per_token_gaussian": 0.11453752403765598
+            },
+            "8192": {
+              "bernstein": 1924.619428192525,
+              "gaussian": 663.4722094886399,
+              "subexp": 875.0131945176992,
+              "threshold_bernstein": 0.4355423967761319,
+              "threshold_gaussian": 0.2815937616804428,
+              "threshold_subexp": 0.30741663582949785,
+              "per_token_bernstein": 0.23493889504303284,
+              "per_token_gaussian": 0.08099025994734374
+            },
+            "16384": {
+              "bernstein": 2133.8588880007483,
+              "gaussian": 938.2913969164778,
+              "subexp": 1237.1954641199482,
+              "threshold_bernstein": 0.33084391237767596,
+              "threshold_gaussian": 0.257872263751927,
+              "threshold_subexp": 0.27611592019745135,
+              "per_token_bernstein": 0.13024041064457692,
+              "per_token_gaussian": 0.05726876201882799
+            },
+            "32768": {
+              "bernstein": 2474.208612091877,
+              "gaussian": 1326.9444189772798,
+              "subexp": 1711.1868718378396,
+              "threshold_bernstein": 0.27611035635016073,
+              "threshold_gaussian": 0.24109863170677093,
+              "threshold_subexp": 0.25282478078088466,
+              "per_token_bernstein": 0.07550685461706168,
+              "per_token_gaussian": 0.04049512997367187
+            },
+            "65536": {
+              "bernstein": 3000.1380194491685,
+              "gaussian": 1876.5827938329555,
+              "subexp": 2351.3884372132134,
+              "threshold_bernstein": 0.24638197493026043,
+              "threshold_gaussian": 0.22923788274251303,
+              "threshold_subexp": 0.23648284190053698,
+              "per_token_bernstein": 0.045778473197161385,
+              "per_token_gaussian": 0.028634381009413994
+            },
+            "131072": {
+              "bernstein": 3783.047134171292,
+              "gaussian": 2653.8888379545597,
+              "subexp": 3323.8429960997496,
+              "threshold_bernstein": 0.22946586085000648,
+              "threshold_gaussian": 0.22085106671993499,
+              "threshold_subexp": 0.22596241131027608,
+              "per_token_bernstein": 0.02886235911690744,
+              "per_token_gaussian": 0.020247564986835935
+            },
+            "262144": {
+              "bernstein": 4921.529271195389,
+              "gaussian": 3753.165587665911,
+              "subexp": 4817.527144139731,
+              "threshold_bernstein": 0.2193776459866215,
+              "threshold_gaussian": 0.21492069223780605,
+              "threshold_subexp": 0.2189809093569231,
+              "per_token_bernstein": 0.01877414425352245,
+              "per_token_gaussian": 0.014317190504706997
+            },
+            "524288": {
+              "bernstein": 6555.21373006624,
+              "gaussian": 5307.777675909119,
+              "subexp": null,
+              "threshold_bernstein": 0.21310657967893462,
+              "threshold_gaussian": 0.21072728422651701,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.012503077945835571,
+              "per_token_gaussian": 0.010123782493417968
+            },
+            "1048576": {
+              "bernstein": 8882.882716304013,
+              "gaussian": 7506.331175331822,
+              "subexp": null,
+              "threshold_bernstein": 0.20907487883528716,
+              "threshold_gaussian": 0.20776209698545253,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.008471377102188123,
+              "per_token_gaussian": 0.007158595252353499
+            },
+            "4194304": {
+              "bernstein": 16868.955279736085,
+              "gaussian": 15012.662350663644,
+              "subexp": null,
+              "threshold_bernstein": 0.20462537408182152,
+              "threshold_gaussian": 0.2041827993592758,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.004021872348722478,
+              "per_token_gaussian": 0.0035792976261767493
+            },
+            "16777216": {
+              "bernstein": 32873.340337410766,
+              "gaussian": 30025.32470132729,
+              "subexp": null,
+              "threshold_bernstein": 0.20256290550649092,
+              "threshold_gaussian": 0.20239315054618742,
+              "threshold_subexp": null,
+              "per_token_bernstein": 0.0019594037733918885,
+              "per_token_gaussian": 0.0017896488130883746
+            }
+          },
+          "tail_validation_N4096": {
+            "1e-04": {
+              "empirical": 297.0551334895299,
+              "subexp": 297.858066165555,
+              "gaussian": 274.27559903092697,
+              "subexp_rel_err": 0.0027029752578013877,
+              "gaussian_rel_err": -0.07668453391466412
+            },
+            "1e-05": {
+              "empirical": 340.21677400060304,
+              "subexp": 354.05295600231625,
+              "gaussian": 314.5335552771398,
+              "subexp_rel_err": 0.040668723764010206,
+              "gaussian_rel_err": -0.07549074791773125
+            },
+            "1e-06": {
+              "empirical": 375.95807439902705,
+              "subexp": 410.24784583907746,
+              "gaussian": 350.56265678016376,
+              "subexp_rel_err": 0.09120637053709513,
+              "gaussian_rel_err": -0.06754853625489532
+            }
+          },
+          "N_to_within": {
+            "within10pct": {
+              "bernstein": 237901.0,
+              "gaussian": 133529.89571339576,
+              "subexp": 220004.4164812791
+            },
+            "within1pct": {
+              "bernstein": 16093781.0,
+              "gaussian": 13352989.571339576,
+              "subexp": 22000441.648127913
+            }
+          }
+        }
+      }
+    }
+  }
+}

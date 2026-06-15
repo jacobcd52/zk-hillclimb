@@ -1,3 +1,10 @@
+> **See also `THRESHOLD_CURVE.md`** — extends this analysis to the operational
+> **THRESHOLD(N) = μ + buffer(N)/N** per-token treaty-ceiling curve for **BOTH schemes
+> overlaid** (faithful μ≈0.31 + codebook μ≈0.19, each relaxing toward its own μ), adds
+> the **√N variance-scaling fit** and the **"N to reach within 10 %/1 % of μ at FPR
+> 1e-10"** numbers (≈1.8×10⁵ / ≈1.8×10⁷ tokens, near scheme-independent), and generates
+> the **120 codebook benign prompts** that this faithful-only doc lacked.
+
 # Per-token afforded capacity, autocorrelation, and the buffer-vs-FPR-vs-audit-size curve
 
 **Goal.** For the capacity-budget treaty (a ZKP proves the integer model M_int's

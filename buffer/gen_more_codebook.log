@@ -1,0 +1,46 @@
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+`torch_dtype` is deprecated! Use `dtype` instead!
+drew 120 distinct prompts, periods min=18 med=123 max=2450
+teacher: 14 linears -> FP8
+  teacher prompt 0: 0.56s
+  teacher prompt 8: 0.16s
+  teacher prompt 16: 0.16s
+  teacher prompt 24: 0.16s
+  teacher prompt 32: 0.15s
+  teacher prompt 40: 0.15s
+  teacher prompt 48: 0.15s
+  teacher prompt 56: 0.15s
+  teacher prompt 64: 0.17s
+  teacher prompt 72: 0.17s
+  teacher prompt 80: 0.17s
+  teacher prompt 88: 0.16s
+  teacher prompt 96: 0.16s
+  teacher prompt 104: 0.16s
+  teacher prompt 112: 0.16s
+[codebook] 14 linears -> CodebookLinear (lm_head stays float)
+  [codebook] student prompt 0: 0.55s
+  [codebook] student prompt 8: 0.16s
+  [codebook] student prompt 16: 0.16s
+  [codebook] student prompt 24: 0.16s
+  [codebook] student prompt 32: 0.16s
+  [codebook] student prompt 40: 0.16s
+  [codebook] student prompt 48: 0.16s
+  [codebook] student prompt 56: 0.16s
+  [codebook] student prompt 64: 0.16s
+  [codebook] student prompt 72: 0.16s
+  [codebook] student prompt 80: 0.16s
+  [codebook] student prompt 88: 0.16s
+  [codebook] student prompt 96: 0.16s
+  [codebook] student prompt 104: 0.16s
+  [codebook] student prompt 112: 0.16s
+{
+  "nprompts": 120,
+  "n_positions": 122880,
+  "exact_agree": 0.9631184895833333,
+  "margin_mean": 0.005151478007125358,
+  "margin_max": 1.235428810119629,
+  "max_cand_rank": 6,
+  "out": "codebook_extra_corrected.npz"
+}
+wrote codebook_extra_corrected.npz
