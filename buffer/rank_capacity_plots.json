@@ -1,0 +1,13 @@
+{
+  "crossover_rank_below_fiveterm_codebook": null,
+  "benign": {
+    "faithful": {
+      "five_term": 0.3058306898526266,
+      "rank_entropy": 0.36172739934466086
+    },
+    "codebook": {
+      "five_term": 0.190643317893881,
+      "rank_entropy": 0.24685350067582829
+    }
+  }
+}
