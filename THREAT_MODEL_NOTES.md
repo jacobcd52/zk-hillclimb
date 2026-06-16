@@ -82,9 +82,16 @@ Reporting rules:
   frontier.
 
 ## 3. Known caveats to carry into any writeup
-- IPA openings are currently UNBLINDED: the "weights stay private" claim needs either the
-  blinding fix (deferred, tracked) or honest wording ("succinct verification with weight
-  commitment; formal ZK property pending blinding").
+- Weight privacy: DONE and audited SOUND (Stage-D rebuild, REBUILD_AUDIT.md 2026-06-12).
+  The WEIGHT-path openings are hiding/ZK — per-row blinded Pedersen (s_r·H), masked weight
+  claims in a separate accumulator, and a blinded (Bulletproofs-style ZK) IPA on the final
+  weight opening; the leak-scan finds no image of the hidden weight-MLE evals in the proof
+  surface (positive control passes). So the property achieved is a *weight-hiding* succinct
+  argument. CAVEAT (still true): ACTIVATIONS are NOT hidden — activation-path commitments
+  are deterministic and their IPA openings are UNBLINDED, so guess-and-confirm against them
+  is possible; inputs/logits are public by design; and the final-norm gain `g` is recoverable
+  from public claims. Full input/activation privacy is out of scope (would need hidden
+  activations, not just hidden weights).
 - Scale: all numbers are llama-68m @ seq 1024 (prefill framing, not autoregressive
   decode). The writeup gets a cost-model extrapolation section, not a claim of measured
   large-scale numbers.
