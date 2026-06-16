@@ -1,0 +1,68 @@
+[
+  {
+    "label": "llama-68m",
+    "model_id": "JackFram/llama-68m",
+    "n_params": 68030208,
+    "vocab": 32000,
+    "mu_star": 0.20231820133704503,
+    "b_star": 0.21,
+    "p_at_bstar": 0.006795247395833333,
+    "n_tokens": 49152,
+    "secs": 60.1
+  },
+  {
+    "label": "llama-160m",
+    "model_id": "JackFram/llama-160m",
+    "n_params": 162417408,
+    "vocab": 32000,
+    "mu_star": 0.10587929576616484,
+    "b_star": 0.35,
+    "p_at_bstar": 0.004069010416666667,
+    "n_tokens": 49152,
+    "secs": 60.6
+  },
+  {
+    "label": "tinyllama-1.1b",
+    "model_id": "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T",
+    "n_params": 1100048384,
+    "vocab": 32000,
+    "mu_star": 0.04125287049142052,
+    "b_star": 0.29,
+    "p_at_bstar": 0.00103759765625,
+    "n_tokens": 49152,
+    "secs": 63.3
+  },
+  {
+    "label": "sheared-1.3b",
+    "model_id": "princeton-nlp/Sheared-LLaMA-1.3B",
+    "n_params": 1345423360,
+    "vocab": 32000,
+    "mu_star": 0.08489814190500722,
+    "b_star": 0.25,
+    "p_at_bstar": 0.0035400390625,
+    "n_tokens": 49152,
+    "secs": 75.6
+  },
+  {
+    "label": "sheared-2.7b",
+    "model_id": "princeton-nlp/Sheared-LLaMA-2.7B",
+    "n_params": 2701560320,
+    "vocab": 32000,
+    "mu_star": 0.13020346742972422,
+    "b_star": 0.25,
+    "p_at_bstar": 0.006062825520833333,
+    "n_tokens": 49152,
+    "secs": 110.8
+  },
+  {
+    "label": "openllama-3b",
+    "model_id": "openlm-research/open_llama_3b_v2",
+    "n_params": 3426473600,
+    "vocab": 32000,
+    "mu_star": 0.05953249742975087,
+    "b_star": 0.28,
+    "p_at_bstar": 0.0029093424479166665,
+    "n_tokens": 49152,
+    "secs": 118.7
+  }
+]
