@@ -112,7 +112,7 @@ def main():
         benign_asymptote(ax, info[s]["Hrank"], info[s]["color"], XMAX)
     datalimit_marker(ax)
     ax.set_xlabel("tokens audited,  N")
-    ax.set_ylabel("channel capacity — upper (1 − 10$^{-10}$) confidence bound   "
+    ax.set_ylabel("$R_{\\mathrm{rank}}$ — upper (1 − 10$^{-10}$) confidence bound   "
                   "(bits / token)")
     ax.set_title("Rank-entropy capacity bound vs audit size", fontsize=13,
                  fontweight="bold")
@@ -127,8 +127,8 @@ def main():
     # ============================ PLOT 2 ============================ #
     d = info["codebook"]
     fig, ax = plt.subplots(figsize=(9.2, 6.4))
-    plot_line(ax, d["curve5"], "#2ca02c", "five-term bound")
-    plot_line(ax, d["curveR"], "#9467bd", "rank-entropy bound")
+    plot_line(ax, d["curve5"], "#2ca02c", "$R$ (five-term)")
+    plot_line(ax, d["curveR"], "#9467bd", "$R_{\\mathrm{rank}}$")
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlim(XMIN, XMAX)
     benign_asymptote(ax, d["mu5"], "#2ca02c", XMAX)
@@ -148,8 +148,7 @@ def main():
                 f"rank-entropy wins\nN ≈ {xover:.0e}", fontsize=8, color="0.3")
 
     ax.set_xlabel("tokens audited,  N")
-    ax.set_ylabel("channel capacity — upper (1 − 10$^{-10}$) confidence bound   "
-                  "(bits / token)")
+    ax.set_ylabel("$R$ — upper (1 − 10$^{-10}$) confidence bound   (bits / token)")
     ax.set_title("Codebook: five-term vs rank-entropy bound", fontsize=13,
                  fontweight="bold")
     ax.grid(alpha=0.3, which="both")
