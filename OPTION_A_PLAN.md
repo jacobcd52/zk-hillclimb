@@ -34,9 +34,19 @@ Boundary chaining: layer l's output commitment == layer l+1's input commitment (
 an equality proof — same idea as the EZKL phase-3 boundary binding). Validate: honest ACCEPT +
 extend the D4 leak scan to activation functionals (CLEAN) + forgery loci + ZK re-randomization.
 
-**P2 — Speed lever 1: Icicle GPU MSM (cheap, privacy-preserving).** [task #17]
-Swap hand-coded G1 MSM/commitment for Ingonyama Icicle BLS12-381 (+NTT). Same field/scheme → privacy
-untouched. Measure vs P0 baseline.
+**P2 — Speed lever 1: faster GPU MSM (cheap, privacy-preserving).** [task #17]
+Bottleneck (confirmed): `Commitment::commit` = `(*this)*t` then `rowwise_sum` — naive per-element
+full-256-bit `G1Jacobian_mul` at `G1NumThread=64` (commitment.cu:22-29). Swap for Icicle BLS12-381
+MSM (or an in-codebase Pippenger/bucket MSM). Same field/scheme → privacy untouched.
+**Byte-exactness analysis (the crux, done 2026-06-20):** commitments are saved as RAW Jacobian
+bytes (g1-tensor.cu:176) — projective coords are NON-unique, so a foreign MSM returns the same
+point in a different rep -> different bytes. BUT `g1_eq` is PROJECTIVE (a-b==inf via z==0;
+vrf_common.cuh:115), so all in-circuit checks tolerate rep differences. The ONLY byte-exact
+constraint is FILE-level compares (comref / claims_match / hash-pin / chaining). => a faster MSM is
+viable IFF EVERY serialized commitment goes through ONE consistent MSM path (prover+verifier+
+registration). Icicle build (CUDA 12.4) + blstrs<->Icicle Montgomery type FFI + consistent routing
++ full selftest re-validation. Measure vs P0 baseline (wpriv prove 4.17s). In-codebase Pippenger is
+the lower-dependency-risk alternative (no FFI), same consistency rule.
 
 **P3 — Speed lever 2: small-field/hash PCS (the 10-100x ceiling).** [task #18]
 Migrate commitment to small-field + hash-based PCS (Basefold/Binius). Pedersen homomorphism is lost
