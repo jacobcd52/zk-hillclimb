@@ -15,7 +15,9 @@ class Commitment: public G1TensorJacobian
     using G1TensorJacobian::operator*;
     using G1TensorJacobian::operator*=;
 
-    G1TensorJacobian commit(const FrTensor& t) const;
+    G1TensorJacobian commit(const FrTensor& t) const;        // now Pippenger (P2)
+    G1TensorJacobian commit_naive(const FrTensor& t) const;  // old per-element MSM (ref/probe)
+    G1TensorJacobian commit_pippenger(const FrTensor& t) const;
     G1TensorJacobian commit_int (const FrTensor& t) const;
     G1TensorJacobian commit_int_multi(const vector<FrTensor>& t) const;
 

@@ -1,0 +1,265 @@
+kernel -dlto probes (incl. wpriv shapes): PASS
+=== selftest B=4 IN=6 OUT=3 ===
+PROVED matmul obligation -> /tmp/zkob_fc_selftest
+ACCEPT
+honest verify: ACCEPT
+REJECT: sumcheck round 0 p(0)+p(1) != claim
+forgery [round-0 p(1)] rejected: YES
+REJECT: terminal claim != claim_X * claim_W
+forgery [claim_W terminal] rejected: YES
+REJECT: IPA opening of claim_W vs registered weight commitment
+forgery [ipa_W a_final] rejected: YES
+REJECT: IPA opening of claim_X vs com_X
+forgery [ipa_X round-0 L point] rejected: YES
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+forgery [com_Y point] rejected: YES
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+forgery [registered com_W] rejected: YES
+ACCEPT
+restored verify: ACCEPT
+CASE PASS
+=== selftest B=8 IN=8 OUT=8 ===
+PROVED matmul obligation -> /tmp/zkob_fc_selftest
+ACCEPT
+honest verify: ACCEPT
+REJECT: sumcheck round 0 p(0)+p(1) != claim
+forgery [round-0 p(1)] rejected: YES
+REJECT: terminal claim != claim_X * claim_W
+forgery [claim_W terminal] rejected: YES
+REJECT: IPA opening of claim_W vs registered weight commitment
+forgery [ipa_W a_final] rejected: YES
+REJECT: IPA opening of claim_X vs com_X
+forgery [ipa_X round-0 L point] rejected: YES
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+forgery [com_Y point] rejected: YES
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+forgery [registered com_W] rejected: YES
+ACCEPT
+restored verify: ACCEPT
+CASE PASS
+=== selftest B=16 IN=12 OUT=5 ===
+PROVED matmul obligation -> /tmp/zkob_fc_selftest
+ACCEPT
+honest verify: ACCEPT
+REJECT: sumcheck round 0 p(0)+p(1) != claim
+forgery [round-0 p(1)] rejected: YES
+REJECT: terminal claim != claim_X * claim_W
+forgery [claim_W terminal] rejected: YES
+REJECT: IPA opening of claim_W vs registered weight commitment
+forgery [ipa_W a_final] rejected: YES
+REJECT: IPA opening of claim_X vs com_X
+forgery [ipa_X round-0 L point] rejected: YES
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+forgery [com_Y point] rejected: YES
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+forgery [registered com_W] rejected: YES
+ACCEPT
+restored verify: ACCEPT
+CASE PASS
+=== selftest (claim mode) B=4 IN=6 OUT=3 ===
+PROVED matmul obligation (claim mode, 3 claims emitted) -> /tmp/zkob_fc_selftest_cm
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+opening_batch ACCEPT (3 claims, 3 tensors, 2 domains)
+  [PASS] honest (conditional ACCEPT + batch ACCEPT) -> expected accept, got accept
+REJECT: sumcheck round 0 p(0)+p(1) != claim
+  [PASS] sumcheck round-0 p(1) tamper (driver round check) -> expected driver, got driver
+REJECT: terminal claim != claim_X * claim_W
+  [PASS] claim_W terminal tamper (driver terminal product) -> expected driver, got driver
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+  [PASS] com_Y tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+  [PASS] registered com_W tamper (driver transcript divergence) -> expected driver, got driver
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.claims_match]: prover claim list != verifier-recomputed list
+  [PASS] prover claims.bin eval tamper -> expected claims_match, got claims_match
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.claims_match]: prover claim list != verifier-recomputed list
+  [PASS] claim dropped from prover accumulator -> expected claims_match, got claims_match
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.ipa4]: batched IPA for domain 4 failed
+  [PASS] batched IPA a_final tamper -> expected ipa4, got ipa4
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+opening_batch ACCEPT (3 claims, 3 tensors, 2 domains)
+  [PASS] restored -> expected accept, got accept
+CASE PASS (claim mode, 9/9)
+=== selftest (claim mode) B=8 IN=8 OUT=8 ===
+PROVED matmul obligation (claim mode, 3 claims emitted) -> /tmp/zkob_fc_selftest_cm
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+opening_batch ACCEPT (3 claims, 3 tensors, 1 domains)
+  [PASS] honest (conditional ACCEPT + batch ACCEPT) -> expected accept, got accept
+REJECT: sumcheck round 0 p(0)+p(1) != claim
+  [PASS] sumcheck round-0 p(1) tamper (driver round check) -> expected driver, got driver
+REJECT: terminal claim != claim_X * claim_W
+  [PASS] claim_W terminal tamper (driver terminal product) -> expected driver, got driver
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+  [PASS] com_Y tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+  [PASS] registered com_W tamper (driver transcript divergence) -> expected driver, got driver
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.claims_match]: prover claim list != verifier-recomputed list
+  [PASS] prover claims.bin eval tamper -> expected claims_match, got claims_match
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.claims_match]: prover claim list != verifier-recomputed list
+  [PASS] claim dropped from prover accumulator -> expected claims_match, got claims_match
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.ipa8]: batched IPA for domain 8 failed
+  [PASS] batched IPA a_final tamper -> expected ipa8, got ipa8
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+opening_batch ACCEPT (3 claims, 3 tensors, 1 domains)
+  [PASS] restored -> expected accept, got accept
+CASE PASS (claim mode, 9/9)
+=== selftest (claim mode) B=16 IN=12 OUT=5 ===
+PROVED matmul obligation (claim mode, 3 claims emitted) -> /tmp/zkob_fc_selftest_cm
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+opening_batch ACCEPT (3 claims, 3 tensors, 2 domains)
+  [PASS] honest (conditional ACCEPT + batch ACCEPT) -> expected accept, got accept
+REJECT: sumcheck round 0 p(0)+p(1) != claim
+  [PASS] sumcheck round-0 p(1) tamper (driver round check) -> expected driver, got driver
+REJECT: terminal claim != claim_X * claim_W
+  [PASS] claim_W terminal tamper (driver terminal product) -> expected driver, got driver
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+  [PASS] com_Y tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: sumcheck round 1 p(0)+p(1) != claim
+  [PASS] registered com_W tamper (driver transcript divergence) -> expected driver, got driver
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.claims_match]: prover claim list != verifier-recomputed list
+  [PASS] prover claims.bin eval tamper -> expected claims_match, got claims_match
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.claims_match]: prover claim list != verifier-recomputed list
+  [PASS] claim dropped from prover accumulator -> expected claims_match, got claims_match
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+REJECT[opening_batch.ipa8]: batched IPA for domain 8 failed
+  [PASS] batched IPA a_final tamper -> expected ipa8, got ipa8
+ACCEPT-conditional (3 claims emitted; final verdict gated on opening_batch)
+opening_batch ACCEPT (3 claims, 3 tensors, 2 domains)
+  [PASS] restored -> expected accept, got accept
+CASE PASS (claim mode, 9/9)
+=== selftest (wpriv mode) B=4 IN=6 OUT=3 ===
+PROVED matmul obligation (wpriv: W committed + 2 public claims) -> /tmp/zkob_fc_selftest_wp
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+opening_batch ACCEPT (2 claims, 2 tensors, 2 domains)
+opening_batch_w ACCEPT (1 claims, 1 tensors, 1 domains; all evals committed)
+  [PASS] honest (driver + public batch + weight batch) -> expected accept, got accept
+  [PASS] D4: claim_W absent from every proof artifact (wpriv)
+  [PASS] D4 positive control: plain-mode claims.bin leaks its claim_W
+REJECT: sumcheck round 0 C_p0+C_p1 != C_cur
+  [PASS] wsc round-0 C_p0 tamper (homomorphic round check) -> expected driver, got driver
+REJECT: sumcheck round 0 C_p0+C_p1 != C_cur
+  [PASS] wsc round-0 C_p1 tamper -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] wsc round-0 C_p2 tamper (fold divergence) -> expected driver, got driver
+REJECT: terminal Schnorr (committed claim_W product)
+  [PASS] wsc terminal Schnorr response tamper -> expected driver, got driver
+REJECT: terminal Schnorr (committed claim_W product)
+  [PASS] wsc C_W tamper (terminal Schnorr binds C_W) -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] registered (hiding) com_W tamper -> transcript divergence -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] com_Y tamper (driver transcript divergence) -> expected driver, got driver
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+REJECT[opening_batch.claims_match]: prover claim list != verifier-recomputed list
+  [PASS] public claims.bin tamper -> expected claims_match, got claims_match
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+opening_batch ACCEPT (2 claims, 2 tensors, 2 domains)
+REJECT[opening_batch_w.wclaims_match]: prover weight claim list != verifier-recomputed list
+  [PASS] weight claims.bin (C_W bytes) tamper -> expected wclaims_match, got wclaims_match
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+opening_batch ACCEPT (2 claims, 2 tensors, 2 domains)
+REJECT[opening_batch_w.wipa4]: ZK batched IPA for domain 4 failed
+  [PASS] weight ZK-IPA tamper -> expected wipa4, got wipa4
+REJECT[opening_batch_w.wround1]: C_p0 + C_p1 != C_cur (homomorphic round check)
+  [PASS] registered-com hash-pin at the weight batch (post-driver tamper)
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+opening_batch ACCEPT (2 claims, 2 tensors, 2 domains)
+opening_batch_w ACCEPT (1 claims, 1 tensors, 1 domains; all evals committed)
+  [PASS] restored -> expected accept, got accept
+CASE PASS (wpriv mode, 15/15)
+=== selftest (wpriv mode) B=16 IN=12 OUT=5 ===
+PROVED matmul obligation (wpriv: W committed + 2 public claims) -> /tmp/zkob_fc_selftest_wp
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+opening_batch ACCEPT (2 claims, 2 tensors, 2 domains)
+opening_batch_w ACCEPT (1 claims, 1 tensors, 1 domains; all evals committed)
+  [PASS] honest (driver + public batch + weight batch) -> expected accept, got accept
+  [PASS] D4: claim_W absent from every proof artifact (wpriv)
+  [PASS] D4 positive control: plain-mode claims.bin leaks its claim_W
+REJECT: sumcheck round 0 C_p0+C_p1 != C_cur
+  [PASS] wsc round-0 C_p0 tamper (homomorphic round check) -> expected driver, got driver
+REJECT: sumcheck round 0 C_p0+C_p1 != C_cur
+  [PASS] wsc round-0 C_p1 tamper -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] wsc round-0 C_p2 tamper (fold divergence) -> expected driver, got driver
+REJECT: terminal Schnorr (committed claim_W product)
+  [PASS] wsc terminal Schnorr response tamper -> expected driver, got driver
+REJECT: terminal Schnorr (committed claim_W product)
+  [PASS] wsc C_W tamper (terminal Schnorr binds C_W) -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] registered (hiding) com_W tamper -> transcript divergence -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] com_Y tamper (driver transcript divergence) -> expected driver, got driver
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+REJECT[opening_batch.claims_match]: prover claim list != verifier-recomputed list
+  [PASS] public claims.bin tamper -> expected claims_match, got claims_match
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+opening_batch ACCEPT (2 claims, 2 tensors, 2 domains)
+REJECT[opening_batch_w.wclaims_match]: prover weight claim list != verifier-recomputed list
+  [PASS] weight claims.bin (C_W bytes) tamper -> expected wclaims_match, got wclaims_match
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+opening_batch ACCEPT (2 claims, 2 tensors, 2 domains)
+REJECT[opening_batch_w.wipa8]: ZK batched IPA for domain 8 failed
+  [PASS] weight ZK-IPA tamper -> expected wipa8, got wipa8
+REJECT[opening_batch_w.wround1]: C_p0 + C_p1 != C_cur (homomorphic round check)
+  [PASS] registered-com hash-pin at the weight batch (post-driver tamper)
+ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)
+opening_batch ACCEPT (2 claims, 2 tensors, 2 domains)
+opening_batch_w ACCEPT (1 claims, 1 tensors, 1 domains; all evals committed)
+  [PASS] restored -> expected accept, got accept
+CASE PASS (wpriv mode, 15/15)
+=== selftest (apriv mode) B=4 IN=6 OUT=3 ===
+PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
+  [PASS] honest (driver + hiding batch[W,X,Y]; product terminal) -> expected accept, got accept
+  [PASS] D5: X eval (claim_X) absent from every proof artifact
+  [PASS] D5: Y eval (claim) absent from every proof artifact
+  [PASS] D5: claim_W still absent (weight privacy intact)
+PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap/chain2
+  [PASS] P1c: shared X-blinds -> com_X byte-identical across proofs (chain binds)
+  [PASS] P1c: shared Y-blinds -> com_Y byte-identical across proofs (chain binds)
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] hidden com_X tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] hidden com_Y tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: terminal product proof (claim_X * claim_W)
+  [PASS] wsc terminal product-proof response tamper -> expected driver, got driver
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+REJECT[opening_batch_w.wclaims_match]: prover weight claim list != verifier-recomputed list
+  [PASS] hiding-batch claims.bin tamper (W/X/Y) -> expected wclaims_match, got wclaims_match
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
+  [PASS] restored -> expected accept, got accept
+CASE PASS (apriv mode, 11/11)
+=== selftest (apriv mode) B=16 IN=12 OUT=5 ===
+PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
+  [PASS] honest (driver + hiding batch[W,X,Y]; product terminal) -> expected accept, got accept
+  [PASS] D5: X eval (claim_X) absent from every proof artifact
+  [PASS] D5: Y eval (claim) absent from every proof artifact
+  [PASS] D5: claim_W still absent (weight privacy intact)
+PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap/chain2
+  [PASS] P1c: shared X-blinds -> com_X byte-identical across proofs (chain binds)
+  [PASS] P1c: shared Y-blinds -> com_Y byte-identical across proofs (chain binds)
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] hidden com_X tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] hidden com_Y tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: terminal product proof (claim_X * claim_W)
+  [PASS] wsc terminal product-proof response tamper -> expected driver, got driver
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+REJECT[opening_batch_w.wclaims_match]: prover weight claim list != verifier-recomputed list
+  [PASS] hiding-batch claims.bin tamper (W/X/Y) -> expected wclaims_match, got wclaims_match
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
+  [PASS] restored -> expected accept, got accept
+CASE PASS (apriv mode, 11/11)
+ZKOB-FC SELFTEST: ALL PASS
