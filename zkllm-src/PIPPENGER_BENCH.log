@@ -1,0 +1,44 @@
+ppgen 1024: 0.31 s
+ppgen 4096: 0.29 s
+
+==== timings (s) ====
+  reg_plain                  0.44
+  prove_plain                0.67
+  verify_plain               0.28
+  batch_prove_plain          1.35
+  batch_verify_plain         0.54
+  reg_hiding                 0.44
+  prove_wp                   0.97
+  verify_wp                  0.43
+  batch_prove_wp             1.06
+  batch_verify_wp            0.55
+  wbatch_prove               1.71
+  wbatch_verify              0.72
+  TOTAL prove  plain=2.02  wpriv=3.73
+  TOTAL verify plain=0.82  wpriv=1.70
+
+==== artifact sizes (bytes) ====
+  plain sumcheck.bin                   1060
+  plain acc/claims.bin                 2107
+  plain ipa_batch_1024                 2920
+  plain ipa_batch_4096                 3496
+  plain batch_sumcheck                 2128
+  plain batch_vfin                      104
+  wpriv wsc.bin                        4708
+  wpriv acc/claims.bin                 1296
+  wpriv wacc/claims.bin                 926
+  wpriv ipa_batch_1024                 2920
+  wpriv ipa_batch_4096                 3496
+  wpriv batch_sumcheck                 1744
+  wpriv batch_vfin                       72
+  wpriv wbatch_sumcheck                9520
+  wpriv wbatch_vfin                     152
+  wpriv wipa_batch_4096                3672
+  proof-side total: plain=11815  wpriv=28506  delta=+16691
+
+==== D4 leak regression ====
+  scanned 20 artifacts for claim_W: CLEAN (0 hits)
+  positive control (plain path): claim_W found in 2/2 expected artifacts
+  prover-private blind stash contains claim_W: True
+
+D4 BENCH REGRESSION: PASS
