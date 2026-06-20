@@ -129,22 +129,30 @@ struct WscProof {
     Fr_t claim, claim_X;
     G1Jacobian_t C_W;
     SchnorrH sch;
+    G1Jacobian_t C_claim;       // apriv (D5): committed initial claim; hides the
+                                // Y MLE eval (= ceval of the committed Y claim)
 };
-static void write_wsc(const string& path, const WscProof& p) {
+// apriv replaces the public `claim` scalar with the committed C_claim (so the
+// output activation eval never appears in plaintext). Non-apriv layout is
+// byte-identical to before (the existing wpriv selftest offsets rely on this).
+static void write_wsc(const string& path, const WscProof& p, bool apriv = false) {
     FILE* f = open_or_die(path, "wb");
     write_pod_vec(f, p.cps);
-    fwrite(&p.claim, sizeof(Fr_t), 1, f);
+    if (apriv) fwrite(&p.C_claim, sizeof(G1Jacobian_t), 1, f);
+    else       fwrite(&p.claim, sizeof(Fr_t), 1, f);
     fwrite(&p.claim_X, sizeof(Fr_t), 1, f);
     fwrite(&p.C_W, sizeof(G1Jacobian_t), 1, f);
     fwrite(&p.sch.A, sizeof(G1Jacobian_t), 1, f);
     fwrite(&p.sch.z, sizeof(Fr_t), 1, f);
     fclose(f);
 }
-static WscProof read_wsc(const string& path) {
+static WscProof read_wsc(const string& path, bool apriv = false) {
     FILE* f = open_or_die(path, "rb");
     WscProof p;
     p.cps = read_pod_vec<G1Jacobian_t>(f);
-    if (fread(&p.claim, sizeof(Fr_t), 1, f) != 1 ||
+    bool head = apriv ? (fread(&p.C_claim, sizeof(G1Jacobian_t), 1, f) == 1)
+                      : (fread(&p.claim, sizeof(Fr_t), 1, f) == 1);
+    if (!head ||
         fread(&p.claim_X, sizeof(Fr_t), 1, f) != 1 ||
         fread(&p.C_W, sizeof(G1Jacobian_t), 1, f) != 1 ||
         fread(&p.sch.A, sizeof(G1Jacobian_t), 1, f) != 1 ||
@@ -172,13 +180,15 @@ static void prove(const string& obdir, const string& seed,
                   const string& accdir = "", const string& obid = "",
                   const string& comW_path = "",
                   const string& waccdir = "", const string& wblindpath = "",
-                  const G1Jacobian_t* Hp = nullptr) {
+                  const G1Jacobian_t* Hp = nullptr, bool apriv = false) {
     const bool claim_mode = !accdir.empty();
     const bool wpriv = !waccdir.empty();
     if (wpriv && !claim_mode)
         throw runtime_error("wpriv requires claim mode");
     if (wpriv && (wblindpath.empty() || !Hp))
         throw runtime_error("wpriv needs the registration blinds path and H");
+    if (apriv && !wpriv)
+        throw runtime_error("apriv (activation privacy) builds on wpriv");
     const uint B_pad = 1u << ceilLog2(B), IN_pad = 1u << ceilLog2(IN),
                OUT_pad = 1u << ceilLog2(OUT);
     if (gen_in.size != IN_pad || gen_out.size != OUT_pad)
@@ -204,6 +214,15 @@ static void prove(const string& obdir, const string& seed,
         wp_hide_rows(com_W, s, *Hp);
     }
     G1TensorJacobian com_Y = gen_out.commit(Y_padded);
+    vector<Fr_t> s_Y;
+    if (apriv) {
+        // D5: hide the OUTPUT activation commitment (fresh per-proof row blinds;
+        // com_Y has B_pad row points -> B_pad blinds). Must happen before the
+        // commitment is saved/absorbed so the transcript binds the hiding form.
+        s_Y.resize(B_pad);
+        for (auto& z : s_Y) z = wp_rand();
+        wp_hide_rows(com_Y, s_Y, *Hp);
+    }
     com_X.save(obdir + "/com_X.bin");
     com_Y.save(obdir + "/com_Y.bin");
 
@@ -220,7 +239,17 @@ static void prove(const string& obdir, const string& seed,
     auto u_output = fs_challenge_vec(tr, ceilLog2(OUT));
 
     Fr_t claim = Y.multi_dim_me({u_batch, u_output}, {B, OUT});
-    absorb_fr(tr, "claim", claim);
+    Fr_t t_Y = F_ZERO;
+    G1Jacobian_t C_claim;
+    if (apriv) {
+        // D5: commit the initial claim (= the Y eval). The sumcheck then runs
+        // from a hidden running claim; C_claim doubles as the Y claim's ceval.
+        t_Y = wp_rand();
+        C_claim = ped_qh(claim, t_Y, Q, *Hp);
+        absorb_g1(tr, "Cclaim", C_claim);
+    } else {
+        absorb_fr(tr, "claim", claim);
+    }
 
     // ---- round-at-a-time sumcheck (per-round FS; see §10) ----
     FrTensor X_red = X.partial_me(u_batch, B, IN);     // size IN
@@ -237,7 +266,7 @@ static void prove(const string& obdir, const string& seed,
 
     SumcheckProof sc; sc.claim = claim;
     WscProof wsc; wsc.claim = claim;
-    Fr_t tau = F_ZERO;           // wpriv: blind of the running committed claim
+    Fr_t tau = apriv ? t_Y : F_ZERO;   // running committed-claim blind (apriv: t_Y)
     vector<Fr_t> xs;             // round challenges, in round order
     Fr_t cur = claim;
     uint sz = IN;
@@ -305,14 +334,16 @@ static void prove(const string& obdir, const string& seed,
         absorb_g1(tr, "C_W", C_W);
         wsc.claim_X = claim_X;
         wsc.C_W = C_W;
+        wsc.C_claim = C_claim;        // apriv: hidden initial claim (= Y ceval)
         Fr_t delta = h_scalar(tau, h_scalar(claim_X, t_W, 2), 1);
         wsc.sch = schnorr_h_prove(delta, *Hp, tr);
-        write_wsc(obdir + "/wsc.bin", wsc);
+        write_wsc(obdir + "/wsc.bin", wsc, apriv);
         // claim routing: W (Committed) -> weight accumulator with the blind
-        // stash; X, Y (plain) -> public accumulator
+        // stash; X (plain) -> public accumulator; Y -> public (wpriv) OR
+        // Committed into the hiding batch (apriv).
         string witW = waccdir + "/wit_" + obid + "_W.fr";
         string witX = accdir + "/wit_" + obid + "_X.fr";
-        string witY = accdir + "/wit_" + obid + "_Y.fr";
+        string witY = (apriv ? waccdir : accdir) + "/wit_" + obid + "_Y.fr";
         W_padded.save(witW); X_padded.save(witX); Y_padded.save(witY);
         {
             BoClaim c;
@@ -342,12 +373,32 @@ static void prove(const string& obdir, const string& seed,
         };
         mk("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch, claim_X);
         witref_emit(accdir, obdir + "/com_X.bin", witX);
-        mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, claim);
-        witref_emit(accdir, obdir + "/com_Y.bin", witY);
+        if (apriv) {
+            // D5: Y committed (ceval = C_claim) into the hiding batch; com_Y is
+            // hidden, blinds stashed prover-private and blindref'd like W.
+            string yblindpath = waccdir + "/comY_" + obid + ".blinds.bin";
+            wp_blinds_save(yblindpath, s_Y);
+            BoClaim c;
+            c.id = obid + ":Y";
+            c.comref = obdir + "/com_Y.bin";
+            c.domain = OUT_pad; c.n_rows = B_pad;
+            c.point = u_output;
+            c.point.insert(c.point.end(), u_batch.begin(), u_batch.end());
+            c.tag = BO_EVAL_COMMITTED;
+            c.ceval = C_claim;
+            claim_emit(waccdir, c);
+            wp_cblind_emit(waccdir, c.id, claim, t_Y);
+            witref_emit(waccdir, obdir + "/com_Y.bin", witY);
+            wp_blindref_emit(waccdir, obdir + "/com_Y.bin", yblindpath);
+        } else {
+            mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, claim);
+            witref_emit(accdir, obdir + "/com_Y.bin", witY);
+        }
         drvstate_emit(accdir, obid, tr);
         drvstate_emit(waccdir, obid, tr);
-        cout << "PROVED matmul obligation (wpriv mode: W committed + 2 public claims) -> "
-             << obdir << endl;
+        cout << "PROVED matmul obligation (" << (apriv ? "apriv: W+Y committed + X public"
+                                                       : "wpriv: W committed + 2 public claims")
+             << ") -> " << obdir << endl;
         return;
     }
     sc.claim_X = claim_X; sc.claim_W = claim_W;
@@ -405,11 +456,14 @@ static bool verify(const string& obdir, const string& seed,
                    const Commitment& gen_in, const Commitment& gen_out,
                    const G1Jacobian_t& Q,
                    const string& vaccdir = "", const string& obid = "",
-                   const string& wvaccdir = "", const G1Jacobian_t* Hp = nullptr) {
+                   const string& wvaccdir = "", const G1Jacobian_t* Hp = nullptr,
+                   bool apriv = false) {
     const bool claim_mode = !vaccdir.empty();
     const bool wpriv = !wvaccdir.empty();
     if (wpriv && (!claim_mode || !Hp))
         throw runtime_error("wpriv verify needs claim mode and H");
+    if (apriv && !wpriv)
+        throw runtime_error("apriv verify builds on wpriv");
     BoTimer prof("fc_verify");
     const uint B_pad = 1u << ceilLog2(B), IN_pad = 1u << ceilLog2(IN),
                OUT_pad = 1u << ceilLog2(OUT);
@@ -433,9 +487,10 @@ static bool verify(const string& obdir, const string& seed,
     WscProof wsc;
     const uint L = ceilLog2(IN);
     if (wpriv) {
-        wsc = read_wsc(obdir + "/wsc.bin");
+        wsc = read_wsc(obdir + "/wsc.bin", apriv);
         if (wsc.cps.size() != 3 * L) { cout << "REJECT: round count" << endl; return false; }
-        sc.claim = wsc.claim; sc.claim_X = wsc.claim_X;
+        sc.claim_X = wsc.claim_X;
+        if (!apriv) sc.claim = wsc.claim;   // apriv: initial claim is committed
     } else {
         sc = read_sumcheck(obdir + "/sumcheck.bin");
         if (sc.ev.size() != 3 * L) { cout << "REJECT: round count" << endl; return false; }
@@ -448,12 +503,13 @@ static bool verify(const string& obdir, const string& seed,
     absorb_g1_tensor(tr, "com_Y", com_Y);
     auto u_batch = fs_challenge_vec(tr, ceilLog2(B));
     auto u_output = fs_challenge_vec(tr, ceilLog2(OUT));
-    absorb_fr(tr, "claim", sc.claim);
+    if (apriv) absorb_g1(tr, "Cclaim", wsc.C_claim);   // committed initial claim
+    else       absorb_fr(tr, "claim", sc.claim);
     prof.lap("absorb");
 
     Fr_t cur = sc.claim;
     G1Jacobian_t C_cur;
-    if (wpriv) C_cur = h_mul(Q, sc.claim);   // public initial claim, zero blind
+    if (wpriv) C_cur = apriv ? wsc.C_claim : h_mul(Q, sc.claim);
     vector<Fr_t> xs;
     for (uint r = 0; r < L; r++) {
         Fr_t x;
@@ -526,11 +582,27 @@ static bool verify(const string& obdir, const string& seed,
             claim_emit(vaccdir, c);
         };
         mk("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch, wsc.claim_X);
-        mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, wsc.claim);
+        if (apriv) {
+            // D5: Y recomputed as a Committed claim (ceval = the FS-bound
+            // C_claim) into the verifier's WEIGHT/hiding accumulator.
+            BoClaim c;
+            c.id = obid + ":Y";
+            c.comref = obdir + "/com_Y.bin";
+            c.domain = OUT_pad; c.n_rows = B_pad;
+            c.point = u_output;
+            c.point.insert(c.point.end(), u_batch.begin(), u_batch.end());
+            c.tag = BO_EVAL_COMMITTED;
+            c.ceval = wsc.C_claim;
+            claim_emit(wvaccdir, c);
+        } else {
+            mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, wsc.claim);
+        }
         drvstate_emit(vaccdir, obid, tr);
         drvstate_emit(wvaccdir, obid, tr);
         prof.lap("claim_emit");
-        cout << "ACCEPT-conditional (wpriv: 1 committed + 2 public claims emitted)" << endl;
+        cout << "ACCEPT-conditional (" << (apriv ? "apriv: 2 committed (W,Y) + X public"
+                                                 : "wpriv: 1 committed + 2 public claims")
+             << " emitted)" << endl;
         return true;
     }
 
@@ -930,6 +1002,132 @@ static bool selftest_case_wpriv(uint B, uint IN, uint OUT) {
     return ok;
 }
 
+// apriv selftest (D5 activation privacy): the OUTPUT activation Y is hidden on
+// top of weight privacy. W and Y are committed claims (hiding batch), X stays
+// public. D5 leak regression: the Y MLE eval (claim) AND claim_W must appear in
+// NO verifier-consumed artifact. Every forgery still rejects at a named locus.
+static bool selftest_case_apriv(uint B, uint IN, uint OUT) {
+    cout << "=== selftest (apriv mode) B=" << B << " IN=" << IN << " OUT=" << OUT
+         << " ===" << endl;
+    const uint IN_pad = 1u << ceilLog2(IN), OUT_pad = 1u << ceilLog2(OUT);
+    string dir = "/tmp/zkob_fc_selftest_ap";
+    { string c = "rm -rf " + dir; system(c.c_str()); }
+    mkdir(dir.c_str(), 0755);
+    string acc = dir + "/acc", wacc = dir + "/wacc";
+    mkdir(acc.c_str(), 0755); mkdir(wacc.c_str(), 0755);
+    string run_seed = "selftest";
+    string seed = "selftest:matmul";
+    string obid = "selftest.matmul";
+
+    FrTensor X = FrTensor::random_int(B * IN, 8);
+    FrTensor W = FrTensor::random_int(IN * OUT, 8);
+    map<uint32_t, Commitment*> genobj;
+    map<uint32_t, string> genpaths;
+    for (uint32_t G : {IN_pad, OUT_pad})
+        if (!genobj.count(G)) {
+            genobj[G] = new Commitment(Commitment::random(G));
+            genpaths[G] = dir + "/gen" + to_string(G) + ".bin";
+            genobj[G]->save(genpaths[G]);
+        }
+    Commitment& gen_in = *genobj[IN_pad];
+    Commitment& gen_out = *genobj[OUT_pad];
+    string qpath = dir + "/q.bin";
+    Commitment::random(2).save(qpath);
+    Commitment qg(qpath);
+    G1Jacobian_t Q = qg(0), H = qg(1);
+
+    // D1: hiding registration of W (as in the wpriv path)
+    string comW_path = dir + "/com_W.bin";
+    string blindpath = dir + "/com_W.blinds.bin";
+    {
+        G1TensorJacobian comW = gen_out.commit(W.pad({IN, OUT}));
+        vector<Fr_t> s(IN_pad);
+        for (auto& x : s) x = wp_rand();
+        wp_hide_rows(comW, s, H);
+        comW.save(comW_path);
+        wp_blinds_save(blindpath, s);
+    }
+
+    prove(dir, seed, X, W, B, IN, OUT, gen_in, gen_out, Q, "", acc, obid,
+          comW_path, wacc, blindpath, &H, /*apriv=*/true);
+
+    int vacc_n = 0;
+    auto pipeline = [&](string& locus) -> bool {
+        string vacc = dir + "/vacc" + to_string(vacc_n);
+        string wvacc = dir + "/wvacc" + to_string(vacc_n);
+        vacc_n++;
+        mkdir(vacc.c_str(), 0755); mkdir(wvacc.c_str(), 0755);
+        if (!verify(dir, seed, B, IN, OUT, comW_path, gen_in, gen_out, Q,
+                    vacc, obid, wvacc, &H, /*apriv=*/true)) {
+            locus = "driver"; return false;
+        }
+        if (!batch_verify(acc, vacc, run_seed, genpaths, qpath, &locus))
+            return false;
+        if (!wbatch_verify(wacc, wvacc, run_seed, genpaths, qpath, &locus))
+            return false;
+        return true;
+    };
+
+    int total = 0, fail = 0;
+    auto expect = [&](const string& what, const string& want) {
+        string locus;
+        bool acc_ok = pipeline(locus);
+        bool ok = (want == "accept") ? acc_ok : (!acc_ok && locus == want);
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] " << what
+             << " -> expected " << want << ", got " << (acc_ok ? "accept" : locus) << endl;
+    };
+    auto check = [&](const string& what, bool ok) {
+        total++; if (!ok) fail++;
+        cout << "  [" << (ok ? "PASS" : "FAIL") << "] " << what << endl;
+    };
+
+    batch_prove(acc, run_seed, genpaths, qpath);
+    wbatch_prove(wacc, run_seed, genpaths, qpath);
+    expect("honest (driver + public batch[X] + hiding batch[W,Y])", "accept");
+
+    // ---- D5 leak regression: the Y eval (claim) AND claim_W must be absent ----
+    {
+        auto cbl = wp_cblinds_load(wacc);
+        Fr_t claim_Y = cbl.at(obid + ":Y").first;     // the hidden output eval
+        Fr_t claim_W = cbl.at(obid + ":W").first;
+        vector<string> artifacts = {
+            dir + "/dims.bin", dir + "/com_X.bin", dir + "/com_Y.bin",
+            dir + "/wsc.bin", comW_path,
+            acc + "/claims.bin", acc + "/drvstates.bin",
+            acc + "/batch_sumcheck.bin", acc + "/batch_vfin.bin",
+            wacc + "/claims.bin", wacc + "/drvstates.bin",
+            wacc + "/wbatch_sumcheck.bin", wacc + "/wbatch_vfin.bin"};
+        for (auto& g : genpaths) {
+            artifacts.push_back(acc + "/ipa_batch_" + to_string(g.first) + ".bin");
+            artifacts.push_back(wacc + "/wipa_batch_" + to_string(g.first) + ".bin");
+        }
+        auto hitsY = wp_leak_scan(artifacts, claim_Y);
+        for (auto& h : hitsY) cout << "    LEAK: claim_Y found in " << h << endl;
+        check("D5: Y eval (claim) absent from every proof artifact", hitsY.empty());
+        auto hitsW = wp_leak_scan(artifacts, claim_W);
+        check("D5: claim_W still absent (weight privacy intact)", hitsW.empty());
+    }
+
+    // ---- forgeries ----
+    tamper_byte(dir + "/com_Y.bin", 24, +1);
+    expect("hidden com_Y tamper (driver transcript divergence)", "driver");
+    tamper_byte(dir + "/com_Y.bin", 24, -1);
+    tamper_byte(dir + "/wsc.bin", -1, +1);            // terminal Schnorr z (last byte)
+    expect("wsc terminal Schnorr response tamper", "driver");
+    tamper_byte(dir + "/wsc.bin", -1, -1);
+    tamper_byte(wacc + "/claims.bin", -1, +1);        // a committed claim's bytes
+    expect("hiding-batch claims.bin tamper (W or Y)", "wclaims_match");
+    tamper_byte(wacc + "/claims.bin", -1, -1);
+    expect("restored", "accept");
+
+    for (auto& g : genobj) delete g.second;
+    bool ok = fail == 0;
+    cout << (ok ? "CASE PASS" : "CASE FAIL") << " (apriv mode, " << (total - fail)
+         << "/" << total << ")" << endl;
+    return ok;
+}
+
 #include "zkob_serve.cuh"
 static int zkw_run1(int argc, char* argv[]) {
     vrf_selfcheck();
@@ -938,9 +1136,13 @@ static int zkw_run1(int argc, char* argv[]) {
     // --hiding <q.bin> <blinds_out>
     int base_argc = argc;
     string cm_a, cm_b, cm_c, wp_a, wp_b, hd_a, hd_b;
+    bool ap_flag = false;
     for (int i = 2; i < argc; i++) {
         string s = argv[i];
-        if (s == "--claims") {
+        if (s == "--apriv") {
+            if (base_argc == argc) base_argc = i;
+            ap_flag = true;
+        } else if (s == "--claims") {
             if (base_argc == argc) base_argc = i;
             if (i + 1 < argc) cm_a = argv[i + 1];
             if (i + 2 < argc) cm_b = argv[i + 2];
@@ -970,7 +1172,9 @@ static int zkw_run1(int argc, char* argv[]) {
         bool f = selftest_case_claims(16, 12, 5);  // two domains in one batch
         bool g = selftest_case_wpriv(4, 6, 3);     // Stage D: weight privacy
         bool h = selftest_case_wpriv(16, 12, 5);   // two domains, wpriv
-        bool ok = a && b && c && d && e && f && g && h;
+        bool i = selftest_case_apriv(4, 6, 3);     // Stage D5: + activation (Y) privacy
+        bool j = selftest_case_apriv(16, 12, 5);   // two domains, apriv
+        bool ok = a && b && c && d && e && f && g && h && i && j;
         cout << (ok ? "ZKOB-FC SELFTEST: ALL PASS" : "ZKOB-FC SELFTEST: FAIL") << endl;
         return ok ? 0 : 1;
     }
@@ -1013,7 +1217,7 @@ static int zkw_run1(int argc, char* argv[]) {
             Hslot = qg(1); Hp = &Hslot;
         }
         prove(obdir, seed, X, W, B, IN, OUT, gen_in, gen_out, qg(0),
-              base_argc == 13 ? argv[12] : "", cm_a, cm_b, cm_c, wp_a, wp_b, Hp);
+              base_argc == 13 ? argv[12] : "", cm_a, cm_b, cm_c, wp_a, wp_b, Hp, ap_flag);
         return 0;
     }
     if (mode == "verify" && base_argc == 11) {
@@ -1029,7 +1233,7 @@ static int zkw_run1(int argc, char* argv[]) {
             Hslot = qg(1); Hp = &Hslot;
         }
         return verify(obdir, seed, B, IN, OUT, argv[7], gen_in, gen_out, qg(0),
-                      cm_a, cm_b, wp_a, Hp) ? 0 : 1;
+                      cm_a, cm_b, wp_a, Hp, ap_flag) ? 0 : 1;
     }
     cerr << "usage: zkob_fc selftest | commit ... [--hiding <q.bin> <blinds_out>] | "
             "prove ... [--claims <accdir> <obid> <com_W>] [--wpriv <waccdir> <W-blinds>] | "
