@@ -215,45 +215,45 @@ opening_batch_w ACCEPT (1 claims, 1 tensors, 1 domains; all evals committed)
   [PASS] restored -> expected accept, got accept
 CASE PASS (wpriv mode, 15/15)
 === selftest (apriv mode) B=4 IN=6 OUT=3 ===
-PROVED matmul obligation (apriv: W+Y committed + X public) -> /tmp/zkob_fc_selftest_ap
-ACCEPT-conditional (apriv: 2 committed (W,Y) + X public emitted)
-opening_batch ACCEPT (1 claims, 1 tensors, 1 domains)
-opening_batch_w ACCEPT (2 claims, 2 tensors, 1 domains; all evals committed)
-  [PASS] honest (driver + public batch[X] + hiding batch[W,Y]) -> expected accept, got accept
+PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
+  [PASS] honest (driver + hiding batch[W,X,Y]; product terminal) -> expected accept, got accept
+  [PASS] D5: X eval (claim_X) absent from every proof artifact
   [PASS] D5: Y eval (claim) absent from every proof artifact
   [PASS] D5: claim_W still absent (weight privacy intact)
 REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] hidden com_X tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
   [PASS] hidden com_Y tamper (driver transcript divergence) -> expected driver, got driver
-REJECT: terminal Schnorr (committed claim_W product)
-  [PASS] wsc terminal Schnorr response tamper -> expected driver, got driver
-ACCEPT-conditional (apriv: 2 committed (W,Y) + X public emitted)
-opening_batch ACCEPT (1 claims, 1 tensors, 1 domains)
+REJECT: terminal product proof (claim_X * claim_W)
+  [PASS] wsc terminal product-proof response tamper -> expected driver, got driver
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
 REJECT[opening_batch_w.wclaims_match]: prover weight claim list != verifier-recomputed list
-  [PASS] hiding-batch claims.bin tamper (W or Y) -> expected wclaims_match, got wclaims_match
-ACCEPT-conditional (apriv: 2 committed (W,Y) + X public emitted)
-opening_batch ACCEPT (1 claims, 1 tensors, 1 domains)
-opening_batch_w ACCEPT (2 claims, 2 tensors, 1 domains; all evals committed)
+  [PASS] hiding-batch claims.bin tamper (W/X/Y) -> expected wclaims_match, got wclaims_match
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
   [PASS] restored -> expected accept, got accept
-CASE PASS (apriv mode, 7/7)
+CASE PASS (apriv mode, 9/9)
 === selftest (apriv mode) B=16 IN=12 OUT=5 ===
-PROVED matmul obligation (apriv: W+Y committed + X public) -> /tmp/zkob_fc_selftest_ap
-ACCEPT-conditional (apriv: 2 committed (W,Y) + X public emitted)
-opening_batch ACCEPT (1 claims, 1 tensors, 1 domains)
-opening_batch_w ACCEPT (2 claims, 2 tensors, 1 domains; all evals committed)
-  [PASS] honest (driver + public batch[X] + hiding batch[W,Y]) -> expected accept, got accept
+PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
+  [PASS] honest (driver + hiding batch[W,X,Y]; product terminal) -> expected accept, got accept
+  [PASS] D5: X eval (claim_X) absent from every proof artifact
   [PASS] D5: Y eval (claim) absent from every proof artifact
   [PASS] D5: claim_W still absent (weight privacy intact)
 REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
+  [PASS] hidden com_X tamper (driver transcript divergence) -> expected driver, got driver
+REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
   [PASS] hidden com_Y tamper (driver transcript divergence) -> expected driver, got driver
-REJECT: terminal Schnorr (committed claim_W product)
-  [PASS] wsc terminal Schnorr response tamper -> expected driver, got driver
-ACCEPT-conditional (apriv: 2 committed (W,Y) + X public emitted)
-opening_batch ACCEPT (1 claims, 1 tensors, 1 domains)
+REJECT: terminal product proof (claim_X * claim_W)
+  [PASS] wsc terminal product-proof response tamper -> expected driver, got driver
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
 REJECT[opening_batch_w.wclaims_match]: prover weight claim list != verifier-recomputed list
-  [PASS] hiding-batch claims.bin tamper (W or Y) -> expected wclaims_match, got wclaims_match
-ACCEPT-conditional (apriv: 2 committed (W,Y) + X public emitted)
-opening_batch ACCEPT (1 claims, 1 tensors, 1 domains)
-opening_batch_w ACCEPT (2 claims, 2 tensors, 1 domains; all evals committed)
+  [PASS] hiding-batch claims.bin tamper (W/X/Y) -> expected wclaims_match, got wclaims_match
+ACCEPT-conditional (apriv: W,X,Y all committed emitted)
+opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
   [PASS] restored -> expected accept, got accept
-CASE PASS (apriv mode, 7/7)
+CASE PASS (apriv mode, 9/9)
 ZKOB-FC SELFTEST: ALL PASS

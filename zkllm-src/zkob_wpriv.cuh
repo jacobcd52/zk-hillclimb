@@ -241,6 +241,48 @@ static bool schnorr2_verify(const G1Jacobian_t& P, const Schnorr2& p,
                  h_add(p.A, h_mul(P, e)));
 }
 
+// D5: product proof — prove the committed value of C_z is the PRODUCT of the
+// committed values of C_x and C_w, in ZK (no pairing). Used for the fc terminal
+// cur = claim_X * claim_W once BOTH claim_X and claim_W are hidden (so the
+// one-hidden-factor Schnorr no longer applies). 3-move sigma; HVZK; soundness
+// reduces to DLOG. Checks (verifier):
+//   z_x*Q + s_x*H == t_x + e*C_x
+//   z_w*Q + s_w*H == t_w + e*C_w
+//   z_x*C_w + s_z*H == t_z + e*C_z      (holds iff z = x*w)
+struct ProdProof { G1Jacobian_t t_x, t_w, t_z; Fr_t z_x, z_w, s_x, s_w, s_z; };
+static ProdProof prod_prove(const Fr_t& x, const Fr_t& r_x,
+                            const Fr_t& w, const Fr_t& r_w,
+                            const Fr_t& z, const Fr_t& r_z,
+                            const G1Jacobian_t& C_w,
+                            const G1Jacobian_t& Q, const G1Jacobian_t& H,
+                            fs::Transcript& tr) {
+    Fr_t b_x = wp_rand(), b_w = wp_rand(), s1 = wp_rand(), s2 = wp_rand(), s3 = wp_rand();
+    ProdProof p;
+    p.t_x = ped_qh(b_x, s1, Q, H);
+    p.t_w = ped_qh(b_w, s2, Q, H);
+    p.t_z = h_add(h_mul(C_w, b_x), h_mul(H, s3));     // b_x*C_w + s3*H
+    absorb_g1(tr, "prtx", p.t_x); absorb_g1(tr, "prtw", p.t_w); absorb_g1(tr, "prtz", p.t_z);
+    Fr_t e = fs_challenge_fr(tr);
+    p.z_x = h_scalar(b_x, h_scalar(e, x, 2), 0);      // b_x + e*x
+    p.z_w = h_scalar(b_w, h_scalar(e, w, 2), 0);
+    p.s_x = h_scalar(s1, h_scalar(e, r_x, 2), 0);
+    p.s_w = h_scalar(s2, h_scalar(e, r_w, 2), 0);
+    Fr_t cross = h_scalar(r_z, h_scalar(x, r_w, 2), 1);  // r_z - x*r_w
+    p.s_z = h_scalar(s3, h_scalar(e, cross, 2), 0);
+    return p;
+}
+static bool prod_verify(const G1Jacobian_t& C_x, const G1Jacobian_t& C_w,
+                        const G1Jacobian_t& C_z, const ProdProof& p,
+                        const G1Jacobian_t& Q, const G1Jacobian_t& H,
+                        fs::Transcript& tr) {
+    absorb_g1(tr, "prtx", p.t_x); absorb_g1(tr, "prtw", p.t_w); absorb_g1(tr, "prtz", p.t_z);
+    Fr_t e = fs_challenge_fr(tr);
+    bool c1 = g1_eq(ped_qh(p.z_x, p.s_x, Q, H), h_add(p.t_x, h_mul(C_x, e)));
+    bool c2 = g1_eq(ped_qh(p.z_w, p.s_w, Q, H), h_add(p.t_w, h_mul(C_w, e)));
+    bool c3 = g1_eq(h_add(h_mul(C_w, p.z_x), h_mul(H, p.s_z)), h_add(p.t_z, h_mul(C_z, e)));
+    return c1 && c2 && c3;
+}
+
 // =====================  D3: the ZK IPA  ====================================
 // Relation: P0 = <g, a> + <a, b>*Q + beta*H  (b public ME weights).
 // Rounds are the header IPA's rounds plus fresh blinds on L/R; the final

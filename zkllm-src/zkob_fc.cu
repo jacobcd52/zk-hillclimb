@@ -126,38 +126,51 @@ static SumcheckProof read_sumcheck(const string& path) {
 // the terminal Schnorr. NO plaintext round eval and NO claim_W anywhere.
 struct WscProof {
     vector<G1Jacobian_t> cps;   // 3 round commitments per round
-    Fr_t claim, claim_X;
+    Fr_t claim, claim_X;        // non-apriv: public terminals
     G1Jacobian_t C_W;
-    SchnorrH sch;
-    G1Jacobian_t C_claim;       // apriv (D5): committed initial claim; hides the
-                                // Y MLE eval (= ceval of the committed Y claim)
+    SchnorrH sch;               // non-apriv (wpriv): one-hidden-factor terminal
+    G1Jacobian_t C_claim;       // apriv (D5): committed initial claim = Y ceval
+    G1Jacobian_t C_X;           // apriv (D5): committed input claim (hides X eval)
+    ProdProof prod;             // apriv (D5): cur = claim_X*claim_W (both hidden)
 };
-// apriv replaces the public `claim` scalar with the committed C_claim (so the
-// output activation eval never appears in plaintext). Non-apriv layout is
-// byte-identical to before (the existing wpriv selftest offsets rely on this).
+// Two on-disk layouts, mode-selected (the verifier knows its mode from --apriv):
+//   wpriv (non-apriv): [cps][claim][claim_X][C_W][sch]      (byte-identical to before)
+//   apriv (full):      [cps][C_claim][C_X][C_W][prod]        (no plaintext evals)
 static void write_wsc(const string& path, const WscProof& p, bool apriv = false) {
     FILE* f = open_or_die(path, "wb");
     write_pod_vec(f, p.cps);
-    if (apriv) fwrite(&p.C_claim, sizeof(G1Jacobian_t), 1, f);
-    else       fwrite(&p.claim, sizeof(Fr_t), 1, f);
-    fwrite(&p.claim_X, sizeof(Fr_t), 1, f);
-    fwrite(&p.C_W, sizeof(G1Jacobian_t), 1, f);
-    fwrite(&p.sch.A, sizeof(G1Jacobian_t), 1, f);
-    fwrite(&p.sch.z, sizeof(Fr_t), 1, f);
+    if (apriv) {
+        fwrite(&p.C_claim, sizeof(G1Jacobian_t), 1, f);
+        fwrite(&p.C_X, sizeof(G1Jacobian_t), 1, f);
+        fwrite(&p.C_W, sizeof(G1Jacobian_t), 1, f);
+        fwrite(&p.prod, sizeof(ProdProof), 1, f);
+    } else {
+        fwrite(&p.claim, sizeof(Fr_t), 1, f);
+        fwrite(&p.claim_X, sizeof(Fr_t), 1, f);
+        fwrite(&p.C_W, sizeof(G1Jacobian_t), 1, f);
+        fwrite(&p.sch.A, sizeof(G1Jacobian_t), 1, f);
+        fwrite(&p.sch.z, sizeof(Fr_t), 1, f);
+    }
     fclose(f);
 }
 static WscProof read_wsc(const string& path, bool apriv = false) {
     FILE* f = open_or_die(path, "rb");
     WscProof p;
     p.cps = read_pod_vec<G1Jacobian_t>(f);
-    bool head = apriv ? (fread(&p.C_claim, sizeof(G1Jacobian_t), 1, f) == 1)
-                      : (fread(&p.claim, sizeof(Fr_t), 1, f) == 1);
-    if (!head ||
-        fread(&p.claim_X, sizeof(Fr_t), 1, f) != 1 ||
-        fread(&p.C_W, sizeof(G1Jacobian_t), 1, f) != 1 ||
-        fread(&p.sch.A, sizeof(G1Jacobian_t), 1, f) != 1 ||
-        fread(&p.sch.z, sizeof(Fr_t), 1, f) != 1)
-        throw runtime_error("read_wsc: body");
+    bool ok;
+    if (apriv) {
+        ok = fread(&p.C_claim, sizeof(G1Jacobian_t), 1, f) == 1 &&
+             fread(&p.C_X, sizeof(G1Jacobian_t), 1, f) == 1 &&
+             fread(&p.C_W, sizeof(G1Jacobian_t), 1, f) == 1 &&
+             fread(&p.prod, sizeof(ProdProof), 1, f) == 1;
+    } else {
+        ok = fread(&p.claim, sizeof(Fr_t), 1, f) == 1 &&
+             fread(&p.claim_X, sizeof(Fr_t), 1, f) == 1 &&
+             fread(&p.C_W, sizeof(G1Jacobian_t), 1, f) == 1 &&
+             fread(&p.sch.A, sizeof(G1Jacobian_t), 1, f) == 1 &&
+             fread(&p.sch.z, sizeof(Fr_t), 1, f) == 1;
+    }
+    if (!ok) throw runtime_error("read_wsc: body");
     fclose(f);
     return p;
 }
@@ -214,13 +227,15 @@ static void prove(const string& obdir, const string& seed,
         wp_hide_rows(com_W, s, *Hp);
     }
     G1TensorJacobian com_Y = gen_out.commit(Y_padded);
-    vector<Fr_t> s_Y;
+    vector<Fr_t> s_X, s_Y;
     if (apriv) {
-        // D5: hide the OUTPUT activation commitment (fresh per-proof row blinds;
-        // com_Y has B_pad row points -> B_pad blinds). Must happen before the
-        // commitment is saved/absorbed so the transcript binds the hiding form.
-        s_Y.resize(B_pad);
+        // D5: hide BOTH activation commitments (fresh per-proof row blinds;
+        // com_X and com_Y each have B_pad row points). Must happen before the
+        // commitments are saved/absorbed so the transcript binds the hiding form.
+        s_X.resize(B_pad); s_Y.resize(B_pad);
+        for (auto& z : s_X) z = wp_rand();
         for (auto& z : s_Y) z = wp_rand();
+        wp_hide_rows(com_X, s_X, *Hp);
         wp_hide_rows(com_Y, s_Y, *Hp);
     }
     com_X.save(obdir + "/com_X.bin");
@@ -325,40 +340,74 @@ static void prove(const string& obdir, const string& seed,
     if (!fr_eq(cur, h_scalar(claim_X, claim_W, 2)))
         throw runtime_error("terminal product mismatch (witness bug)");
     if (wpriv) {
-        // D2/D3 terminal: claim_W ships ONLY inside C_W; the product check
-        // becomes a Schnorr PoK of delta with
-        //   C_cur - claim_X*C_W = (tau - claim_X*t_W)*H = delta*H
         Fr_t t_W = wp_rand();
         G1Jacobian_t C_W = ped_qh(claim_W, t_W, Q, *Hp);
+        wsc.C_W = C_W;
+        string witW = waccdir + "/wit_" + obid + "_W.fr";
+        W_padded.save(witW);
+        auto emit_committed = [&](const string& tensor, const string& comref,
+                                  uint32_t domain, uint32_t n_rows,
+                                  const vector<Fr_t>& u_col, const vector<Fr_t>& u_row,
+                                  const G1Jacobian_t& ceval, const Fr_t& ev,
+                                  const Fr_t& blind, const string& witp, const string& blindp) {
+            BoClaim c;
+            c.id = obid + ":" + tensor;
+            c.comref = comref;
+            c.domain = domain; c.n_rows = n_rows;
+            c.point = u_col;
+            c.point.insert(c.point.end(), u_row.begin(), u_row.end());
+            c.tag = BO_EVAL_COMMITTED;
+            c.ceval = ceval;
+            claim_emit(waccdir, c);
+            wp_cblind_emit(waccdir, c.id, ev, blind);
+            witref_emit(waccdir, comref, witp);
+            wp_blindref_emit(waccdir, comref, blindp);
+        };
+        if (apriv) {
+            // D5 terminal: claim_X is hidden too, so cur = claim_X*claim_W is a
+            // product of TWO committed secrets -> product sigma-proof (the
+            // one-hidden-factor Schnorr no longer applies). W, X, Y ALL committed
+            // into the hiding batch; this obligation contributes no public claim.
+            Fr_t t_X = wp_rand();
+            G1Jacobian_t C_X = ped_qh(claim_X, t_X, Q, *Hp);
+            absorb_g1(tr, "C_X", C_X);
+            absorb_g1(tr, "C_W", C_W);
+            wsc.C_X = C_X;
+            wsc.C_claim = C_claim;
+            wsc.prod = prod_prove(claim_X, t_X, claim_W, t_W, cur, tau, C_W, Q, *Hp, tr);
+            write_wsc(obdir + "/wsc.bin", wsc, true);
+            string witX = waccdir + "/wit_" + obid + "_X.fr";
+            string witY = waccdir + "/wit_" + obid + "_Y.fr";
+            X_padded.save(witX); Y_padded.save(witY);
+            string xblindpath = waccdir + "/comX_" + obid + ".blinds.bin";
+            string yblindpath = waccdir + "/comY_" + obid + ".blinds.bin";
+            wp_blinds_save(xblindpath, s_X);
+            wp_blinds_save(yblindpath, s_Y);
+            emit_committed("W", comW_path, OUT_pad, IN_pad, u_output, u_input,
+                           C_W, claim_W, t_W, witW, wblindpath);
+            emit_committed("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch,
+                           C_X, claim_X, t_X, witX, xblindpath);
+            emit_committed("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch,
+                           C_claim, claim, t_Y, witY, yblindpath);
+            drvstate_emit(accdir, obid, tr);
+            drvstate_emit(waccdir, obid, tr);
+            cout << "PROVED matmul obligation (apriv: W,X,Y all committed) -> " << obdir << endl;
+            return;
+        }
+        // ---- wpriv only (weights private, activations public) ----
+        // claim_W ships ONLY inside C_W; the product check is a Schnorr PoK of
+        //   C_cur - claim_X*C_W = (tau - claim_X*t_W)*H = delta*H  (claim_X public)
         absorb_fr(tr, "claim_X", claim_X);
         absorb_g1(tr, "C_W", C_W);
         wsc.claim_X = claim_X;
-        wsc.C_W = C_W;
-        wsc.C_claim = C_claim;        // apriv: hidden initial claim (= Y ceval)
         Fr_t delta = h_scalar(tau, h_scalar(claim_X, t_W, 2), 1);
         wsc.sch = schnorr_h_prove(delta, *Hp, tr);
-        write_wsc(obdir + "/wsc.bin", wsc, apriv);
-        // claim routing: W (Committed) -> weight accumulator with the blind
-        // stash; X (plain) -> public accumulator; Y -> public (wpriv) OR
-        // Committed into the hiding batch (apriv).
-        string witW = waccdir + "/wit_" + obid + "_W.fr";
+        write_wsc(obdir + "/wsc.bin", wsc, false);
         string witX = accdir + "/wit_" + obid + "_X.fr";
-        string witY = (apriv ? waccdir : accdir) + "/wit_" + obid + "_Y.fr";
-        W_padded.save(witW); X_padded.save(witX); Y_padded.save(witY);
-        {
-            BoClaim c;
-            c.id = obid + ":W";
-            c.comref = comW_path;
-            c.domain = OUT_pad; c.n_rows = IN_pad;
-            c.point = u_output;
-            c.point.insert(c.point.end(), u_input.begin(), u_input.end());
-            c.tag = BO_EVAL_COMMITTED;
-            c.ceval = C_W;
-            claim_emit(waccdir, c);
-            wp_cblind_emit(waccdir, c.id, claim_W, t_W);
-            witref_emit(waccdir, comW_path, witW);
-            wp_blindref_emit(waccdir, comW_path, wblindpath);
-        }
+        string witY = accdir + "/wit_" + obid + "_Y.fr";
+        X_padded.save(witX); Y_padded.save(witY);
+        emit_committed("W", comW_path, OUT_pad, IN_pad, u_output, u_input,
+                       C_W, claim_W, t_W, witW, wblindpath);
         auto mk = [&](const string& tensor, const string& comref, uint32_t domain,
                       uint32_t n_rows, const vector<Fr_t>& u_col,
                       const vector<Fr_t>& u_row, const Fr_t& eval) {
@@ -373,32 +422,12 @@ static void prove(const string& obdir, const string& seed,
         };
         mk("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch, claim_X);
         witref_emit(accdir, obdir + "/com_X.bin", witX);
-        if (apriv) {
-            // D5: Y committed (ceval = C_claim) into the hiding batch; com_Y is
-            // hidden, blinds stashed prover-private and blindref'd like W.
-            string yblindpath = waccdir + "/comY_" + obid + ".blinds.bin";
-            wp_blinds_save(yblindpath, s_Y);
-            BoClaim c;
-            c.id = obid + ":Y";
-            c.comref = obdir + "/com_Y.bin";
-            c.domain = OUT_pad; c.n_rows = B_pad;
-            c.point = u_output;
-            c.point.insert(c.point.end(), u_batch.begin(), u_batch.end());
-            c.tag = BO_EVAL_COMMITTED;
-            c.ceval = C_claim;
-            claim_emit(waccdir, c);
-            wp_cblind_emit(waccdir, c.id, claim, t_Y);
-            witref_emit(waccdir, obdir + "/com_Y.bin", witY);
-            wp_blindref_emit(waccdir, obdir + "/com_Y.bin", yblindpath);
-        } else {
-            mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, claim);
-            witref_emit(accdir, obdir + "/com_Y.bin", witY);
-        }
+        mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, claim);
+        witref_emit(accdir, obdir + "/com_Y.bin", witY);
         drvstate_emit(accdir, obid, tr);
         drvstate_emit(waccdir, obid, tr);
-        cout << "PROVED matmul obligation (" << (apriv ? "apriv: W+Y committed + X public"
-                                                       : "wpriv: W committed + 2 public claims")
-             << ") -> " << obdir << endl;
+        cout << "PROVED matmul obligation (wpriv: W committed + 2 public claims) -> "
+             << obdir << endl;
         return;
     }
     sc.claim_X = claim_X; sc.claim_W = claim_W;
@@ -489,8 +518,8 @@ static bool verify(const string& obdir, const string& seed,
     if (wpriv) {
         wsc = read_wsc(obdir + "/wsc.bin", apriv);
         if (wsc.cps.size() != 3 * L) { cout << "REJECT: round count" << endl; return false; }
-        sc.claim_X = wsc.claim_X;
-        if (!apriv) sc.claim = wsc.claim;   // apriv: initial claim is committed
+        if (!apriv) { sc.claim = wsc.claim; sc.claim_X = wsc.claim_X; }
+        // apriv: initial claim AND claim_X are committed (C_claim, C_X) — no plaintext
     } else {
         sc = read_sumcheck(obdir + "/sumcheck.bin");
         if (sc.ev.size() != 3 * L) { cout << "REJECT: round count" << endl; return false; }
@@ -537,7 +566,17 @@ static bool verify(const string& obdir, const string& seed,
     }
     vector<Fr_t> u_input(L);
     for (uint i = 0; i < L; i++) u_input[i] = xs[L - 1 - i];
-    if (wpriv) {
+    if (wpriv && apriv) {
+        // terminal: product proof that C_cur commits to claim_X*claim_W, with
+        // BOTH factors hidden (C_X, C_W). A prover with cur != claim_X*claim_W
+        // would need a Q/H relation -> DLOG.
+        absorb_g1(tr, "C_X", wsc.C_X);
+        absorb_g1(tr, "C_W", wsc.C_W);
+        if (!prod_verify(wsc.C_X, wsc.C_W, C_cur, wsc.prod, Q, *Hp, tr)) {
+            cout << "REJECT: terminal product proof (claim_X * claim_W)" << endl;
+            return false;
+        }
+    } else if (wpriv) {
         // terminal: PoK of the H-component of C_cur - claim_X*C_W (a prover
         // with cur != claim_X*claim_W would need a Q/H relation -> DLOG)
         absorb_fr(tr, "claim_X", wsc.claim_X);
@@ -556,51 +595,47 @@ static bool verify(const string& obdir, const string& seed,
     prof.lap("rounds");
 
     if (wpriv) {
-        // claim recomputation: W (Committed, ceval = the FS-bound C_W) into
-        // the verifier's WEIGHT accumulator; X, Y (plain) into the public one
-        {
-            BoClaim c;
-            c.id = obid + ":W";
-            c.comref = com_W_path;
-            c.domain = OUT_pad; c.n_rows = IN_pad;
-            c.point = u_output;
-            c.point.insert(c.point.end(), u_input.begin(), u_input.end());
-            c.tag = BO_EVAL_COMMITTED;
-            c.ceval = wsc.C_W;
-            claim_emit(wvaccdir, c);
-        }
-        auto mk = [&](const string& tensor, const string& comref, uint32_t domain,
-                      uint32_t n_rows, const vector<Fr_t>& u_col,
-                      const vector<Fr_t>& u_row, const Fr_t& eval) {
+        // claim recomputation. apriv: W, X, Y ALL Committed (ceval = the
+        // FS-bound C_W / C_X / C_claim) into the verifier's hiding accumulator;
+        // no public claims. wpriv-only: W Committed; X, Y plain into public.
+        auto emit_committed = [&](const string& tensor, const string& comref,
+                                  uint32_t domain, uint32_t n_rows,
+                                  const vector<Fr_t>& u_col, const vector<Fr_t>& u_row,
+                                  const G1Jacobian_t& ceval) {
             BoClaim c;
             c.id = obid + ":" + tensor;
             c.comref = comref;
             c.domain = domain; c.n_rows = n_rows;
             c.point = u_col;
             c.point.insert(c.point.end(), u_row.begin(), u_row.end());
-            c.eval = eval;
-            claim_emit(vaccdir, c);
-        };
-        mk("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch, wsc.claim_X);
-        if (apriv) {
-            // D5: Y recomputed as a Committed claim (ceval = the FS-bound
-            // C_claim) into the verifier's WEIGHT/hiding accumulator.
-            BoClaim c;
-            c.id = obid + ":Y";
-            c.comref = obdir + "/com_Y.bin";
-            c.domain = OUT_pad; c.n_rows = B_pad;
-            c.point = u_output;
-            c.point.insert(c.point.end(), u_batch.begin(), u_batch.end());
             c.tag = BO_EVAL_COMMITTED;
-            c.ceval = wsc.C_claim;
+            c.ceval = ceval;
             claim_emit(wvaccdir, c);
+        };
+        emit_committed("W", com_W_path, OUT_pad, IN_pad, u_output, u_input, wsc.C_W);
+        if (apriv) {
+            emit_committed("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch, wsc.C_X);
+            emit_committed("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, wsc.C_claim);
         } else {
+            auto mk = [&](const string& tensor, const string& comref, uint32_t domain,
+                          uint32_t n_rows, const vector<Fr_t>& u_col,
+                          const vector<Fr_t>& u_row, const Fr_t& eval) {
+                BoClaim c;
+                c.id = obid + ":" + tensor;
+                c.comref = comref;
+                c.domain = domain; c.n_rows = n_rows;
+                c.point = u_col;
+                c.point.insert(c.point.end(), u_row.begin(), u_row.end());
+                c.eval = eval;
+                claim_emit(vaccdir, c);
+            };
+            mk("X", obdir + "/com_X.bin", IN_pad, B_pad, u_input, u_batch, wsc.claim_X);
             mk("Y", obdir + "/com_Y.bin", OUT_pad, B_pad, u_output, u_batch, wsc.claim);
         }
         drvstate_emit(vaccdir, obid, tr);
         drvstate_emit(wvaccdir, obid, tr);
         prof.lap("claim_emit");
-        cout << "ACCEPT-conditional (" << (apriv ? "apriv: 2 committed (W,Y) + X public"
+        cout << "ACCEPT-conditional (" << (apriv ? "apriv: W,X,Y all committed"
                                                  : "wpriv: 1 committed + 2 public claims")
              << " emitted)" << endl;
         return true;
@@ -1002,10 +1037,12 @@ static bool selftest_case_wpriv(uint B, uint IN, uint OUT) {
     return ok;
 }
 
-// apriv selftest (D5 activation privacy): the OUTPUT activation Y is hidden on
-// top of weight privacy. W and Y are committed claims (hiding batch), X stays
-// public. D5 leak regression: the Y MLE eval (claim) AND claim_W must appear in
-// NO verifier-consumed artifact. Every forgery still rejects at a named locus.
+// apriv selftest (D5 activation privacy, FULL): BOTH input X and output Y are
+// hidden on top of weight privacy. W, X, Y are all committed claims in the
+// hiding batch; the terminal cur=claim_X*claim_W is a product of two committed
+// secrets discharged by the product sigma-proof; this obligation contributes no
+// public claim. D5 leak regression: claim_X, claim (Y eval), AND claim_W must
+// appear in NO verifier-consumed artifact. Every forgery rejects at a named locus.
 static bool selftest_case_apriv(uint B, uint IN, uint OUT) {
     cout << "=== selftest (apriv mode) B=" << B << " IN=" << IN << " OUT=" << OUT
          << " ===" << endl;
@@ -1061,8 +1098,8 @@ static bool selftest_case_apriv(uint B, uint IN, uint OUT) {
                     vacc, obid, wvacc, &H, /*apriv=*/true)) {
             locus = "driver"; return false;
         }
-        if (!batch_verify(acc, vacc, run_seed, genpaths, qpath, &locus))
-            return false;
+        // full apriv: no public activation claims from this obligation -> only
+        // the hiding (weight) batch runs.
         if (!wbatch_verify(wacc, wvacc, run_seed, genpaths, qpath, &locus))
             return false;
         return true;
@@ -1082,26 +1119,25 @@ static bool selftest_case_apriv(uint B, uint IN, uint OUT) {
         cout << "  [" << (ok ? "PASS" : "FAIL") << "] " << what << endl;
     };
 
-    batch_prove(acc, run_seed, genpaths, qpath);
     wbatch_prove(wacc, run_seed, genpaths, qpath);
-    expect("honest (driver + public batch[X] + hiding batch[W,Y])", "accept");
+    expect("honest (driver + hiding batch[W,X,Y]; product terminal)", "accept");
 
-    // ---- D5 leak regression: the Y eval (claim) AND claim_W must be absent ----
+    // ---- D5 leak regression: claim_X, Y eval (claim), AND claim_W absent ----
     {
         auto cbl = wp_cblinds_load(wacc);
+        Fr_t claim_X = cbl.at(obid + ":X").first;     // the hidden input eval
         Fr_t claim_Y = cbl.at(obid + ":Y").first;     // the hidden output eval
         Fr_t claim_W = cbl.at(obid + ":W").first;
         vector<string> artifacts = {
             dir + "/dims.bin", dir + "/com_X.bin", dir + "/com_Y.bin",
             dir + "/wsc.bin", comW_path,
-            acc + "/claims.bin", acc + "/drvstates.bin",
-            acc + "/batch_sumcheck.bin", acc + "/batch_vfin.bin",
             wacc + "/claims.bin", wacc + "/drvstates.bin",
             wacc + "/wbatch_sumcheck.bin", wacc + "/wbatch_vfin.bin"};
-        for (auto& g : genpaths) {
-            artifacts.push_back(acc + "/ipa_batch_" + to_string(g.first) + ".bin");
+        for (auto& g : genpaths)
             artifacts.push_back(wacc + "/wipa_batch_" + to_string(g.first) + ".bin");
-        }
+        auto hitsX = wp_leak_scan(artifacts, claim_X);
+        for (auto& h : hitsX) cout << "    LEAK: claim_X found in " << h << endl;
+        check("D5: X eval (claim_X) absent from every proof artifact", hitsX.empty());
         auto hitsY = wp_leak_scan(artifacts, claim_Y);
         for (auto& h : hitsY) cout << "    LEAK: claim_Y found in " << h << endl;
         check("D5: Y eval (claim) absent from every proof artifact", hitsY.empty());
@@ -1110,14 +1146,17 @@ static bool selftest_case_apriv(uint B, uint IN, uint OUT) {
     }
 
     // ---- forgeries ----
+    tamper_byte(dir + "/com_X.bin", 24, +1);
+    expect("hidden com_X tamper (driver transcript divergence)", "driver");
+    tamper_byte(dir + "/com_X.bin", 24, -1);
     tamper_byte(dir + "/com_Y.bin", 24, +1);
     expect("hidden com_Y tamper (driver transcript divergence)", "driver");
     tamper_byte(dir + "/com_Y.bin", 24, -1);
-    tamper_byte(dir + "/wsc.bin", -1, +1);            // terminal Schnorr z (last byte)
-    expect("wsc terminal Schnorr response tamper", "driver");
+    tamper_byte(dir + "/wsc.bin", -1, +1);            // product proof s_z (last byte)
+    expect("wsc terminal product-proof response tamper", "driver");
     tamper_byte(dir + "/wsc.bin", -1, -1);
     tamper_byte(wacc + "/claims.bin", -1, +1);        // a committed claim's bytes
-    expect("hiding-batch claims.bin tamper (W or Y)", "wclaims_match");
+    expect("hiding-batch claims.bin tamper (W/X/Y)", "wclaims_match");
     tamper_byte(wacc + "/claims.bin", -1, -1);
     expect("restored", "accept");
 
