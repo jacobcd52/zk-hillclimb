@@ -222,6 +222,9 @@ opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
   [PASS] D5: X eval (claim_X) absent from every proof artifact
   [PASS] D5: Y eval (claim) absent from every proof artifact
   [PASS] D5: claim_W still absent (weight privacy intact)
+PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap/chain2
+  [PASS] P1c: shared X-blinds -> com_X byte-identical across proofs (chain binds)
+  [PASS] P1c: shared Y-blinds -> com_Y byte-identical across proofs (chain binds)
 REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
   [PASS] hidden com_X tamper (driver transcript divergence) -> expected driver, got driver
 REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
@@ -234,7 +237,7 @@ REJECT[opening_batch_w.wclaims_match]: prover weight claim list != verifier-reco
 ACCEPT-conditional (apriv: W,X,Y all committed emitted)
 opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
   [PASS] restored -> expected accept, got accept
-CASE PASS (apriv mode, 9/9)
+CASE PASS (apriv mode, 11/11)
 === selftest (apriv mode) B=16 IN=12 OUT=5 ===
 PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap
 ACCEPT-conditional (apriv: W,X,Y all committed emitted)
@@ -243,6 +246,9 @@ opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
   [PASS] D5: X eval (claim_X) absent from every proof artifact
   [PASS] D5: Y eval (claim) absent from every proof artifact
   [PASS] D5: claim_W still absent (weight privacy intact)
+PROVED matmul obligation (apriv: W,X,Y all committed) -> /tmp/zkob_fc_selftest_ap/chain2
+  [PASS] P1c: shared X-blinds -> com_X byte-identical across proofs (chain binds)
+  [PASS] P1c: shared Y-blinds -> com_Y byte-identical across proofs (chain binds)
 REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
   [PASS] hidden com_X tamper (driver transcript divergence) -> expected driver, got driver
 REJECT: sumcheck round 1 C_p0+C_p1 != C_cur
@@ -255,5 +261,5 @@ REJECT[opening_batch_w.wclaims_match]: prover weight claim list != verifier-reco
 ACCEPT-conditional (apriv: W,X,Y all committed emitted)
 opening_batch_w ACCEPT (3 claims, 3 tensors, 2 domains; all evals committed)
   [PASS] restored -> expected accept, got accept
-CASE PASS (apriv mode, 9/9)
+CASE PASS (apriv mode, 11/11)
 ZKOB-FC SELFTEST: ALL PASS

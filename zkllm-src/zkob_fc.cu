@@ -193,7 +193,8 @@ static void prove(const string& obdir, const string& seed,
                   const string& accdir = "", const string& obid = "",
                   const string& comW_path = "",
                   const string& waccdir = "", const string& wblindpath = "",
-                  const G1Jacobian_t* Hp = nullptr, bool apriv = false) {
+                  const G1Jacobian_t* Hp = nullptr, bool apriv = false,
+                  const string& xblind_in = "", const string& yblind_in = "") {
     const bool claim_mode = !accdir.empty();
     const bool wpriv = !waccdir.empty();
     if (wpriv && !claim_mode)
@@ -229,12 +230,17 @@ static void prove(const string& obdir, const string& seed,
     G1TensorJacobian com_Y = gen_out.commit(Y_padded);
     vector<Fr_t> s_X, s_Y;
     if (apriv) {
-        // D5: hide BOTH activation commitments (fresh per-proof row blinds;
-        // com_X and com_Y each have B_pad row points). Must happen before the
-        // commitments are saved/absorbed so the transcript binds the hiding form.
-        s_X.resize(B_pad); s_Y.resize(B_pad);
-        for (auto& z : s_X) z = wp_rand();
-        for (auto& z : s_Y) z = wp_rand();
+        // D5: hide BOTH activation commitments. Row blinds are either fresh
+        // (per-proof) or SUPPLIED (P1c boundary chaining: the consuming layer
+        // loads the producing layer's Y-blinds as its X-blinds, so the shared
+        // boundary commitment is byte-identical and the chain binds via comref).
+        // Must happen before save/absorb so the transcript binds the hiding form.
+        if (!xblind_in.empty()) s_X = wp_blinds_load(xblind_in);
+        else { s_X.resize(B_pad); for (auto& z : s_X) z = wp_rand(); }
+        if (!yblind_in.empty()) s_Y = wp_blinds_load(yblind_in);
+        else { s_Y.resize(B_pad); for (auto& z : s_Y) z = wp_rand(); }
+        if (s_X.size() != B_pad || s_Y.size() != B_pad)
+            throw runtime_error("apriv: supplied activation blind count != B_pad");
         wp_hide_rows(com_X, s_X, *Hp);
         wp_hide_rows(com_Y, s_Y, *Hp);
     }
@@ -1145,6 +1151,36 @@ static bool selftest_case_apriv(uint B, uint IN, uint OUT) {
         check("D5: claim_W still absent (weight privacy intact)", hitsW.empty());
     }
 
+    // ---- P1c: boundary-chaining substrate ----
+    // Re-prove the SAME obligation with the SAME supplied activation blinds; the
+    // hidden com_X/com_Y must be byte-identical. The orchestrator shares a
+    // boundary activation's blinds across the producing layer's Y and the
+    // consuming layer's X, so adjacent commitments match and the chain binds via
+    // comref (catching any layer that lies about a residual-stream transition).
+    {
+        auto file_eq = [](const string& a, const string& b) {
+            FILE* fa = fopen(a.c_str(), "rb"); FILE* fb = fopen(b.c_str(), "rb");
+            if (!fa || !fb) { if (fa) fclose(fa); if (fb) fclose(fb); return false; }
+            bool eq = true; int ca, cb;
+            do { ca = fgetc(fa); cb = fgetc(fb); if (ca != cb) { eq = false; break; } }
+            while (ca != EOF);
+            fclose(fa); fclose(fb); return eq;
+        };
+        string dir2 = dir + "/chain2";
+        { string c = "rm -rf " + dir2; system(c.c_str()); }
+        mkdir(dir2.c_str(), 0755);
+        string acc2 = dir2 + "/acc", wacc2 = dir2 + "/wacc";
+        mkdir(acc2.c_str(), 0755); mkdir(wacc2.c_str(), 0755);
+        prove(dir2, seed, X, W, B, IN, OUT, gen_in, gen_out, Q, "", acc2, obid,
+              comW_path, wacc2, blindpath, &H, /*apriv=*/true,
+              wacc + "/comX_" + obid + ".blinds.bin",
+              wacc + "/comY_" + obid + ".blinds.bin");
+        check("P1c: shared X-blinds -> com_X byte-identical across proofs (chain binds)",
+              file_eq(dir + "/com_X.bin", dir2 + "/com_X.bin"));
+        check("P1c: shared Y-blinds -> com_Y byte-identical across proofs (chain binds)",
+              file_eq(dir + "/com_Y.bin", dir2 + "/com_Y.bin"));
+    }
+
     // ---- forgeries ----
     tamper_byte(dir + "/com_X.bin", 24, +1);
     expect("hidden com_X tamper (driver transcript divergence)", "driver");
@@ -1174,13 +1210,17 @@ static int zkw_run1(int argc, char* argv[]) {
     // strip the optional flag blocks: --claims <a> <b> <c>, --wpriv <a> [<b>],
     // --hiding <q.bin> <blinds_out>
     int base_argc = argc;
-    string cm_a, cm_b, cm_c, wp_a, wp_b, hd_a, hd_b;
+    string cm_a, cm_b, cm_c, wp_a, wp_b, hd_a, hd_b, ab_x, ab_y;
     bool ap_flag = false;
     for (int i = 2; i < argc; i++) {
         string s = argv[i];
         if (s == "--apriv") {
             if (base_argc == argc) base_argc = i;
             ap_flag = true;
+        } else if (s == "--ablinds") {     // P1c: supplied boundary blinds <x> <y>
+            if (base_argc == argc) base_argc = i;
+            if (i + 1 < argc) ab_x = argv[i + 1];
+            if (i + 2 < argc) ab_y = argv[i + 2];
         } else if (s == "--claims") {
             if (base_argc == argc) base_argc = i;
             if (i + 1 < argc) cm_a = argv[i + 1];
@@ -1256,7 +1296,8 @@ static int zkw_run1(int argc, char* argv[]) {
             Hslot = qg(1); Hp = &Hslot;
         }
         prove(obdir, seed, X, W, B, IN, OUT, gen_in, gen_out, qg(0),
-              base_argc == 13 ? argv[12] : "", cm_a, cm_b, cm_c, wp_a, wp_b, Hp, ap_flag);
+              base_argc == 13 ? argv[12] : "", cm_a, cm_b, cm_c, wp_a, wp_b, Hp, ap_flag,
+              ab_x, ab_y);
         return 0;
     }
     if (mode == "verify" && base_argc == 11) {
