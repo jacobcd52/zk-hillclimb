@@ -14,11 +14,17 @@
 #include <vector>
 #include <array>
 #include "p3_goldilocks.cuh"
+#include "p3_merkle.cuh"
 #include "fs_transcript.hpp"
 
 namespace p3fri {
 
 typedef std::array<uint8_t, 32> Hash;
+
+// When set, Merkle::build offloads to the GPU (byte-identical SHA-256 leaves/nodes
+// as the host path, so roots/paths/openings are unchanged).  Off by default so the
+// pure-host selftests stay host-only.
+static bool g_gpu_merkle = false;
 
 static inline void gl_to_le(gl_t v, uint8_t b[8]) { for (int k = 0; k < 8; k++) b[k] = (uint8_t)(v >> (8 * k)); }
 
@@ -34,6 +40,7 @@ static inline Hash node_hash(const Hash& l, const Hash& r) {
 struct Merkle {
     std::vector<std::vector<Hash>> levels;   // levels[0] = leaves
     void build(const std::vector<gl_t>& cw) {
+        if (g_gpu_merkle && cw.size() >= 1024) { build_gpu(cw); return; }
         levels.clear();
         std::vector<Hash> lv(cw.size());
         for (size_t i = 0; i < cw.size(); i++) lv[i] = leaf_hash(cw[i]);
@@ -44,6 +51,28 @@ struct Merkle {
             for (size_t i = 0; i < nxt.size(); i++) nxt[i] = node_hash(cur[2*i], cur[2*i+1]);
             levels.push_back(nxt);
         }
+    }
+    // GPU build: SHA-256 leaf/internal kernels (p3_merkle.cuh), each level copied to host.
+    void build_gpu(const std::vector<gl_t>& cw) {
+        uint32_t M = (uint32_t)cw.size();
+        gl_t* d_cw; cudaMalloc(&d_cw, (size_t)M * sizeof(gl_t));
+        cudaMemcpy(d_cw, cw.data(), (size_t)M * sizeof(gl_t), cudaMemcpyHostToDevice);
+        uint8_t *d_a, *d_b; cudaMalloc(&d_a, (size_t)M * 32); cudaMalloc(&d_b, (size_t)M * 32);
+        uint32_t blk = (M + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS;
+        p3_merkle_leaf_kernel<<<blk, P3_MERKLE_THREADS>>>(d_cw, d_a, M);
+        levels.clear();
+        std::vector<Hash> lv0(M); cudaMemcpy(lv0.data(), d_a, (size_t)M * 32, cudaMemcpyDeviceToHost);
+        levels.push_back(std::move(lv0));
+        uint8_t* cur = d_a; uint8_t* nxt = d_b;
+        for (uint32_t cnt = M; cnt > 1; ) {
+            uint32_t half = cnt / 2;
+            uint32_t b = (half + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS;
+            p3_merkle_internal_kernel<<<b, P3_MERKLE_THREADS>>>(cur, nxt, half);
+            std::vector<Hash> lv(half); cudaMemcpy(lv.data(), nxt, (size_t)half * 32, cudaMemcpyDeviceToHost);
+            levels.push_back(std::move(lv));
+            uint8_t* t = cur; cur = nxt; nxt = t; cnt = half;
+        }
+        cudaFree(d_cw); cudaFree(d_a); cudaFree(d_b);
     }
     Hash root() const { return levels.back()[0]; }
     std::vector<Hash> path(size_t idx) const {

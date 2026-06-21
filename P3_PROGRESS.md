@@ -70,3 +70,14 @@ Reference BLS single-FC prove ~3.7 s / verify ~1.7 s / proof 176 MB.
 => already ~8x prove, ~120x verify, ~270x proof, with Merkle+fold STILL ON HOST.
 GPU Merkle-with-paths + GPU fold (P3.6) remove the remaining host bottleneck.
 gpu-encode commitment is byte-identical to host-encode -> openings unchanged.
+
+
+## P3.6 GPU Merkle -> steady-state end-to-end 2026-06-21
+Added p3fri::Merkle::build_gpu (SHA-256 leaf/internal kernels, byte-identical to host;
+gated by g_gpu_merkle). Cross-checked gpu(encode+merkle)==host commitment: YES. All
+selftests still pass (host path default). Steady-state (CUDA pre-warmed), B16/IN1024/OUT16:
+  prove  78 ms   (GPU encode + GPU Merkle + host fold; was 461 ms host-Merkle, 12.2 s host-encode)
+  verify 14 ms
+  proof  657 KB
+vs BLS ~3.7s / ~1.7s / 176MB  =>  ~47x prove, ~120x verify, ~270x proof.
+Remaining host cost is the fold/sumcheck (GPU fold = further win, not yet done).
