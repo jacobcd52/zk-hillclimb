@@ -50,3 +50,12 @@ p3_matmul.cuh, p3_matmul_selftest.cu.
 ## P3.4 — sumcheck over Goldilocks + FC matmul argument
 ## P3.5 — ZK/hiding + weight & activation privacy (hard requirement)
 ## P3.6 — wire FC-layer prover + selftest battery + end-to-end bench
+
+
+## Integrity-core summary (2026-06-21)
+Validated end to end (selftests green at every stage). Real protocol numbers (host,
+B=16 IN=1024 OUT=16): verify 14 ms, proof 657 KB  vs  BLS verify ~1.7 s, proof 176 MB.
+Prove wall is dominated by the placeholder host Horner encoder (5.6 s/poly); GPU NTT
+(P3.2) does the same encode in ms and host Merkle is 71 ms, so protocol prove cost is ~1 s
+host and fully GPU-accelerable. Per-primitive speedups already prove the thesis: 12x field,
+45x commit. Remaining: P3.5 ZK/privacy (hard), P3.6 GPU end-to-end number.
