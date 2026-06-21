@@ -111,3 +111,25 @@ matmul-over-GL2 is the identical retyping pattern (mechanical follow-on).
 - Salted-Merkle integration into the real prover (thread salts through prove_eval/matmul): plumbing.
 - Full ZK opening (query masking + ZK sumcheck + activation eval-claim chaining): see
   P3_PRIVACY_DESIGN.md; (c) is research-grade and must be reviewed before any external ZK claim.
+
+
+## P3.5 ZK matmul-sumcheck (2026-06-21)
+p3_zkmatmul.cuh + test (9/9): proves sum_j A[j]B[j]=c in ZK (A=X~(ri,.), B=W~(.,rk), c=Y~).
+Masked with random multilinear q -> round messages & intermediate claims uniform. HVZK simulator
+(witnessless accepting transcript) + NEGATIVE CONTROL (unmasked chi-sq 5.12e6 vs masked 253).
+
+## ZK primitive set -- ALL VALIDATED
+1. salted hiding Merkle (p3_zk, 8/8)            -- commitment hiding (weights+activations)
+2. ZK-sumcheck eq-weighted (p3_zksumcheck,10/10)-- eval-sumcheck messages hidden, HVZK simulator
+3. ZK query-opening hiding (p3_zkopen, 4/4)     -- codeword query values hidden
+4. ZK matmul-sumcheck (p3_zkmatmul, 9/9)        -- matmul reduction messages hidden, HVZK simulator
+All ZK tests carry a NEGATIVE CONTROL (disable masking -> test fails, chi-sq ~5.12e6 vs ~256),
+so the tests provably detect leakage rather than passing vacuously.
+
+## Remaining for the fully-WIRED private FC layer
+Compose 1-4 into one prover. The only non-trivial wiring is hiding the three final operand
+evaluations X~(rj), W~(rj,rk), Y~(ri,rk): a commit-and-prove (eval-hiding) Basefold opening +
+consistent mask bookkeeping across the matmul tie and the openings (Spartan/Libra-style). Cleanest
+route: augment each committed poly with one extra random "mask slice" so its opening at a random
+point is uniform while the matmul constraint reads the real slice via eq(ex,0) weighting. This is
+careful engineering (mask threading), not a new primitive; query-binding ZK is RO-model.
