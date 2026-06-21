@@ -14,7 +14,13 @@ p3_goldilocks.cuh (field), p3_field_bench.cu (correctness + throughput).
     BLS12-381 256-bit:  65.30 ms    64.2 Gmul/s
     => 11.9x faster per multiply.  (validates culprit #1)
 
-## P3.2 — NTT + Merkle commit; commit-cost vs EC Pedersen   [in progress]
+## P3.2 — NTT + Merkle commit; commit-cost vs EC Pedersen   [DONE 2026-06-21]
+p3_ntt.cuh (Goldilocks NTT), p3_merkle.cuh (device SHA-256 + GPU Merkle), p3_commit_bench.cu.
+- NTT correctness: naive-DFT cross-check (n=8) + forward/inverse round-trip (n=2^16) -> PASS.
+- Commit cost, same N=2^22 (4.19M) elements on RTX 4090:
+    hash-PCS (RS blowup2 NTT -> 2^23 + SHA-256 Merkle):  15.5 ms
+    EC Pedersen (Pippenger MSM, 2048x2048):             700.9 ms
+    => 45.1x faster commit.  (validates culprit #2; SHA-256 is conservative vs Poseidon)
 ## P3.3 — Basefold/FRI low-degree test + evaluation opening
 ## P3.4 — sumcheck over Goldilocks + FC matmul argument
 ## P3.5 — ZK/hiding + weight & activation privacy (hard requirement)
