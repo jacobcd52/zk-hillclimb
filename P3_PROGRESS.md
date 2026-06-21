@@ -93,14 +93,14 @@ Remaining host cost is the fold/sumcheck (GPU fold = further win, not yet done).
 ## P3 soundness: GL2 degree-2 extension field   [field DONE; integration specced]
 p3_gl2.cuh (GL2 = Goldilocks[u]/(u^2-7)) + p3_gl2_selftest.cu (4/4: non-residue check, axioms,
 base embedding, inverse, scale). Lifts FS-challenge soundness from ~2^-58 to ~2^-116.
-INTEGRATION (remaining, bounded): cleanest path = embed the codeword/witness uniformly in GL2
-(base value x -> (x,0)), draw all challenges (matmul r_i/r_k/r_j, Basefold alpha) from GL2, and
-template the opening (fold_pair, Merkle leaf=16B, RoundOpen values, check_queries, basefold/matmul)
-gl_t -> gl2_t.  ~2x storage/work; must re-run the full selftest battery after. Not done here to
-avoid half-integrating a soundness-critical change without full re-validation.
+INTEGRATION DONE for the opening keystone: p3_basefold_gl2.cuh (uniform-embedding: base witness
+-> (x,0), domain base-field, challenges+folded values in GL2). Selftest 8/8 (honest 3 sizes +
+wrong-value/sumcheck/codeword/final tampers). Soundness caveat resolved for the opening core.
+matmul-over-GL2 is the identical retyping pattern (mechanical follow-on).
 
 ## Remaining P3 items (honest scoping)
-- GL2 integration through the opening (above): bounded refactor + re-validate. ~mechanical.
+- GL2 matmul (retype p3_matmul gl_t->gl2_t like p3_basefold_gl2): mechanical follow-on; opening
+  keystone already done+validated (p3_basefold_gl2, 8/8).
 - GPU fold (prove 78ms -> ~30-40ms): restructure prove to keep codewords device-resident; minor
   perf, no soundness risk.
 - Salted-Merkle integration into the real prover (thread salts through prove_eval/matmul): plumbing.
