@@ -37,7 +37,16 @@ p3_basefold.cuh (eq-weighted sumcheck coupled to the MLE codeword fold), p3_base
   codeword / path / final / opening point.
 - Soundness ~2^-58 (base-field challenges); degree-2 extension is the flagged production change.
 
-## P3.4b — sumcheck matmul argument for the FC layer (Y = X.W)
+## P3.4b — sumcheck matmul argument for the FC layer (Y = X.W)   [DONE 2026-06-21]
+p3_matmul.cuh, p3_matmul_selftest.cu.
+- Y~(r_i,r_k)=sum_j X~(r_i,j)W~(j,r_k): sumcheck over IN contraction vars -> 3 Basefold opens
+  (X@(r_i,r_j), W@(r_j,r_k), Y@(r_i,r_k)), tied  final == X~*W~, initial == Y~.
+- Selftest 8/8: honest accept (3 shapes); reject on wrong product / tampered sumcheck /
+  opened value / opening codeword.
+- This is the complete INTEGRITY core (not yet zero-knowledge / private-evaluation).
+
+## P3.5 — ZK/hiding + weight & activation privacy   [next; the hard part]
+## P3.6 — GPU-accelerate + end-to-end FC bench vs BLS
 ## P3.4 — sumcheck over Goldilocks + FC matmul argument
 ## P3.5 — ZK/hiding + weight & activation privacy (hard requirement)
 ## P3.6 — wire FC-layer prover + selftest battery + end-to-end bench

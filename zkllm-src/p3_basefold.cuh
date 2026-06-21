@@ -52,6 +52,27 @@ static inline gl_t eval_h(const std::vector<gl_t>& c, const std::vector<gl_t>& e
     gl_t acc = 0; for (size_t b = 0; b < c.size(); b++) acc = gl_add(acc, gl_mul(c[b], eq[b])); return acc;
 }
 
+// log2 of a power-of-two.
+static inline uint32_t ilog2(uint32_t n) { uint32_t l = 0; while ((1u << l) < n) l++; return l; }
+
+// RS-encode a length-N=2^v coefficient array onto the size-2^(v+R) subgroup (Horner).
+// O(N*2^(v+R)); fine for tests, replaced by GPU NTT in the perf pass.
+static inline std::vector<gl_t> rs_encode(const std::vector<gl_t>& c, uint32_t R) {
+    uint32_t v = ilog2((uint32_t)c.size()), logM0 = v + R, M0 = 1u << logM0;
+    gl_t w = gl_root_of_unity(logM0);
+    std::vector<gl_t> cw(M0);
+    for (uint32_t jx = 0; jx < M0; jx++) {
+        gl_t xj = gl_pow(w, jx), p = 0;
+        for (int i = (int)c.size() - 1; i >= 0; i--) p = gl_add(gl_mul(p, xj), c[i]);
+        cw[jx] = p;
+    }
+    return cw;
+}
+// Commit to coefficient array c: returns Merkle root, fills cw with the codeword.
+static inline Hash commit(const std::vector<gl_t>& c, uint32_t R, std::vector<gl_t>& cw) {
+    cw = rs_encode(c, R); Merkle mk; mk.build(cw); return mk.root();
+}
+
 static inline gl_t alpha_from(fs::Transcript& tr) {
     uint8_t b[32]; tr.challenge_bytes(b);
     uint64_t v = 0; for (int i = 0; i < 8; i++) v |= (uint64_t)b[i] << (8 * i);
