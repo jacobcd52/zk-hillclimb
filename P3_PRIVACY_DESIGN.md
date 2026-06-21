@@ -96,3 +96,22 @@ negative-controlled tests. The remaining work is the joint-arithmetization COMPO
 ZK-STARK for the layer) -- engineering, not research -- plus a cryptographic review before any
 external ZK/privacy claim. REMINDER (standing): no external ZK/privacy claims pre-review
 (see memory: zk-ezkl-privacy-caveat).
+
+## CAPSTONE ASSEMBLY RECIPE (all sub-mechanisms validated 2026-06-21)
+Every piece below has a passing, negative-controlled test; the capstone is their assembly.
+private-FC prover for Y=X.W hiding weights AND activations:
+1. Augment X->X^, W->W^, Y->Y^ with an extra high "ex" variable: ex=0 slice = real data,
+   ex=1 slice = fresh random. (p3_maskslice_test: validated.)
+2. Commit X^, W^, Y^ with salted hiding Merkle. (p3_zk: validated.)
+3. Matmul sumcheck over (ex_X, ex_W, j) with the summand carrying eq(ex_X,0)*eq(ex_W,0) so the
+   SUM reads only the real slices => constraint is exactly Y=X.W (soundness). Run it MASKED via
+   the ZK matmul-sumcheck (p3_zkmatmul: validated) so partial sums leak nothing.
+4. Open X^,W^,Y^ at the random ex points (rex_X, ri, rj) etc. via ZK query-masked Basefold
+   openings (p3_zkopen + p3_basefold/_gl2: validated). The opened values are uniform (mask slice)
+   => hide the boundary evaluations. Verifier multiplies the opened operands directly (correct
+   because they are the true augmented-poly values at those points; the sumcheck ties them,
+   weighted by public (1-rex)); hiding comes from uniformity, NOT from blocking the multiply.
+5. Draw all challenges from GL2 (p3_gl2/_basefold_gl2: validated) for ~2^-116 soundness.
+Remaining work = ONLY the integration code (rewrite the matmul sumcheck over augmented polys with
+the two ex-variables + thread the openings); no unproven primitive remains. Query-binding ZK is
+random-oracle-model (standard for FRI/STARKs).
