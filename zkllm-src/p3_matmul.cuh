@@ -32,13 +32,14 @@ static inline std::vector<gl_t> concat(const std::vector<gl_t>& lo, const std::v
 
 // ---------------- prover ----------------
 static inline MatmulProof prove(const std::vector<gl_t>& X, const std::vector<gl_t>& W, const std::vector<gl_t>& Y,
-                                uint32_t bb, uint32_t ii, uint32_t oo, uint32_t R, uint32_t Q) {
+                                uint32_t bb, uint32_t ii, uint32_t oo, uint32_t R, uint32_t Q,
+                                bool gpu = false) {
     uint32_t B = 1u<<bb, IN = 1u<<ii, OUT = 1u<<oo;
     MatmulProof pf; pf.bb=bb; pf.ii=ii; pf.oo=oo; pf.R=R; pf.Q=Q;
     std::vector<gl_t> cwX, cwW, cwY;
-    pf.rootX = p3bf::commit(X, R, cwX);
-    pf.rootW = p3bf::commit(W, R, cwW);
-    pf.rootY = p3bf::commit(Y, R, cwY);
+    pf.rootX = gpu ? p3bf::commit_gpu(X, R, cwX) : p3bf::commit(X, R, cwX);
+    pf.rootW = gpu ? p3bf::commit_gpu(W, R, cwW) : p3bf::commit(W, R, cwW);
+    pf.rootY = gpu ? p3bf::commit_gpu(Y, R, cwY) : p3bf::commit(Y, R, cwY);
 
     fs::Transcript tr("p3-mm");
     tr.absorb("rX", pf.rootX.data(), 32); tr.absorb("rW", pf.rootW.data(), 32); tr.absorb("rY", pf.rootY.data(), 32);

@@ -18,6 +18,7 @@
 #include <vector>
 #include "p3_goldilocks.cuh"
 #include "p3_fri.cuh"
+#include "p3_ntt.cuh"
 #include "fs_transcript.hpp"
 
 namespace p3bf {
@@ -71,6 +72,24 @@ static inline std::vector<gl_t> rs_encode(const std::vector<gl_t>& c, uint32_t R
 // Commit to coefficient array c: returns Merkle root, fills cw with the codeword.
 static inline Hash commit(const std::vector<gl_t>& c, uint32_t R, std::vector<gl_t>& cw) {
     cw = rs_encode(c, R); Merkle mk; mk.build(cw); return mk.root();
+}
+
+// GPU Reed-Solomon encode (forward NTT of the zero-padded coeff vector) -- same
+// codeword as rs_encode but in ms instead of the O(N*M) host Horner.
+static inline std::vector<gl_t> rs_encode_gpu(const std::vector<gl_t>& c, uint32_t R) {
+    uint32_t v = ilog2((uint32_t)c.size()), logM0 = v + R, M0 = 1u << logM0;
+    gl_t *d_in, *d_out;
+    cudaMalloc(&d_in, (size_t)M0 * sizeof(gl_t)); cudaMalloc(&d_out, (size_t)M0 * sizeof(gl_t));
+    cudaMemset(d_in, 0, (size_t)M0 * sizeof(gl_t));
+    cudaMemcpy(d_in, c.data(), c.size() * sizeof(gl_t), cudaMemcpyHostToDevice);
+    { P3Ntt ntt(logM0); ntt.run(d_in, d_out, true); }
+    std::vector<gl_t> cw(M0);
+    cudaMemcpy(cw.data(), d_out, (size_t)M0 * sizeof(gl_t), cudaMemcpyDeviceToHost);
+    cudaFree(d_in); cudaFree(d_out);
+    return cw;
+}
+static inline Hash commit_gpu(const std::vector<gl_t>& c, uint32_t R, std::vector<gl_t>& cw) {
+    cw = rs_encode_gpu(c, R); Merkle mk; mk.build(cw); return mk.root();
 }
 
 static inline gl_t alpha_from(fs::Transcript& tr) {

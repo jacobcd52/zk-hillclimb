@@ -29,12 +29,16 @@ int main(){
     for(auto&x:X)x=rng()%257; for(auto&x:W)x=rng()%257;
     auto Y=mm(X,W,B,IN,OUT);
 
-    auto t0=clk::now(); auto pf=prove(X,W,Y,bb,ii,oo,R,Q); auto t1=clk::now();
+    // sanity: GPU encode must give the same commitment as host encode
+    { std::vector<gl_t> a,b; auto rh=p3bf::commit(W,R,a); auto rg=p3bf::commit_gpu(W,R,b);
+      printf("gpu-encode == host-encode commitment: %s\n", (rh==rg)?"YES":"NO"); }
+
+    auto t0=clk::now(); auto pf=prove(X,W,Y,bb,ii,oo,R,Q,/*gpu=*/true); auto t1=clk::now();
     const char* why=nullptr; bool ok=verify(pf,&why); auto t2=clk::now();
 
     size_t bytes = ev_bytes(pf.openX)+ev_bytes(pf.openW)+ev_bytes(pf.openY)+pf.mm.size()*24+96;
     printf("verify: %s (%s)\n", ok?"ACCEPT":"REJECT", why);
-    printf("prove : %8.1f ms\n", ms(t0,t1));
+    printf("prove (GPU encode + host Merkle/fold): %8.1f ms\n", ms(t0,t1));
     printf("verify: %8.1f ms\n", ms(t1,t2));
     printf("proof : %8.2f KB\n", bytes/1024.0);
     return ok?0:1;

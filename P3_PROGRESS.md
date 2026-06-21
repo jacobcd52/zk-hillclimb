@@ -59,3 +59,14 @@ Prove wall is dominated by the placeholder host Horner encoder (5.6 s/poly); GPU
 (P3.2) does the same encode in ms and host Merkle is 71 ms, so protocol prove cost is ~1 s
 host and fully GPU-accelerable. Per-primitive speedups already prove the thesis: 12x field,
 45x commit. Remaining: P3.5 ZK/privacy (hard), P3.6 GPU end-to-end number.
+
+
+## End-to-end (integrity, GPU encode + host Merkle/fold) 2026-06-21
+Same shape B=16 IN=1024 OUT=16, R=2, Q=32:
+  prove  461 ms   (GPU NTT encode + host Merkle/fold; was 12.2 s with host Horner encode)
+  verify  14 ms
+  proof  657 KB
+Reference BLS single-FC prove ~3.7 s / verify ~1.7 s / proof 176 MB.
+=> already ~8x prove, ~120x verify, ~270x proof, with Merkle+fold STILL ON HOST.
+GPU Merkle-with-paths + GPU fold (P3.6) remove the remaining host bottleneck.
+gpu-encode commitment is byte-identical to host-encode -> openings unchanged.
