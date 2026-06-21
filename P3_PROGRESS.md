@@ -50,9 +50,14 @@ p3_matmul.cuh, p3_matmul_selftest.cu.
   salt) -> fixes the int8 guess-and-confirm weakness; root/siblings reveal nothing; demo that
   unsalted int8 leaves are brute-forced but salted ones resist. Registered (fixed) salts keep
   commitments deterministic for chaining AND hiding.
-- Full ZK (query masking, ZK sumcheck, activation eval-claim chaining + product relation):
-  rigorous plan + honest assessment in P3_PRIVACY_DESIGN.md. (a)(b) mechanical w/ soundness
-  selftests; (c) activation-private eval chaining is research-grade -> needs review, not rushed.
+- ZK-sumcheck (p3_zksumcheck.cuh, test 10/10): Libra mask; HVZK SIMULATOR produces accepting
+  witnessless transcripts distributed identically to real (chi-sq 277 vs 266); NEGATIVE CONTROL
+  (mask off -> chi-sq 5.12e6, witness-dependent) proves the test detects leakage.
+- ZK query-opening hiding (p3_zkopen_test.cu, 4/4): mask-combine -> revealed values uniform &
+  witness-independent; same negative control (5.12e6) proves teeth. Binding is RO-model (argued).
+- KEY RESULT: activation-private matmul forces JOINT ARITHMETIZATION (no-homomorphism => can't mask
+  operands independently and keep Y=X.W). Remaining = compose the two masks into a mini ZK-STARK for
+  the layer (engineering, RO-model query binding). See P3_PRIVACY_DESIGN.md.
 ## P3.6 — GPU-accelerate + end-to-end FC bench vs BLS
 ## P3.4 — sumcheck over Goldilocks + FC matmul argument
 ## P3.5 — ZK/hiding + weight & activation privacy (hard requirement)

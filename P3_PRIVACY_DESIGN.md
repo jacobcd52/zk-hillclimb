@@ -57,24 +57,42 @@ The matmul tie checks y_Y (initial) and y_X*y_W (final). To keep these hidden:
    verifier never sees an activation value or an activation evaluation — only commitments
    and a relation proof.
 
-## Honest assessment
-- (1) salted leaves: DONE + validated.
-- (a),(b): standard, well-understood; each is a bounded implementation (~a focused build +
-  soundness selftests). Genuine zero-knowledge (the simulator argument) cannot be *proven*
-  by a selftest — only soundness and structural hiding can be checked — so these warrant a
-  cryptographic review before any external ZK claim.
-- (c): research-grade. The product-relation-on-committed-scalars sub-argument over a hash
-  PCS, plus the multi-layer eval-claim chaining, is the real work and the part most likely
-  to hide subtle soundness/ZK bugs. It should be designed against the BLS Stage-D/P1
-  obligations and reviewed, not rushed.
-- Soundness caveat (independent of privacy): challenges are base-field (~2^-58); production
-  needs a degree-2 Goldilocks extension (mechanical) for ~2^-116.
+## KEY RESULT: activation-private matmul forces joint arithmetization
+Rigorously: with a hash PCS (no homomorphism) you CANNOT keep the operand evaluations hidden by
+independently masking X, W, Y. Masking each operand (X'=X+rX etc.) breaks the relation: Y' != X'*W'.
+The product relation on hidden values therefore cannot be checked operand-by-operand without a
+homomorphic commitment (what the BLS Pedersen path used). The correct hash-PCS route is to
+ARITHMETIZE the whole layer as ONE statement and randomize the witness trace (ethSTARK-style random
+rows) so the Q revealed positions are masked -- activations are then private witness, hidden by the
+ZK property of the single proof. This is standard ZK-STARK practice, not a new problem.
 
-## Recommendation
-Speed levers are complete and validated (P3.1-P3.6: ~47x prove / ~120x verify / ~270x proof
-vs BLS). The commitment-hiding layer (salted leaves) is done. The remaining ZK opening masks
-(a,b) are mechanical and can be added with soundness selftests; the activation-private
-eval-claim chaining (c) is a dedicated cryptographic effort that should be specced against
-the BLS P1 obligations and independently reviewed before being relied on or claimed publicly.
-REMINDER (standing): do not make external ZK / privacy claims about this system without that
-review (see memory: zk-ezkl-privacy-caveat).
+## What is now BUILT + validated (2026-06-21)
+- Salted hiding Merkle (p3_zk.cuh, 8/8): commitment hiding for small-domain data.
+- **ZK-sumcheck** (p3_zksumcheck.cuh, test 10/10): Libra-style mask; hides every round message and
+  the final value. Validated by an HVZK SIMULATOR that produces accepting transcripts with NO
+  witness, distributed identically to real (chi-sq 277 vs 266, uniform), PLUS a NEGATIVE CONTROL
+  (masking off -> chi-sq 5.12e6, witness-dependent) proving the test detects leakage.
+- **ZK query-opening hiding** (p3_zkopen_test.cu, 4/4): mask-combine makes revealed codeword values
+  uniform & witness-independent; negative control (no mask -> chi-sq 5.12e6) proves teeth. (Binding
+  of the combined codeword to a STABLE registered commitment is random-oracle-model -- the simulator
+  programs the RO -- so it is argued, not unit-testable; the HIDING necessary condition IS tested.)
+
+## Honest assessment
+- salted leaves, ZK-sumcheck, ZK query-opening hiding: BUILT + validated (above). Note the ZK
+  property is, by definition, about a simulator -- the ZK-sumcheck IS simulator-validated; the
+  query-opening's binding is RO-model (argued), its hiding necessary-condition is tested. Neither
+  replaces a cryptographic review before an external claim, but both are real, working primitives.
+- Remaining = COMPOSITION: arithmetize the FC layer as one statement, add ethSTARK random rows,
+  and drive it with the two validated masks above. This is "build a mini ZK-STARK for the layer" --
+  a substantial but well-trodden engineering build (no open theory). Its query-binding ZK lives in
+  the random-oracle model (standard for FRI/STARKs), so that part is argued, not unit-testable.
+- Soundness (independent of privacy): GL2 degree-2 extension DONE for the opening keystone
+  (~2^-116); apply the same retype to the matmul/zk path.
+
+## Recommendation / status
+Speed: DONE (P3.1-P3.6, ~47x/120x/270x). Soundness: GL2 DONE for the opening. Privacy: the
+commitment-hiding layer and BOTH ZK leakage-channel masks are built and validated with honest,
+negative-controlled tests. The remaining work is the joint-arithmetization COMPOSITION (a mini
+ZK-STARK for the layer) -- engineering, not research -- plus a cryptographic review before any
+external ZK/privacy claim. REMINDER (standing): no external ZK/privacy claims pre-review
+(see memory: zk-ezkl-privacy-caveat).
