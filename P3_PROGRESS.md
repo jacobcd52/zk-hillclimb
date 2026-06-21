@@ -45,7 +45,14 @@ p3_matmul.cuh, p3_matmul_selftest.cu.
   opened value / opening codeword.
 - This is the complete INTEGRITY core (not yet zero-knowledge / private-evaluation).
 
-## P3.5 — ZK/hiding + weight & activation privacy   [next; the hard part]
+## P3.5 — privacy   [commitment-hiding DONE; full ZK designed]
+- Salted hiding Merkle leaves: p3_zk.cuh + p3_zk_selftest.cu (8/8). leaf=SHA256(value||256-bit
+  salt) -> fixes the int8 guess-and-confirm weakness; root/siblings reveal nothing; demo that
+  unsalted int8 leaves are brute-forced but salted ones resist. Registered (fixed) salts keep
+  commitments deterministic for chaining AND hiding.
+- Full ZK (query masking, ZK sumcheck, activation eval-claim chaining + product relation):
+  rigorous plan + honest assessment in P3_PRIVACY_DESIGN.md. (a)(b) mechanical w/ soundness
+  selftests; (c) activation-private eval chaining is research-grade -> needs review, not rushed.
 ## P3.6 — GPU-accelerate + end-to-end FC bench vs BLS
 ## P3.4 — sumcheck over Goldilocks + FC matmul argument
 ## P3.5 — ZK/hiding + weight & activation privacy (hard requirement)
