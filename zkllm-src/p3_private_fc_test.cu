@@ -23,19 +23,19 @@ int main(){
     const char* why=nullptr;
 
     { auto pf=prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,111);
-      ck("honest private proof accepts", verify(pf,&why)); if(why&&std::string(why)!="ok")printf("      why=%s\n",why); }
+      ck("honest private proof accepts", verify(pf,Q,R,&why)); if(why&&std::string(why)!="ok")printf("      why=%s\n",why); }
 
     { auto Y2=Y; Y2[0]=gl_add(Y2[0],1); auto pf=prove(X,W,Y2,RX,RW,RY,bb,ii,oo,R,Q,111);
-      ck("wrong product Y!=X.W rejects", !verify(pf,&why)); printf("      why=%s\n",why); }
+      ck("wrong product Y!=X.W rejects", !verify(pf,Q,R,&why)); printf("      why=%s\n",why); }
 
     { auto pf=prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,111); pf.msgs[0].s0=gl_add(pf.msgs[0].s0,1);
-      ck("tampered sumcheck rejects", !verify(pf,&why)); printf("      why=%s\n",why); }
+      ck("tampered sumcheck rejects", !verify(pf,Q,R,&why)); printf("      why=%s\n",why); }
 
     { auto pf=prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,111); pf.openX.y=gl_add(pf.openX.y,1);
-      ck("tampered opened value rejects", !verify(pf,&why)); printf("      why=%s\n",why); }
+      ck("tampered opened value rejects", !verify(pf,Q,R,&why)); printf("      why=%s\n",why); }
 
     { auto pf=prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,111); pf.openW.queries[0].rounds[0].a=gl_add(pf.openW.queries[0].rounds[0].a,1);
-      ck("tampered opening codeword rejects", !verify(pf,&why)); printf("      why=%s\n",why); }
+      ck("tampered opening codeword rejects", !verify(pf,Q,R,&why)); printf("      why=%s\n",why); }
 
     // hiding sanity: the opened value mX must NOT equal the real X~(ri,rj) (it's mask-mixed)
     { auto pf=prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,111);
@@ -45,6 +45,13 @@ int main(){
       vector<gl_t> RX2(RX.size()); for(auto&x:RX2)x=rng();
       auto pf2=prove(X,W,Y,RX2,RW,RY,bb,ii,oo,R,Q,111);
       ck("opened mX depends on random slice (mask active)", pf.openX.y!=pf2.openX.y); printf("      mX=%llu mX'=%llu\n",(unsigned long long)pf.openX.y,(unsigned long long)pf2.openX.y); }
+
+    // red-team CRITICAL-1 regression: Q=0 vacuous-accept forgery must be rejected
+    { auto pf=prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,111);
+      pf.openX.Q=0; pf.openX.queries.clear();
+      ck("Q=0 forgery rejected (params pinned to public Q,R)", !verify(pf,Q,R,&why)); printf("      why=%s\n",why);
+      // also: wrong public R rejected
+      ck("mismatched public R rejected", !verify(prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,111),Q,R+1,&why)); }
 
     printf("\nP3.5 PRIVATE-FC: %d passed, %d failed -> %s\n", np,nf, nf==0?"ALL PASS":"FAIL");
     return nf==0?0:1;

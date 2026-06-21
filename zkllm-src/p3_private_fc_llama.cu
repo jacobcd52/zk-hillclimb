@@ -45,7 +45,7 @@ int main(){
     auto t0=clk::now();
     auto pf=prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,12345,/*gpu=*/true,&tm);
     cudaDeviceSynchronize(); auto t1=clk::now();
-    const char* why=nullptr; bool ok=verify(pf,&why); auto t2=clk::now();
+    const char* why=nullptr; bool ok=verify(pf,Q,R,&why); auto t2=clk::now();
 
     // proof size
     auto evb=[&](const p3bf::EvalProof&e){ size_t b=e.roots.size()*32+e.msgs.size()*24+e.final_word.size()*8+e.z.size()*8+8;

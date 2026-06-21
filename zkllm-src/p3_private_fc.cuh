@@ -127,10 +127,20 @@ static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,
 }
 
 // ---------------- verifier ----------------
-static inline bool verify(const Proof& pf,const char** why=nullptr){
+// Q_pub, R_pub are PUBLIC parameters fixed by the verifier (NOT read from the proof) --
+// the FRI query count and rate are the basis of soundness; trusting the proof's copy
+// lets a malicious prover set Q=0 for a vacuous accept (red-team CRITICAL-1).
+static inline bool verify(const Proof& pf, uint32_t Q_pub, uint32_t R_pub, const char** why=nullptr){
     auto fail=[&](const char* m){ if(why)*why=m; return false; };
     uint32_t bb=pf.bb,ii=pf.ii,oo=pf.oo,V=ii+3, IN=1u<<ii;
     if(pf.msgs.size()!=V) return fail("msg count");
+    // pin FRI params to public values on every opening (defeats Q=0 / R=0 forgery)
+    const uint32_t Q_MIN=20;
+    if(Q_pub<Q_MIN || R_pub<1) return fail("insecure params");
+    auto chkpar=[&](const p3bf::EvalProof& e, uint32_t logN_exp)->bool{
+        return e.Q==Q_pub && e.R==R_pub && e.logN==logN_exp; };
+    if(!chkpar(pf.openX, bb+ii+1) || !chkpar(pf.openW, ii+oo+1) || !chkpar(pf.openY, bb+oo+1))
+        return fail("opening params != public (Q/R/logN)");
     fs::Transcript tr("p3-pfc");
     tr.absorb("rX",pf.rootX.data(),32); tr.absorb("rW",pf.rootW.data(),32); tr.absorb("rY",pf.rootY.data(),32);
     std::vector<gl_t> r_i=chal_vec(tr,bb), r_k=chal_vec(tr,oo);
