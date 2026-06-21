@@ -68,18 +68,26 @@ struct FriProof {
     std::vector<QueryProof> queries;
 };
 
-// honest fold of a round codeword (size M) with challenge beta; domain root w_M.
-static inline std::vector<gl_t> fold(const std::vector<gl_t>& f, gl_t w_M, gl_t beta) {
-    uint32_t M = (uint32_t)f.size(), half = M / 2;
+// Fold value from a coset pair (a=f(x), b=f(-x)) at x:
+//   E = (a+b)/2 [even part], O = (a-b)/(2x) [odd part]
+//   coeff fold (FRI LDT):  E + beta*O           binds coefficients c'[k]=c[2k]+beta*c[2k+1]
+//   MLE   fold (Basefold): (1-beta)*E + beta*O  binds MLE c'[k]=(1-beta)c[2k]+beta*c[2k+1]
+static inline gl_t fold_pair(gl_t a, gl_t b, gl_t invx, gl_t beta, bool mle) {
     gl_t inv2 = gl_inv(2ULL);
+    gl_t E = gl_mul(gl_add(a, b), inv2);
+    gl_t O = gl_mul(gl_mul(gl_sub(a, b), inv2), invx);
+    if (mle) return gl_add(gl_mul(gl_sub(1ULL, beta), E), gl_mul(beta, O));
+    return gl_add(E, gl_mul(beta, O));
+}
+
+// honest fold of a round codeword (size M) with challenge beta; domain root w_M.
+static inline std::vector<gl_t> fold(const std::vector<gl_t>& f, gl_t w_M, gl_t beta, bool mle = false) {
+    uint32_t M = (uint32_t)f.size(), half = M / 2;
     gl_t winv = gl_inv(w_M);          // w_M^{-1}
     std::vector<gl_t> out(half);
     gl_t inv_x = 1ULL;                 // w_M^{-c}
     for (uint32_t c = 0; c < half; c++) {
-        gl_t a = f[c], b = f[c + half];
-        gl_t s = gl_mul(gl_add(a, b), inv2);                       // (a+b)/2
-        gl_t d = gl_mul(gl_mul(gl_sub(a, b), inv2), inv_x);        // (a-b)/(2x)
-        out[c] = gl_add(s, gl_mul(beta, d));
+        out[c] = fold_pair(f[c], f[c + half], inv_x, beta, mle);
         inv_x = gl_mul(inv_x, winv);
     }
     return out;
@@ -136,10 +144,46 @@ static inline FriProof prove(std::vector<gl_t> cw0, uint32_t logN, uint32_t R, u
     return pf;
 }
 
+// Shared query authentication: for each query coset index c0s[q], verify the
+// revealed pairs are Merkle-consistent with `roots` and that folding with `betas`
+// links each round to the next and finally to `final_word`.  Used by both the FRI
+// LDT and the Basefold evaluation opening (which differ only in how betas arise).
+static inline bool check_queries(const std::vector<Hash>& roots, const std::vector<gl_t>& final_word,
+                                 const std::vector<gl_t>& betas, const std::vector<QueryProof>& queries,
+                                 uint32_t logN, uint32_t R, const std::vector<uint32_t>& c0s,
+                                 const char** why, bool mle = false) {
+    auto fail = [&](const char* m){ if (why) *why = m; return false; };
+    uint32_t logM0 = logN + R, M0 = 1u << logM0;
+    for (uint32_t q = 0; q < queries.size(); q++) {
+        const QueryProof& qp = queries[q];
+        if (qp.rounds.size() != logN) return fail("round count");
+        uint32_t p = c0s[q];
+        for (uint32_t r = 0; r < logN; r++) {
+            uint32_t Mr = M0 >> r, half = Mr / 2, c = p % half;
+            const RoundOpen& ro = qp.rounds[r];
+            if (!verify_path(leaf_hash(ro.a), c,        ro.pa, roots[r])) return fail("merkle a");
+            if (!verify_path(leaf_hash(ro.b), c + half, ro.pb, roots[r])) return fail("merkle b");
+            uint32_t logMr = logM0 - r;
+            gl_t w = gl_root_of_unity(logMr);
+            gl_t x = gl_pow(w, c), invx = gl_inv(x);
+            gl_t folded = fold_pair(ro.a, ro.b, invx, betas[r], mle);
+            if (r + 1 < logN) {
+                uint32_t nhalf = (M0 >> (r + 1)) / 2;
+                gl_t val = (c < nhalf) ? qp.rounds[r+1].a : qp.rounds[r+1].b;
+                if (val != folded) return fail("fold link");
+            } else {
+                if (final_word[c] != folded) return fail("fold to final");
+            }
+            p = c;
+        }
+    }
+    return true;
+}
+
 // ---------------- verifier ----------------
 static inline bool verify(const FriProof& pf, const std::string& seed = "p3-fri", const char** why = nullptr) {
     auto fail = [&](const char* m){ if (why) *why = m; return false; };
-    uint32_t logN = pf.logN, R = pf.R, logM0 = logN + R, M0 = 1u << logM0;
+    uint32_t logN = pf.logN, R = pf.R, M0 = 1u << (logN + R);
     if (pf.roots.size() != logN) return fail("root count");
     if (pf.final_word.size() != (1u << R)) return fail("final size");
     if (pf.queries.size() != pf.Q) return fail("query count");
@@ -152,42 +196,12 @@ static inline bool verify(const FriProof& pf, const std::string& seed = "p3-fri"
     }
     tr.absorb("final", pf.final_word.data(), pf.final_word.size() * sizeof(gl_t));
 
-    // final codeword must be constant (degree 0)
     for (size_t i = 1; i < pf.final_word.size(); i++)
         if (pf.final_word[i] != pf.final_word[0]) return fail("final not constant");
 
-    gl_t inv2 = gl_inv(2ULL);
-    for (uint32_t q = 0; q < pf.Q; q++) {
-        uint32_t c0 = (uint32_t)idx_from(tr, M0 / 2);
-        const QueryProof& qp = pf.queries[q];
-        if (qp.rounds.size() != logN) return fail("round count");
-        uint32_t p = c0;
-        for (uint32_t r = 0; r < logN; r++) {
-            uint32_t Mr = M0 >> r, half = Mr / 2, c = p % half;
-            const RoundOpen& ro = qp.rounds[r];
-            // Merkle authentication of the revealed pair
-            if (!verify_path(leaf_hash(ro.a), c,        ro.pa, pf.roots[r])) return fail("merkle a");
-            if (!verify_path(leaf_hash(ro.b), c + half, ro.pb, pf.roots[r])) return fail("merkle b");
-            // fold at x = w_Mr^c
-            uint32_t logMr = logM0 - r;
-            gl_t w = gl_root_of_unity(logMr);
-            gl_t x = gl_pow(w, c), invx = gl_inv(x);
-            gl_t s = gl_mul(gl_add(ro.a, ro.b), inv2);
-            gl_t d = gl_mul(gl_mul(gl_sub(ro.a, ro.b), inv2), invx);
-            gl_t folded = gl_add(s, gl_mul(betas[r], d));
-            // the folded value must equal f_{r+1}[c]
-            if (r + 1 < logN) {
-                uint32_t nhalf = (M0 >> (r + 1)) / 2;
-                uint32_t cn = c % nhalf;
-                gl_t val = (c < nhalf) ? qp.rounds[r+1].a : qp.rounds[r+1].b;
-                (void)cn;
-                if (val != folded) return fail("fold link");
-            } else {
-                if (pf.final_word[c] != folded) return fail("fold to final");
-            }
-            p = c;
-        }
-    }
+    std::vector<uint32_t> c0s(pf.Q);
+    for (uint32_t q = 0; q < pf.Q; q++) c0s[q] = (uint32_t)idx_from(tr, M0 / 2);
+    if (!check_queries(pf.roots, pf.final_word, betas, pf.queries, logN, R, c0s, why)) return false;
     if (why) *why = "ok";
     return true;
 }

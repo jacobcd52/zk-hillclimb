@@ -28,7 +28,16 @@ p3_fri.cuh (host: Merkle, fold, Fiat-Shamir prove/verify), p3_fri_selftest.cu.
   mid-round / root / wrong-seed; high-degree word rejected (final not constant).
 - Host-side for correctness clarity; GPU acceleration deferred to perf pass (P3.6).
 
-## P3.3b — Basefold multilinear evaluation opening
+## P3.3b/P3.4a — Basefold multilinear evaluation opening   [DONE 2026-06-21]
+p3_basefold.cuh (eq-weighted sumcheck coupled to the MLE codeword fold), p3_basefold_selftest.cu.
+- Generalized the fold to coeff (FRI LDT) vs MLE (Basefold) via fold_pair; shared check_queries.
+- Opens h(z)=c~(z) for committed coeff vector c: v-round sumcheck of sum_b c[b]*eq(b,z) with
+  challenges = MLE fold challenges; tie  claim == C*eq(alpha,z),  C = final folded constant.
+- Selftest 10/10: honest opens (3 sizes) accept; reject on wrong value / tampered sumcheck /
+  codeword / path / final / opening point.
+- Soundness ~2^-58 (base-field challenges); degree-2 extension is the flagged production change.
+
+## P3.4b — sumcheck matmul argument for the FC layer (Y = X.W)
 ## P3.4 — sumcheck over Goldilocks + FC matmul argument
 ## P3.5 — ZK/hiding + weight & activation privacy (hard requirement)
 ## P3.6 — wire FC-layer prover + selftest battery + end-to-end bench
