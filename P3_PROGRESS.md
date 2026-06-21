@@ -21,7 +21,14 @@ p3_ntt.cuh (Goldilocks NTT), p3_merkle.cuh (device SHA-256 + GPU Merkle), p3_com
     hash-PCS (RS blowup2 NTT -> 2^23 + SHA-256 Merkle):  15.5 ms
     EC Pedersen (Pippenger MSM, 2048x2048):             700.9 ms
     => 45.1x faster commit.  (validates culprit #2; SHA-256 is conservative vs Poseidon)
-## P3.3 — Basefold/FRI low-degree test + evaluation opening
+## P3.3 — FRI low-degree test (proximity engine)   [DONE 2026-06-21]
+p3_fri.cuh (host: Merkle, fold, Fiat-Shamir prove/verify), p3_fri_selftest.cu.
+- Subgroup domain, k=logN fold rounds, Q Merkle-authenticated queries.
+- Selftest 11/11: honest accept (3 sizes); reject on tampered value / path / final /
+  mid-round / root / wrong-seed; high-degree word rejected (final not constant).
+- Host-side for correctness clarity; GPU acceleration deferred to perf pass (P3.6).
+
+## P3.3b — Basefold multilinear evaluation opening
 ## P3.4 — sumcheck over Goldilocks + FC matmul argument
 ## P3.5 — ZK/hiding + weight & activation privacy (hard requirement)
 ## P3.6 — wire FC-layer prover + selftest battery + end-to-end bench
