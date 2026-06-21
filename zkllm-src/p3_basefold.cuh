@@ -89,7 +89,27 @@ static inline std::vector<gl_t> rs_encode_gpu(const std::vector<gl_t>& c, uint32
     return cw;
 }
 static inline Hash commit_gpu(const std::vector<gl_t>& c, uint32_t R, std::vector<gl_t>& cw) {
-    cw = rs_encode_gpu(c, R); Merkle mk; mk.build(cw); return mk.root();
+    cw = rs_encode_gpu(c, R);
+    p3fri::DeviceMerkle mk; mk.build(cw); Hash r = mk.root(); mk.free_(); return r;  // root only, no host levels
+}
+
+// GPU MLE fold of a codeword (openings use mle=true): out[c] = (1-beta)E + beta*O,
+// E=(f[c]+f[c+half])/2, O=(f[c]-f[c+half])/(2*x), x=w_M^c.  Replaces the O(M) host fold.
+__global__ void p3bf_fold_kernel(const gl_t* f, gl_t* out, uint32_t half, gl_t winv, gl_t beta, gl_t inv2) {
+    uint32_t c = blockIdx.x*blockDim.x + threadIdx.x; if (c >= half) return;
+    gl_t invx = gl_pow(winv, c), a = f[c], b = f[c+half];
+    gl_t E = gl_mul(gl_add(a,b), inv2);
+    gl_t O = gl_mul(gl_mul(gl_sub(a,b), inv2), invx);
+    out[c] = gl_add(gl_mul(gl_sub(1ULL,beta), E), gl_mul(beta, O));
+}
+static inline std::vector<gl_t> fold_gpu(const std::vector<gl_t>& f, gl_t w_M, gl_t beta) {
+    uint32_t M=(uint32_t)f.size(), half=M/2;
+    gl_t *d_in,*d_out; cudaMalloc(&d_in,(size_t)M*sizeof(gl_t)); cudaMalloc(&d_out,(size_t)half*sizeof(gl_t));
+    cudaMemcpy(d_in,f.data(),(size_t)M*sizeof(gl_t),cudaMemcpyHostToDevice);
+    gl_t winv=gl_inv(w_M), inv2=gl_inv(2ULL);
+    p3bf_fold_kernel<<<(half+255)/256,256>>>(d_in,d_out,half,winv,beta,inv2);
+    std::vector<gl_t> out(half); cudaMemcpy(out.data(),d_out,(size_t)half*sizeof(gl_t),cudaMemcpyDeviceToHost);
+    cudaFree(d_in); cudaFree(d_out); return out;
 }
 
 static inline gl_t alpha_from(fs::Transcript& tr) {
@@ -127,13 +147,17 @@ static inline EvalProof prove_eval(std::vector<gl_t> c, const std::vector<gl_t>&
     tr.absorb("y", &y, sizeof(gl_t));
 
     std::vector<std::vector<gl_t>> words; words.push_back(cw0);
+    bool GM = p3fri::g_gpu_merkle;                 // device-resident Merkle for large openings
     std::vector<Merkle> trees;
+    std::vector<p3fri::DeviceMerkle> dtrees;
     std::vector<gl_t> cur_c = c, cur_w = build_eq(z), alphas;
 
     for (uint32_t r = 0; r < v; r++) {
-        Merkle mk; mk.build(words[r]); trees.push_back(mk);
-        pf.roots.push_back(mk.root());
-        tr.absorb("root", mk.root().data(), 32);
+        Hash root;
+        if (GM) { p3fri::DeviceMerkle mk; mk.build(words[r]); root=mk.root(); dtrees.push_back(mk); }
+        else    { Merkle mk; mk.build(words[r]); root=mk.root(); trees.push_back(mk); }
+        pf.roots.push_back(root);
+        tr.absorb("root", root.data(), 32);
         // sumcheck message over the LSB split of cur_c, cur_w
         uint32_t n = (uint32_t)cur_c.size(), half = n / 2;
         gl_t s0 = 0, s1 = 0, s2 = 0;
@@ -155,7 +179,7 @@ static inline EvalProof prove_eval(std::vector<gl_t> c, const std::vector<gl_t>&
         }
         cur_c = nc; cur_w = nw;
         gl_t w = gl_root_of_unity(logM0 - r);
-        words.push_back(fold(words[r], w, a, /*mle=*/true));
+        words.push_back(GM ? fold_gpu(words[r], w, a) : fold(words[r], w, a, /*mle=*/true));
     }
     pf.final_word = words[v];
     tr.absorb("final", pf.final_word.data(), pf.final_word.size() * sizeof(gl_t));
@@ -166,11 +190,13 @@ static inline EvalProof prove_eval(std::vector<gl_t> c, const std::vector<gl_t>&
         for (uint32_t r = 0; r < v; r++) {
             uint32_t Mr = M0 >> r, h = Mr / 2, cc = p % h;
             RoundOpen ro; ro.a = words[r][cc]; ro.b = words[r][cc + h];
-            ro.pa = trees[r].path(cc); ro.pb = trees[r].path(cc + h);
+            if (GM) { ro.pa = dtrees[r].path(cc); ro.pb = dtrees[r].path(cc + h); }
+            else    { ro.pa = trees[r].path(cc);  ro.pb = trees[r].path(cc + h); }
             qp.rounds.push_back(ro); p = cc;
         }
         pf.queries.push_back(qp);
     }
+    if (GM) for (auto& t : dtrees) t.free_();
     return pf;
 }
 

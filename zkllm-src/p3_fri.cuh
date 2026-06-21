@@ -88,6 +88,34 @@ static inline bool verify_path(Hash leaf, size_t idx, const std::vector<Hash>& p
     return h == root;
 }
 
+// Device-resident Merkle for openings at scale: all levels stay on the GPU; only the
+// root (32B) and the O(log M) sibling hashes per queried index are copied to host.
+// Avoids the ~2*M*32-byte host materialization that dominated large openings.
+// No destructor (shallow-copyable into a vector); call free_() once when done.
+struct DeviceMerkle {
+    std::vector<uint8_t*> dlev; std::vector<uint32_t> sz;
+    void build(const std::vector<gl_t>& cw) {
+        uint32_t M = (uint32_t)cw.size();
+        gl_t* d_cw; cudaMalloc(&d_cw, (size_t)M*sizeof(gl_t));
+        cudaMemcpy(d_cw, cw.data(), (size_t)M*sizeof(gl_t), cudaMemcpyHostToDevice);
+        uint8_t* d0; cudaMalloc(&d0, (size_t)M*32);
+        p3_merkle_leaf_kernel<<<(M+P3_MERKLE_THREADS-1)/P3_MERKLE_THREADS,P3_MERKLE_THREADS>>>(d_cw,d0,M);
+        cudaFree(d_cw);
+        dlev.assign(1,d0); sz.assign(1,M);
+        for (uint32_t cnt=M; cnt>1;){ uint32_t half=cnt/2; uint8_t* dn; cudaMalloc(&dn,(size_t)half*32);
+            p3_merkle_internal_kernel<<<(half+P3_MERKLE_THREADS-1)/P3_MERKLE_THREADS,P3_MERKLE_THREADS>>>(dlev.back(),dn,half);
+            dlev.push_back(dn); sz.push_back(half); cnt=half; }
+        cudaDeviceSynchronize();
+    }
+    Hash root() const { Hash h; cudaMemcpy(h.data(), dlev.back(), 32, cudaMemcpyDeviceToHost); return h; }
+    std::vector<Hash> path(size_t idx) const {
+        std::vector<Hash> p;
+        for (size_t d=0; d+1<dlev.size(); d++){ Hash h; cudaMemcpy(h.data(), dlev[d]+(size_t)(idx^1)*32, 32, cudaMemcpyDeviceToHost); p.push_back(h); idx>>=1; }
+        return p;
+    }
+    void free_(){ for(auto p:dlev) cudaFree(p); dlev.clear(); sz.clear(); }
+};
+
 struct RoundOpen { gl_t a, b; std::vector<Hash> pa, pb; };   // values at coset idx c and c+half
 struct QueryProof { std::vector<RoundOpen> rounds; };
 struct FriProof {
