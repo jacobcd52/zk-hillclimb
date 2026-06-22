@@ -1,0 +1,27 @@
+{
+  "model": "RedHatAI/Qwen2.5-0.5B-FP8-dynamic",
+  "n_completion_tokens": 4967,
+  "q_vs_codebook": {
+    "R_rank": 0.355255814682625,
+    "frac_rank0": 0.9416146567344473,
+    "mean_rank": 0.06623716529092007,
+    "max_rank": 4
+  },
+  "q_vs_fp32": {
+    "R_rank": 0.36148247943183587,
+    "frac_rank0": 0.9414133279645661,
+    "mean_rank": 0.0690557680692571,
+    "max_rank": 9
+  },
+  "codebook_vs_fp32": {
+    "R_rank": 0.3280398418419099,
+    "frac_rank0": 0.9484598349104088,
+    "mean_rank": 0.059995973424602375,
+    "max_rank": 4
+  },
+  "logit_l2_mean": {
+    "q_codebook": 97.03341741775012,
+    "q_fp32": 96.63983924762809,
+    "codebook_fp32": 89.91758787010382
+  }
+}
