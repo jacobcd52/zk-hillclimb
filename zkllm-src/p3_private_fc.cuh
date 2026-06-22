@@ -13,6 +13,7 @@
 // remaining hardening, see P3_PRIVACY_DESIGN.md).  Built to be RED-TEAMED.
 #pragma once
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 #include <chrono>
 #include "p3_goldilocks.cuh"
@@ -27,10 +28,10 @@ static inline double now_ms(){ return std::chrono::duration<double,std::milli>(s
 struct SumMsg { gl_t s0,s1,s2; };
 struct Proof {
     uint32_t bb,ii,oo,R,Q;
-    p3fri::Hash rootX,rootW,rootY;
+    p3fri::Hash rootX,rootW,rootY,rootQ;   // rootQ commits the sumcheck mask q (red-team CRITICAL fix)
     gl_t Sq, qr;
     std::vector<SumMsg> msgs;            // V = ii+3 rounds
-    p3bf::EvalProof openX,openW,openY;
+    p3bf::EvalProof openX,openW,openY,openQ;  // openQ proves qr = q~(r), binding the mask
 };
 
 static inline gl_t chal(fs::Transcript& tr){ uint8_t c[32]; tr.challenge_bytes(c);
@@ -54,6 +55,16 @@ static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,
                           Timing* tm=nullptr){
     uint32_t B=1u<<bb, IN=1u<<ii, OUT=1u<<oo;
     Proof pf; pf.bb=bb;pf.ii=ii;pf.oo=oo;pf.R=R;pf.Q=Q;
+    // PRIVACY (red-team Finding 1): the random "mask" slice of each augmented operand must
+    // cover EVERY value the openings reveal; otherwise the joint linear system over all
+    // query positions de-masks the real witness (Vandermonde recovery). The mask slice has
+    // 2^(logN-1) random coeffs; an opening reveals ~2*Q*logN codeword values + 2^R final.
+    // Refuse to emit a (leaky) proof unless the mask strictly dominates the revealed set.
+    // Real NN layers are always far inside this regime; only toy shapes/huge-Q are refused.
+    { auto safe=[&](uint32_t ln){ return 2.0*Q*ln + (double)(1u<<R) <= (double)(1ull<<(ln-1)); };
+      if(!safe(bb+ii+1) || !safe(ii+oo+1) || !safe(bb+oo+1)){
+        fprintf(stderr,"p3pfc::prove REFUSED: mask slice too small for Q=%u R=%u (would leak the witness); use a larger layer or smaller Q.\n",Q,R);
+        return pf; /* empty proof -> verify rejects; no leaky proof is produced */ } }
     double t0=now_ms();
     // augment: index ex*base + real_index
     std::vector<gl_t> Xh(2u*B*IN), Wh(2u*IN*OUT), Yh(2u*B*OUT);
@@ -89,6 +100,12 @@ static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,
         f2c[b]= exX?AX1[j]:AX0[j]; f2d[b]= exW?BW1[j]:BW0[j];
         q[b]=prng(sq); }
     pf.Sq=0; for(auto x:q) pf.Sq=gl_add(pf.Sq,x);
+    // CRITICAL soundness (red-team gpt-5.5-pro Finding 1): commit the mask q and absorb its
+    // root BEFORE rho, so qr=q~(r) is BOUND (opened below) and cannot be freely chosen to
+    // satisfy the final tie. Without this, qr is a free scalar -> forge any false statement.
+    std::vector<gl_t> q0=q; std::vector<gl_t> cwQ;
+    pf.rootQ = gpu? p3bf::commit_gpu(q0,R,cwQ) : p3bf::commit(q0,R,cwQ);
+    tr.absorb("rQ",pf.rootQ.data(),32);
     tr.absorb("Sq",&pf.Sq,sizeof pf.Sq); gl_t rho=chal(tr);
     gl_t c2=(gl_t)((2ull*IN)%GL_P);
     double t2=now_ms(); if(tm) tm->prep_ms=t2-t1;
@@ -124,6 +141,10 @@ static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,
     pf.openX=p3bf::prove_eval(Xh,zX,yX,R,Q,cwX,"pfc-X");
     pf.openW=p3bf::prove_eval(Wh,zW,yW,R,Q,cwW,"pfc-W");
     pf.openY=p3bf::prove_eval(Yh,zY,yY,R,Q,cwY,"pfc-Y");
+    // bind qr: open the committed mask q at the sumcheck point r (defeats the qr-forge)
+    gl_t yQ = gpu ? p3bf::eval_h_gpu(q0,r) : p3bf::eval_h(q0,p3bf::build_eq(r));
+    pf.openQ = p3bf::prove_eval(q0,r,yQ,R,Q,cwQ,"pfc-Q");
+    pf.qr = yQ;
     cudaDeviceSynchronize(); if(tm) tm->open_ms=now_ms()-t3;
     return pf;
 }
@@ -143,9 +164,13 @@ static inline bool verify(const Proof& pf, uint32_t Q_pub, uint32_t R_pub, const
         return e.Q==Q_pub && e.R==R_pub && e.logN==logN_exp; };
     if(!chkpar(pf.openX, bb+ii+1) || !chkpar(pf.openW, ii+oo+1) || !chkpar(pf.openY, bb+oo+1))
         return fail("opening params != public (Q/R/logN)");
+    // privacy: reject proofs from a mask-insufficient (leaky) regime (red-team Finding 1)
+    { auto safe=[&](uint32_t ln){ return 2.0*Q_pub*ln + (double)(1u<<R_pub) <= (double)(1ull<<(ln-1)); };
+      if(!safe(bb+ii+1) || !safe(ii+oo+1) || !safe(bb+oo+1)) return fail("insufficient mask (leaky regime)"); }
     fs::Transcript tr("p3-pfc");
     tr.absorb("rX",pf.rootX.data(),32); tr.absorb("rW",pf.rootW.data(),32); tr.absorb("rY",pf.rootY.data(),32);
     std::vector<gl_t> r_i=chal_vec(tr,bb), r_k=chal_vec(tr,oo);
+    tr.absorb("rQ",pf.rootQ.data(),32);                 // mask commitment, before rho
     tr.absorb("Sq",&pf.Sq,sizeof pf.Sq); gl_t rho=chal(tr);
     gl_t claim=gl_mul(rho,pf.Sq); std::vector<gl_t> r;
     for(uint32_t rd=0;rd<V;rd++){ const SumMsg& m=pf.msgs[rd];
@@ -159,15 +184,19 @@ static inline bool verify(const Proof& pf, uint32_t Q_pub, uint32_t R_pub, const
     if(pf.openX.roots.empty()||!(pf.openX.roots[0]==pf.rootX)||pf.openX.z!=zX) return fail("X opening bind");
     if(pf.openW.roots.empty()||!(pf.openW.roots[0]==pf.rootW)||pf.openW.z!=zW) return fail("W opening bind");
     if(pf.openY.roots.empty()||!(pf.openY.roots[0]==pf.rootY)||pf.openY.z!=zY) return fail("Y opening bind");
+    // the mask opening must be at EXACTLY the sumcheck point r and bound to rootQ
+    if(pf.openQ.roots.empty()||!(pf.openQ.roots[0]==pf.rootQ)||pf.openQ.z!=r) return fail("Q opening bind");
+    if(!chkpar(pf.openQ, V)) return fail("Q opening params");
     if(!p3bf::verify_eval(pf.openX,"pfc-X",why)) return false;
     if(!p3bf::verify_eval(pf.openW,"pfc-W",why)) return false;
     if(!p3bf::verify_eval(pf.openY,"pfc-Y",why)) return false;
-    gl_t mX=pf.openX.y,mW=pf.openW.y,mY=pf.openY.y;
+    if(!p3bf::verify_eval(pf.openQ,"pfc-Q",why)) return false;
+    gl_t mX=pf.openX.y,mW=pf.openW.y,mY=pf.openY.y, qr=pf.openQ.y;  // qr now BOUND to rootQ
     gl_t c2=(gl_t)((2ull*IN)%GL_P);
     gl_t term1=gl_mul(gl_sub(1ULL,rey),mY);
     gl_t term2=gl_mul(gl_mul(gl_sub(1ULL,rexX),gl_sub(1ULL,rexW)),gl_mul(mX,mW));
     gl_t summand_final=gl_sub(term1,gl_mul(c2,term2));
-    if(claim != gl_add(summand_final, gl_mul(rho,pf.qr))) return fail("final tie");
+    if(claim != gl_add(summand_final, gl_mul(rho,qr))) return fail("final tie");
     if(why)*why="ok"; return true;
 }
 
