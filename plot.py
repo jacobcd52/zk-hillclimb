@@ -4,22 +4,27 @@ import matplotlib.pyplot as plt
 rows=list(csv.DictReader(open("sweep_results.csv")))
 batch=[r for r in rows if r["label"].startswith("llama68m_B")]
 models=[r for r in rows if not r["label"].startswith("llama68m_B")]
-fig,ax=plt.subplots(1,2,figsize=(13,5))
+fig,ax=plt.subplots(1,2,figsize=(13,5.2))
 if batch:
     B=[int(r["B"]) for r in batch]; fwd=[float(r["fwd_us"])/1000 for r in batch]
+    gen=[float(r["gen_ms"]) for r in batch]
     pr=[float(r["prove_ms"]) for r in batch]; prold=[float(r["prove_old_ms"]) for r in batch]
     ax[0].plot(B,prold,'x--',color='gray',label="prove (before)")
-    ax[0].plot(B,pr,'o-',label="prove (after)"); ax[0].plot(B,fwd,'s--',label="forward pass")
-    ax[0].set_xscale('log',base=2); ax[0].set_yscale('log'); ax[0].set_xlabel("batch size B (llama-68m up_proj, 1024x4096)")
-    ax[0].set_ylabel("ms"); ax[0].set_title("Batch scaling (single proof covers the whole batch)"); ax[0].legend(); ax[0].grid(True,alpha=.3)
+    ax[0].plot(B,pr,'o-',label="prove (after)")
+    ax[0].plot(B,gen,'^:',color='C3',label="generate B tokens (decode, est.)")
+    ax[0].plot(B,fwd,'s--',color='C2',label="prefill / forward (B tokens)")
+    ax[0].set_xscale('log',base=2); ax[0].set_yscale('log'); ax[0].set_xlabel("batch size B = #tokens (llama-68m up_proj, 1024x4096)")
+    ax[0].set_ylabel("ms"); ax[0].set_title("Batch scaling (single proof covers the whole batch)"); ax[0].legend(fontsize=8); ax[0].grid(True,alpha=.3)
 if models:
     lbl=[r["label"].split("(")[0] for r in models]
     pr=[float(r["prove_ms"]) for r in models]; prold=[float(r["prove_old_ms"]) for r in models]
-    fwd=[float(r["fwd_us"])/1000 for r in models]
-    x=range(len(models)); w=.27
-    ax[1].bar([i-w for i in x],prold,w,label="prove (before)",color='lightgray')
-    ax[1].bar([i for i in x],pr,w,label="prove (after)")
-    ax[1].bar([i+w for i in x],fwd,w,label="forward")
+    fwd=[float(r["fwd_us"])/1000 for r in models]; gen=[float(r["gen_ms"]) for r in models]
+    x=range(len(models)); w=.2
+    ax[1].bar([i-1.5*w for i in x],prold,w,label="prove (before)",color='lightgray')
+    ax[1].bar([i-0.5*w for i in x],pr,w,label="prove (after)",color='C0')
+    ax[1].bar([i+0.5*w for i in x],gen,w,label="generate 16 tokens (decode, est.)",color='C3')
+    ax[1].bar([i+1.5*w for i in x],fwd,w,label="prefill / forward (16 tokens)",color='C2')
     ax[1].set_yscale('log'); ax[1].set_xticks(list(x)); ax[1].set_xticklabels(lbl,rotation=20,ha='right',fontsize=8)
-    ax[1].set_title("Model-size scaling (B=16): prover speedup"); ax[1].set_ylabel("ms"); ax[1].legend(); ax[1].grid(True,alpha=.3,axis='y')
-plt.tight_layout(); plt.savefig("sweep_plot.png",dpi=130); print("WROTE sweep_plot.png")
+    ax[1].set_title("Model-size scaling (B=16)"); ax[1].set_ylabel("ms"); ax[1].legend(fontsize=8); ax[1].grid(True,alpha=.3,axis='y')
+fig.suptitle("ZK private-FC prover vs inference  (generation time = #tokens x forward; ESTIMATE per vLLM-style memory-bound decode)",fontsize=9,y=1.005)
+plt.tight_layout(); plt.savefig("sweep_plot.png",dpi=130,bbox_inches='tight'); print("WROTE sweep_plot.png")

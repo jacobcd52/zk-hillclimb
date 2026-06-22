@@ -55,3 +55,16 @@ but not yet implemented (they are larger, coordinated prover+verifier changes).
 Note: this is still the **integrity** prover (zero-knowledge not yet achieved — the opening
 sumcheck leak is the separate, #1 crypto task). These speedups carry over to the eventual ZK
 version.
+
+## Plot note: estimated generation (decode) time
+
+The plot adds an estimated **generation** bar alongside the measured prefill/forward bar.
+Generating tokens autoregressively (decode) runs **one token at a time and is
+memory-bandwidth bound** — each token re-reads the layer's weights — whereas prefill
+amortizes a single weight-pass across the whole batch (compute-bound). So we **estimate**
+decode of N tokens as `N x (the layer's forward-pass time)` (per-token decode ≈ one weight
+read). This is a rough estimate, not measured; it reflects the prefill-compute-bound vs
+decode-memory-bound behavior reported in vLLM benchmarks. Equivalently, per token decode is
+~B× slower than batched prefill. Against this more realistic generation time the proof
+overhead is ~B× lower than against prefill (e.g. 3B-class B=16: prove 2561 ms vs generate
+~2.6 ms vs prefill ~0.16 ms).
