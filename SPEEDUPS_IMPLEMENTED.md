@@ -63,17 +63,16 @@ prover (no "before" bars). Prove times grow modestly with token count because th
 openings and prep scale with B while the weight (W) commitment/opening dominate and are
 ~B-independent — so a single proof still covers all 1024 tokens.
 
-**Generation (decode) estimate.** Autoregressive decode produces one token at a time and is
-**memory-bandwidth bound**: each token must read the layer's weights from HBM. The standard
-single-stream decode model is `t_token = weight_bytes / HBM_bandwidth` — the same roofline
-that gives e.g. ~24 tok/s for a 70B model on an H100 (3.35 TB/s). We estimate generation of
-N tokens as `N × t_token`. We take `t_token` = the **measured single-token forward (B=1)** of
-each layer, which on the RTX 4090 already sits right at the fp16 bandwidth roofline
-(llama up_proj ~8.8 µs, gpt2-large ~30 µs, 3B-class ~148 µs) — so this is grounded, not a
-launch-overhead-inflated number. Prefill (the measured `forward(B)`) amortizes one weight
-pass across all B tokens, so it is much faster than decode for the same tokens.
+**Generation (decode) estimate — a literature ratio, not a measurement.** Prefill is
+compute-bound (one weight-read serves many tokens); decode is memory-bandwidth bound (one
+weight-read per token). So the per-token decode:prefill time ratio is essentially the GPU's
+compute-to-bandwidth (ops:byte) ratio when prefill saturates: ~156 (A100), ~295 (H100), ~165
+(RTX 4090) as a **ceiling**. In practice (short prompts, imperfect saturation, batched decode)
+the observed single-stream ratio is lower, **typically ~10×–100×**. We pick a mid-range,
+conservative **50×** and estimate `generate(N) = 50 × (prefill per-token) × N`, using only the
+measured prefill numbers (no decode measurement on our model). This keeps linear token scaling
+and is well inside the literature range.
 
-Measured at B=1024 (RTX 4090): the proof overhead vs **realistic generation** is far smaller
-than vs prefill, e.g. 3B-class — prove 3484 ms vs **generate ~151 ms (~23×)** vs prefill
-~1.3 ms (~2700×). (Estimate, single-stream decode; sources: vLLM / LLM-inference roofline
-analyses.)
+At context = 1024 tokens (RTX 4090): proof overhead vs **realistic generation** is far smaller
+than vs prefill, e.g. 3B-class — prove 3484 ms vs **generate ~64 ms (~54×)** vs prefill ~1.3 ms
+(~2700×). (Estimate; ratio from vLLM / LLM-inference roofline analyses, typical range 10–100×.)
