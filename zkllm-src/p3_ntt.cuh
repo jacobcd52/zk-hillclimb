@@ -36,8 +36,17 @@ __global__ void p3_scale_kernel(gl_t* a, gl_t c, uint32_t n) {
     if (i < n) a[i] = gl_mul(a[i], c);
 }
 
+// Build a twiddle table W[k] = base^k on the GPU (each thread an independent pow).
+// Replaces the host O(n) sequential prefix-product + a big H2D upload, which
+// dominated commit time for large layers (the W matrix builds ~2^25 twiddles).
+__global__ void p3_twiddle_kernel(gl_t* W, gl_t base, uint32_t cnt) {
+    uint32_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= cnt) return;
+    W[k] = gl_pow(base, (uint64_t)k);
+}
+
 // Forward/inverse NTT over a device buffer of length n=2^logn (in place).
-// Twiddle tables are built once on host and cached on device.
+// Twiddle tables are built on the GPU (no host loop / upload).
 struct P3Ntt {
     uint32_t n, logn;
     gl_t* d_Wf = nullptr;   // forward twiddles (powers of omega_n)
@@ -48,13 +57,11 @@ struct P3Ntt {
         n = 1u << logn;
         gl_t w  = gl_root_of_unity(logn);
         gl_t wi = gl_inv(w);
-        std::vector<gl_t> Wf(n / 2), Wi(n / 2);
-        Wf[0] = 1; Wi[0] = 1;
-        for (uint32_t k = 1; k < n / 2; k++) { Wf[k] = gl_mul(Wf[k-1], w); Wi[k] = gl_mul(Wi[k-1], wi); }
+        uint32_t half = n / 2, blk = (half + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         cudaMalloc(&d_Wf, (n/2) * sizeof(gl_t));
         cudaMalloc(&d_Wi, (n/2) * sizeof(gl_t));
-        cudaMemcpy(d_Wf, Wf.data(), (n/2)*sizeof(gl_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_Wi, Wi.data(), (n/2)*sizeof(gl_t), cudaMemcpyHostToDevice);
+        p3_twiddle_kernel<<<blk, P3_NTT_THREADS>>>(d_Wf, w,  half);
+        p3_twiddle_kernel<<<blk, P3_NTT_THREADS>>>(d_Wi, wi, half);
         ninv = gl_inv((gl_t)n);
     }
     ~P3Ntt() { if (d_Wf) cudaFree(d_Wf); if (d_Wi) cudaFree(d_Wi); }

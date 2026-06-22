@@ -33,7 +33,7 @@ static inline Hash leaf_hash(gl_t v) {
 }
 static inline Hash node_hash(const Hash& l, const Hash& r) {
     uint8_t b[64]; memcpy(b, l.data(), 32); memcpy(b + 32, r.data(), 32);
-    Hash h; fs::sha256(b, 64, h.data()); return h;
+    Hash h; p3_sha256_compress64(b, h.data()); return h;   // single-block: matches device internal kernel
 }
 
 // host Merkle tree over a codeword (size must be power of 2)

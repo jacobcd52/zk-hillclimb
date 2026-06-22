@@ -48,6 +48,22 @@ static inline std::vector<gl_t> cat(std::vector<gl_t> a,const std::vector<gl_t>&
 static inline void bind(std::vector<gl_t>& f, gl_t a){ uint32_t h=f.size()/2; std::vector<gl_t> n(h);
     for(uint32_t i=0;i<h;i++) n[i]=gl_add(f[2*i],gl_mul(a,gl_sub(f[2*i+1],f[2*i]))); f=n; }
 
+// GPU prep contractions (the O(IN*OUT) host loop was ~18% of prove). One thread per j.
+//   AX0[j]=sum_i X[i*IN+j]*eqi[i],  AX1[j]=sum_i RX[i*IN+j]*eqi[i]    (stride-IN, coalesced)
+__global__ void p3pfc_ax_kernel(const gl_t* X,const gl_t* RX,const gl_t* eqi,gl_t* AX0,gl_t* AX1,uint32_t B,uint32_t IN){
+    uint32_t j=blockIdx.x*blockDim.x+threadIdx.x; if(j>=IN) return;
+    gl_t a0=0,a1=0;
+    for(uint32_t i=0;i<B;i++){ gl_t e=eqi[i]; a0=gl_add(a0,gl_mul(X[(size_t)i*IN+j],e)); a1=gl_add(a1,gl_mul(RX[(size_t)i*IN+j],e)); }
+    AX0[j]=a0; AX1[j]=a1;
+}
+//   BW0[j]=sum_k W[j*OUT+k]*eqk[k],  BW1[j]=sum_k RW[j*OUT+k]*eqk[k]  (per-thread contiguous row)
+__global__ void p3pfc_bw_kernel(const gl_t* W,const gl_t* RW,const gl_t* eqk,gl_t* BW0,gl_t* BW1,uint32_t IN,uint32_t OUT){
+    uint32_t j=blockIdx.x*blockDim.x+threadIdx.x; if(j>=IN) return;
+    gl_t b0=0,b1=0; const gl_t* wr=W+(size_t)j*OUT; const gl_t* rr=RW+(size_t)j*OUT;
+    for(uint32_t k=0;k<OUT;k++){ gl_t e=eqk[k]; b0=gl_add(b0,gl_mul(wr[k],e)); b1=gl_add(b1,gl_mul(rr[k],e)); }
+    BW0[j]=b0; BW1[j]=b1;
+}
+
 // ---------------- prover ----------------
 static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,const std::vector<gl_t>& Y,
                           const std::vector<gl_t>& RX,const std::vector<gl_t>& RW,const std::vector<gl_t>& RY,
@@ -83,10 +99,27 @@ static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,
 
     auto eqi=p3bf::build_eq(r_i), eqk=p3bf::build_eq(r_k);
     std::vector<gl_t> AX0(IN,0),AX1(IN,0),BW0(IN,0),BW1(IN,0);
-    for(uint32_t j=0;j<IN;j++){ gl_t a0=0,a1=0;
-        for(uint32_t i=0;i<B;i++){ a0=gl_add(a0,gl_mul(X[i*IN+j],eqi[i])); a1=gl_add(a1,gl_mul(RX[i*IN+j],eqi[i])); }
-        gl_t b0=0,b1=0; for(uint32_t k=0;k<OUT;k++){ b0=gl_add(b0,gl_mul(W[j*OUT+k],eqk[k])); b1=gl_add(b1,gl_mul(RW[j*OUT+k],eqk[k])); }
-        AX0[j]=a0;AX1[j]=a1;BW0[j]=b0;BW1[j]=b1; }
+    if(gpu){   // GPU contractions (the dominant O(IN*OUT) part); AX/BW are length-IN, small to return
+        gl_t *dX,*dRX,*dW,*dRW,*dei,*dek,*dA0,*dA1,*dB0,*dB1;
+        cudaMalloc(&dX,(size_t)B*IN*8);cudaMalloc(&dRX,(size_t)B*IN*8);
+        cudaMalloc(&dW,(size_t)IN*OUT*8);cudaMalloc(&dRW,(size_t)IN*OUT*8);
+        cudaMalloc(&dei,(size_t)B*8);cudaMalloc(&dek,(size_t)OUT*8);
+        cudaMalloc(&dA0,(size_t)IN*8);cudaMalloc(&dA1,(size_t)IN*8);cudaMalloc(&dB0,(size_t)IN*8);cudaMalloc(&dB1,(size_t)IN*8);
+        cudaMemcpy(dX,X.data(),(size_t)B*IN*8,cudaMemcpyHostToDevice);cudaMemcpy(dRX,RX.data(),(size_t)B*IN*8,cudaMemcpyHostToDevice);
+        cudaMemcpy(dW,W.data(),(size_t)IN*OUT*8,cudaMemcpyHostToDevice);cudaMemcpy(dRW,RW.data(),(size_t)IN*OUT*8,cudaMemcpyHostToDevice);
+        cudaMemcpy(dei,eqi.data(),(size_t)B*8,cudaMemcpyHostToDevice);cudaMemcpy(dek,eqk.data(),(size_t)OUT*8,cudaMemcpyHostToDevice);
+        p3pfc_ax_kernel<<<(IN+255)/256,256>>>(dX,dRX,dei,dA0,dA1,B,IN);
+        p3pfc_bw_kernel<<<(IN+255)/256,256>>>(dW,dRW,dek,dB0,dB1,IN,OUT);
+        cudaMemcpy(AX0.data(),dA0,(size_t)IN*8,cudaMemcpyDeviceToHost);cudaMemcpy(AX1.data(),dA1,(size_t)IN*8,cudaMemcpyDeviceToHost);
+        cudaMemcpy(BW0.data(),dB0,(size_t)IN*8,cudaMemcpyDeviceToHost);cudaMemcpy(BW1.data(),dB1,(size_t)IN*8,cudaMemcpyDeviceToHost);
+        cudaFree(dX);cudaFree(dRX);cudaFree(dW);cudaFree(dRW);cudaFree(dei);cudaFree(dek);
+        cudaFree(dA0);cudaFree(dA1);cudaFree(dB0);cudaFree(dB1);
+    } else {
+        for(uint32_t j=0;j<IN;j++){ gl_t a0=0,a1=0;
+            for(uint32_t i=0;i<B;i++){ a0=gl_add(a0,gl_mul(X[i*IN+j],eqi[i])); a1=gl_add(a1,gl_mul(RX[i*IN+j],eqi[i])); }
+            gl_t b0=0,b1=0; for(uint32_t k=0;k<OUT;k++){ b0=gl_add(b0,gl_mul(W[j*OUT+k],eqk[k])); b1=gl_add(b1,gl_mul(RW[j*OUT+k],eqk[k])); }
+            AX0[j]=a0;AX1[j]=a1;BW0[j]=b0;BW1[j]=b1; }
+    }
     gl_t Y0=0,Y1=0; for(uint32_t i=0;i<B;i++)for(uint32_t k=0;k<OUT;k++){ gl_t w=gl_mul(eqi[i],eqk[k]);
         Y0=gl_add(Y0,gl_mul(Y[i*OUT+k],w)); Y1=gl_add(Y1,gl_mul(RY[i*OUT+k],w)); }
 

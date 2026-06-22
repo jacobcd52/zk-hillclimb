@@ -1,0 +1,690 @@
+64 seed prompts
+SKIP (done) qwen2.5-0.5b
+=== qwen2.5-1.5b (Qwen/Qwen2.5-1.5B) family=qwen2.5 fp8_native=False ===
+`torch_dtype` is deprecated! Use `dtype` instead!
+RESULT {"label": "qwen2.5-1.5b", "model_id": "Qwen/Qwen2.5-1.5B", "family": "qwen2.5", "fp8_native": false, "n_params": 1543714304, "vocab": 151936, "n_completion_tokens": 6601, "n_swapped": 196, "R_rank": 0.3196798981129077, "frac_rank0": 0.9498560824117558, "max_rank": 5, "mean_rank": 0.058021511892137556, "secs": 57.7}
+=== qwen2.5-3b (Qwen/Qwen2.5-3B) family=qwen2.5 fp8_native=False ===
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 22.20it/s]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 18.41it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 18.34it/s]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 19.45it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 19.39it/s]
+RESULT {"label": "qwen2.5-3b", "model_id": "Qwen/Qwen2.5-3B", "family": "qwen2.5", "fp8_native": false, "n_params": 3085938688, "vocab": 151936, "n_completion_tokens": 6493, "n_swapped": 252, "R_rank": 0.28889715479678096, "frac_rank0": 0.9554905282612044, "max_rank": 3, "mean_rank": 0.05051594024333898, "secs": 58.0}
+=== qwen2.5-0.5b-fp8 (RedHatAI/Qwen2.5-0.5B-Instruct-FP8-dynamic) family=qwen2.5 fp8_native=True ===
+Compressing model:   0%|          | 0/319 [00:00<?, ?it/s]Compressing model:  72%|███████▏  | 231/319 [00:00<00:00, 2299.41it/s]Compressing model: 100%|██████████| 319/319 [00:00<00:00, 2327.96it/s]
+Decompressing model:   0%|          | 0/319 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 319/319 [00:00<00:00, 12264.72it/s]
+Compressing model:   0%|          | 0/319 [00:00<?, ?it/s]Compressing model:  49%|████▉     | 157/319 [00:00<00:00, 1562.67it/s]Compressing model: 100%|██████████| 319/319 [00:00<00:00, 1947.77it/s]
+Decompressing model:   0%|          | 0/319 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 319/319 [00:00<00:00, 740034.83it/s]
+Compressing model:   0%|          | 0/319 [00:00<?, ?it/s]Compressing model:  51%|█████     | 163/319 [00:00<00:00, 1625.88it/s]Compressing model: 100%|██████████| 319/319 [00:00<00:00, 1948.25it/s]
+Decompressing model:   0%|          | 0/319 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 319/319 [00:00<00:00, 777897.08it/s]
+RESULT {"label": "qwen2.5-0.5b-fp8", "model_id": "RedHatAI/Qwen2.5-0.5B-Instruct-FP8-dynamic", "family": "qwen2.5", "fp8_native": true, "n_params": 494336896, "vocab": 151936, "n_completion_tokens": 8110, "n_swapped": 168, "R_rank": 1.8738341446126954, "frac_rank0": 0.6734895191122071, "max_rank": 122150, "mean_rank": 60.90073982737361, "secs": 76.4}
+=== qwen2.5-1.5b-fp8 (RedHatAI/Qwen2.5-1.5B-Instruct-FP8-dynamic) family=qwen2.5 fp8_native=True ===
+Compressing model:   0%|          | 0/371 [00:00<?, ?it/s]Compressing model:  42%|████▏     | 155/371 [00:00<00:00, 1540.84it/s]Compressing model: 100%|██████████| 371/371 [00:00<00:00, 1984.34it/s]
+Decompressing model:   0%|          | 0/371 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 371/371 [00:00<00:00, 8525.38it/s]
+Compressing model:   0%|          | 0/371 [00:00<?, ?it/s]Compressing model:  44%|████▍     | 164/371 [00:00<00:00, 1633.32it/s]Compressing model: 100%|██████████| 371/371 [00:00<00:00, 2017.59it/s]
+Decompressing model:   0%|          | 0/371 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 371/371 [00:00<00:00, 556142.52it/s]
+Compressing model:   0%|          | 0/371 [00:00<?, ?it/s]Compressing model:  49%|████▉     | 182/371 [00:00<00:00, 1817.19it/s]Compressing model: 100%|██████████| 371/371 [00:00<00:00, 2113.45it/s]
+Decompressing model:   0%|          | 0/371 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 371/371 [00:00<00:00, 779993.38it/s]
+RESULT {"label": "qwen2.5-1.5b-fp8", "model_id": "RedHatAI/Qwen2.5-1.5B-Instruct-FP8-dynamic", "family": "qwen2.5", "fp8_native": true, "n_params": 1544359424, "vocab": 151936, "n_completion_tokens": 7964, "n_swapped": 196, "R_rank": 1.1464134237623345, "frac_rank0": 0.8001004520341537, "max_rank": 34484, "mean_rank": 13.686212958312407, "secs": 109.9}
+=== qwen2.5-3b-fp8 (RedHatAI/Qwen2.5-3B-Instruct-FP8-dynamic) family=qwen2.5 fp8_native=True ===
+Compressing model:   0%|          | 0/475 [00:00<?, ?it/s]Compressing model:  51%|█████     | 242/475 [00:00<00:00, 2406.29it/s]Compressing model: 100%|██████████| 475/475 [00:00<00:00, 2425.36it/s]
+Decompressing model:   0%|          | 0/475 [00:00<?, ?it/s]Decompressing model:  65%|██████▍   | 308/475 [00:00<00:00, 2716.81it/s]Decompressing model: 100%|██████████| 475/475 [00:00<00:00, 2949.28it/s]
+Compressing model:   0%|          | 0/475 [00:00<?, ?it/s]Compressing model:  35%|███▍      | 164/475 [00:00<00:00, 1637.72it/s]Compressing model:  85%|████████▌ | 404/475 [00:00<00:00, 2077.00it/s]Compressing model: 100%|██████████| 475/475 [00:00<00:00, 2083.97it/s]
+Decompressing model:   0%|          | 0/475 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 475/475 [00:00<00:00, 805944.34it/s]
+Compressing model:   0%|          | 0/475 [00:00<?, ?it/s]Compressing model:  39%|███▊      | 183/475 [00:00<00:00, 1827.51it/s]Compressing model:  91%|█████████ | 430/475 [00:00<00:00, 2198.65it/s]Compressing model: 100%|██████████| 475/475 [00:00<00:00, 2190.37it/s]
+Decompressing model:   0%|          | 0/475 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 475/475 [00:00<00:00, 791535.32it/s]
+RESULT {"label": "qwen2.5-3b-fp8", "model_id": "RedHatAI/Qwen2.5-3B-Instruct-FP8-dynamic", "family": "qwen2.5", "fp8_native": true, "n_params": 3086970880, "vocab": 151936, "n_completion_tokens": 7801, "n_swapped": 252, "R_rank": 0.6338045549611069, "frac_rank0": 0.9189847455454428, "max_rank": 77043, "mean_rank": 48.42058710421741, "secs": 141.1}
+=== llama-3.2-1b (meta-llama/Llama-3.2-1B) family=llama fp8_native=False ===
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/root/int-model-env/lib/python3.11/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a31e072-6db60fcd2d26c3111807b876;44b0753e-0209-4b95-8bcb-6c94e021e197)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-1B is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    r = model_run(mid, prompts, fp8)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 216, in model_run
+    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-3.2-1B.
+401 Client Error. (Request ID: Root=1-6a31e072-6db60fcd2d26c3111807b876;44b0753e-0209-4b95-8bcb-6c94e021e197)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-1B is restricted. You must have access to it and be authenticated to access it. Please log in.
+RESULT {"label": "llama-3.2-1b", "model_id": "meta-llama/Llama-3.2-1B", "family": "llama", "fp8_native": false, "ERROR": "You are trying to access a gated repo.\nMake sure to have access to it at https://huggingface.co/meta-llama/Llama-3.2-1B.\n401 Client Error. (Request ID: Root=1-6a31e072-6db60fcd2d26c3111807b876;44b0753e-0209-4b95-8bcb-6c94e021e197)\n\nCannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json.\nAccess to model meta-llama/Llama-3.2-1B is restricted. You mus", "secs": 0.2}
+=== llama-3.2-3b (meta-llama/Llama-3.2-3B) family=llama fp8_native=False ===
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/root/int-model-env/lib/python3.11/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/meta-llama/Llama-3.2-3B/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a31e072-34e016eb42c091441619ff8c;d01f5e96-aa3d-4689-8066-2b48c695b107)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-3B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-3B is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    r = model_run(mid, prompts, fp8)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 216, in model_run
+    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/meta-llama/Llama-3.2-3B.
+401 Client Error. (Request ID: Root=1-6a31e072-34e016eb42c091441619ff8c;d01f5e96-aa3d-4689-8066-2b48c695b107)
+
+Cannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-3B/resolve/main/config.json.
+Access to model meta-llama/Llama-3.2-3B is restricted. You must have access to it and be authenticated to access it. Please log in.
+RESULT {"label": "llama-3.2-3b", "model_id": "meta-llama/Llama-3.2-3B", "family": "llama", "fp8_native": false, "ERROR": "You are trying to access a gated repo.\nMake sure to have access to it at https://huggingface.co/meta-llama/Llama-3.2-3B.\n401 Client Error. (Request ID: Root=1-6a31e072-34e016eb42c091441619ff8c;d01f5e96-aa3d-4689-8066-2b48c695b107)\n\nCannot access gated repo for url https://huggingface.co/meta-llama/Llama-3.2-3B/resolve/main/config.json.\nAccess to model meta-llama/Llama-3.2-3B is restricted. You mus", "secs": 0.4}
+=== llama-68m (JackFram/llama-68m) family=llama-open fp8_native=False ===
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    r = model_run(mid, prompts, fp8)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 228, in model_run
+    seqs, total_comp = generate_onpolicy(gen_model, tok, prompts)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 118, in generate_onpolicy
+    enc = tok(batch, return_tensors="pt", add_special_tokens=True,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3073, in __call__
+    encodings = self._call_one(text=text, text_pair=text_pair, **all_kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3161, in _call_one
+    return self.batch_encode_plus(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3353, in batch_encode_plus
+    padding_strategy, truncation_strategy, max_length, kwargs = self._get_padding_truncation_strategies(
+                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 2969, in _get_padding_truncation_strategies
+    raise ValueError(
+ValueError: Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.
+RESULT {"label": "llama-68m", "model_id": "JackFram/llama-68m", "family": "llama-open", "fp8_native": false, "ERROR": "Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.", "secs": 2.0}
+=== llama-160m (JackFram/llama-160m) family=llama-open fp8_native=False ===
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    r = model_run(mid, prompts, fp8)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 228, in model_run
+    seqs, total_comp = generate_onpolicy(gen_model, tok, prompts)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 118, in generate_onpolicy
+    enc = tok(batch, return_tensors="pt", add_special_tokens=True,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3073, in __call__
+    encodings = self._call_one(text=text, text_pair=text_pair, **all_kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3161, in _call_one
+    return self.batch_encode_plus(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3353, in batch_encode_plus
+    padding_strategy, truncation_strategy, max_length, kwargs = self._get_padding_truncation_strategies(
+                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 2969, in _get_padding_truncation_strategies
+    raise ValueError(
+ValueError: Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.
+RESULT {"label": "llama-160m", "model_id": "JackFram/llama-160m", "family": "llama-open", "fp8_native": false, "ERROR": "Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.", "secs": 4.5}
+=== tinyllama-1.1b (TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T) family=llama-open fp8_native=False ===
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    r = model_run(mid, prompts, fp8)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 228, in model_run
+    seqs, total_comp = generate_onpolicy(gen_model, tok, prompts)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 118, in generate_onpolicy
+    enc = tok(batch, return_tensors="pt", add_special_tokens=True,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3073, in __call__
+    encodings = self._call_one(text=text, text_pair=text_pair, **all_kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3161, in _call_one
+    return self.batch_encode_plus(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3353, in batch_encode_plus
+    padding_strategy, truncation_strategy, max_length, kwargs = self._get_padding_truncation_strategies(
+                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 2969, in _get_padding_truncation_strategies
+    raise ValueError(
+ValueError: Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.
+RESULT {"label": "tinyllama-1.1b", "model_id": "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T", "family": "llama-open", "fp8_native": false, "ERROR": "Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.", "secs": 11.5}
+=== llama-3.1-8b-fp8 (RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8) family=llama fp8_native=True ===
+`run_compressed` is only supported for compressed models. Setting `run_compressed=False`
+Fetching 2 files:   0%|          | 0/2 [00:00<?, ?it/s]Fetching 2 files:  50%|█████     | 1/2 [00:27<00:27, 27.15s/it]Fetching 2 files: 100%|██████████| 2/2 [00:36<00:00, 16.55s/it]Fetching 2 files: 100%|██████████| 2/2 [00:36<00:00, 18.14s/it]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 12.78it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 12.76it/s]
+Some weights of LlamaForCausalLM were not initialized from the model checkpoint at RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8 and are newly initialized: ['model.layers.0.mlp.down_proj.input_zero_point', 'model.layers.0.mlp.down_proj.weight_zero_point', 'model.layers.0.mlp.gate_proj.input_zero_point', 'model.layers.0.mlp.gate_proj.weight_zero_point', 'model.layers.0.mlp.up_proj.input_zero_point', 'model.layers.0.mlp.up_proj.weight_zero_point', 'model.layers.0.self_attn.k_proj.input_zero_point', 'model.layers.0.self_attn.k_proj.weight_zero_point', 'model.layers.0.self_attn.o_proj.input_zero_point', 'model.layers.0.self_attn.o_proj.weight_zero_point', 'model.layers.0.self_attn.q_proj.input_zero_point', 'model.layers.0.self_attn.q_proj.weight_zero_point', 'model.layers.0.self_attn.v_proj.input_zero_point', 'model.layers.0.self_attn.v_proj.weight_zero_point', 'model.layers.1.mlp.down_proj.input_zero_point', 'model.layers.1.mlp.down_proj.weight_zero_point', 'model.layers.1.mlp.gate_proj.input_zero_point', 'model.layers.1.mlp.gate_proj.weight_zero_point', 'model.layers.1.mlp.up_proj.input_zero_point', 'model.layers.1.mlp.up_proj.weight_zero_point', 'model.layers.1.self_attn.k_proj.input_zero_point', 'model.layers.1.self_attn.k_proj.weight_zero_point', 'model.layers.1.self_attn.o_proj.input_zero_point', 'model.layers.1.self_attn.o_proj.weight_zero_point', 'model.layers.1.self_attn.q_proj.input_zero_point', 'model.layers.1.self_attn.q_proj.weight_zero_point', 'model.layers.1.self_attn.v_proj.input_zero_point', 'model.layers.1.self_attn.v_proj.weight_zero_point', 'model.layers.10.mlp.down_proj.input_zero_point', 'model.layers.10.mlp.down_proj.weight_zero_point', 'model.layers.10.mlp.gate_proj.input_zero_point', 'model.layers.10.mlp.gate_proj.weight_zero_point', 'model.layers.10.mlp.up_proj.input_zero_point', 'model.layers.10.mlp.up_proj.weight_zero_point', 'model.layers.10.self_attn.k_proj.input_zero_point', 'model.layers.10.self_attn.k_proj.weight_zero_point', 'model.layers.10.self_attn.o_proj.input_zero_point', 'model.layers.10.self_attn.o_proj.weight_zero_point', 'model.layers.10.self_attn.q_proj.input_zero_point', 'model.layers.10.self_attn.q_proj.weight_zero_point', 'model.layers.10.self_attn.v_proj.input_zero_point', 'model.layers.10.self_attn.v_proj.weight_zero_point', 'model.layers.11.mlp.down_proj.input_zero_point', 'model.layers.11.mlp.down_proj.weight_zero_point', 'model.layers.11.mlp.gate_proj.input_zero_point', 'model.layers.11.mlp.gate_proj.weight_zero_point', 'model.layers.11.mlp.up_proj.input_zero_point', 'model.layers.11.mlp.up_proj.weight_zero_point', 'model.layers.11.self_attn.k_proj.input_zero_point', 'model.layers.11.self_attn.k_proj.weight_zero_point', 'model.layers.11.self_attn.o_proj.input_zero_point', 'model.layers.11.self_attn.o_proj.weight_zero_point', 'model.layers.11.self_attn.q_proj.input_zero_point', 'model.layers.11.self_attn.q_proj.weight_zero_point', 'model.layers.11.self_attn.v_proj.input_zero_point', 'model.layers.11.self_attn.v_proj.weight_zero_point', 'model.layers.12.mlp.down_proj.input_zero_point', 'model.layers.12.mlp.down_proj.weight_zero_point', 'model.layers.12.mlp.gate_proj.input_zero_point', 'model.layers.12.mlp.gate_proj.weight_zero_point', 'model.layers.12.mlp.up_proj.input_zero_point', 'model.layers.12.mlp.up_proj.weight_zero_point', 'model.layers.12.self_attn.k_proj.input_zero_point', 'model.layers.12.self_attn.k_proj.weight_zero_point', 'model.layers.12.self_attn.o_proj.input_zero_point', 'model.layers.12.self_attn.o_proj.weight_zero_point', 'model.layers.12.self_attn.q_proj.input_zero_point', 'model.layers.12.self_attn.q_proj.weight_zero_point', 'model.layers.12.self_attn.v_proj.input_zero_point', 'model.layers.12.self_attn.v_proj.weight_zero_point', 'model.layers.13.mlp.down_proj.input_zero_point', 'model.layers.13.mlp.down_proj.weight_zero_point', 'model.layers.13.mlp.gate_proj.input_zero_point', 'model.layers.13.mlp.gate_proj.weight_zero_point', 'model.layers.13.mlp.up_proj.input_zero_point', 'model.layers.13.mlp.up_proj.weight_zero_point', 'model.layers.13.self_attn.k_proj.input_zero_point', 'model.layers.13.self_attn.k_proj.weight_zero_point', 'model.layers.13.self_attn.o_proj.input_zero_point', 'model.layers.13.self_attn.o_proj.weight_zero_point', 'model.layers.13.self_attn.q_proj.input_zero_point', 'model.layers.13.self_attn.q_proj.weight_zero_point', 'model.layers.13.self_attn.v_proj.input_zero_point', 'model.layers.13.self_attn.v_proj.weight_zero_point', 'model.layers.14.mlp.down_proj.input_zero_point', 'model.layers.14.mlp.down_proj.weight_zero_point', 'model.layers.14.mlp.gate_proj.input_zero_point', 'model.layers.14.mlp.gate_proj.weight_zero_point', 'model.layers.14.mlp.up_proj.input_zero_point', 'model.layers.14.mlp.up_proj.weight_zero_point', 'model.layers.14.self_attn.k_proj.input_zero_point', 'model.layers.14.self_attn.k_proj.weight_zero_point', 'model.layers.14.self_attn.o_proj.input_zero_point', 'model.layers.14.self_attn.o_proj.weight_zero_point', 'model.layers.14.self_attn.q_proj.input_zero_point', 'model.layers.14.self_attn.q_proj.weight_zero_point', 'model.layers.14.self_attn.v_proj.input_zero_point', 'model.layers.14.self_attn.v_proj.weight_zero_point', 'model.layers.15.mlp.down_proj.input_zero_point', 'model.layers.15.mlp.down_proj.weight_zero_point', 'model.layers.15.mlp.gate_proj.input_zero_point', 'model.layers.15.mlp.gate_proj.weight_zero_point', 'model.layers.15.mlp.up_proj.input_zero_point', 'model.layers.15.mlp.up_proj.weight_zero_point', 'model.layers.15.self_attn.k_proj.input_zero_point', 'model.layers.15.self_attn.k_proj.weight_zero_point', 'model.layers.15.self_attn.o_proj.input_zero_point', 'model.layers.15.self_attn.o_proj.weight_zero_point', 'model.layers.15.self_attn.q_proj.input_zero_point', 'model.layers.15.self_attn.q_proj.weight_zero_point', 'model.layers.15.self_attn.v_proj.input_zero_point', 'model.layers.15.self_attn.v_proj.weight_zero_point', 'model.layers.16.mlp.down_proj.input_zero_point', 'model.layers.16.mlp.down_proj.weight_zero_point', 'model.layers.16.mlp.gate_proj.input_zero_point', 'model.layers.16.mlp.gate_proj.weight_zero_point', 'model.layers.16.mlp.up_proj.input_zero_point', 'model.layers.16.mlp.up_proj.weight_zero_point', 'model.layers.16.self_attn.k_proj.input_zero_point', 'model.layers.16.self_attn.k_proj.weight_zero_point', 'model.layers.16.self_attn.o_proj.input_zero_point', 'model.layers.16.self_attn.o_proj.weight_zero_point', 'model.layers.16.self_attn.q_proj.input_zero_point', 'model.layers.16.self_attn.q_proj.weight_zero_point', 'model.layers.16.self_attn.v_proj.input_zero_point', 'model.layers.16.self_attn.v_proj.weight_zero_point', 'model.layers.17.mlp.down_proj.input_zero_point', 'model.layers.17.mlp.down_proj.weight_zero_point', 'model.layers.17.mlp.gate_proj.input_zero_point', 'model.layers.17.mlp.gate_proj.weight_zero_point', 'model.layers.17.mlp.up_proj.input_zero_point', 'model.layers.17.mlp.up_proj.weight_zero_point', 'model.layers.17.self_attn.k_proj.input_zero_point', 'model.layers.17.self_attn.k_proj.weight_zero_point', 'model.layers.17.self_attn.o_proj.input_zero_point', 'model.layers.17.self_attn.o_proj.weight_zero_point', 'model.layers.17.self_attn.q_proj.input_zero_point', 'model.layers.17.self_attn.q_proj.weight_zero_point', 'model.layers.17.self_attn.v_proj.input_zero_point', 'model.layers.17.self_attn.v_proj.weight_zero_point', 'model.layers.18.mlp.down_proj.input_zero_point', 'model.layers.18.mlp.down_proj.weight_zero_point', 'model.layers.18.mlp.gate_proj.input_zero_point', 'model.layers.18.mlp.gate_proj.weight_zero_point', 'model.layers.18.mlp.up_proj.input_zero_point', 'model.layers.18.mlp.up_proj.weight_zero_point', 'model.layers.18.self_attn.k_proj.input_zero_point', 'model.layers.18.self_attn.k_proj.weight_zero_point', 'model.layers.18.self_attn.o_proj.input_zero_point', 'model.layers.18.self_attn.o_proj.weight_zero_point', 'model.layers.18.self_attn.q_proj.input_zero_point', 'model.layers.18.self_attn.q_proj.weight_zero_point', 'model.layers.18.self_attn.v_proj.input_zero_point', 'model.layers.18.self_attn.v_proj.weight_zero_point', 'model.layers.19.mlp.down_proj.input_zero_point', 'model.layers.19.mlp.down_proj.weight_zero_point', 'model.layers.19.mlp.gate_proj.input_zero_point', 'model.layers.19.mlp.gate_proj.weight_zero_point', 'model.layers.19.mlp.up_proj.input_zero_point', 'model.layers.19.mlp.up_proj.weight_zero_point', 'model.layers.19.self_attn.k_proj.input_zero_point', 'model.layers.19.self_attn.k_proj.weight_zero_point', 'model.layers.19.self_attn.o_proj.input_zero_point', 'model.layers.19.self_attn.o_proj.weight_zero_point', 'model.layers.19.self_attn.q_proj.input_zero_point', 'model.layers.19.self_attn.q_proj.weight_zero_point', 'model.layers.19.self_attn.v_proj.input_zero_point', 'model.layers.19.self_attn.v_proj.weight_zero_point', 'model.layers.2.mlp.down_proj.input_zero_point', 'model.layers.2.mlp.down_proj.weight_zero_point', 'model.layers.2.mlp.gate_proj.input_zero_point', 'model.layers.2.mlp.gate_proj.weight_zero_point', 'model.layers.2.mlp.up_proj.input_zero_point', 'model.layers.2.mlp.up_proj.weight_zero_point', 'model.layers.2.self_attn.k_proj.input_zero_point', 'model.layers.2.self_attn.k_proj.weight_zero_point', 'model.layers.2.self_attn.o_proj.input_zero_point', 'model.layers.2.self_attn.o_proj.weight_zero_point', 'model.layers.2.self_attn.q_proj.input_zero_point', 'model.layers.2.self_attn.q_proj.weight_zero_point', 'model.layers.2.self_attn.v_proj.input_zero_point', 'model.layers.2.self_attn.v_proj.weight_zero_point', 'model.layers.20.mlp.down_proj.input_zero_point', 'model.layers.20.mlp.down_proj.weight_zero_point', 'model.layers.20.mlp.gate_proj.input_zero_point', 'model.layers.20.mlp.gate_proj.weight_zero_point', 'model.layers.20.mlp.up_proj.input_zero_point', 'model.layers.20.mlp.up_proj.weight_zero_point', 'model.layers.20.self_attn.k_proj.input_zero_point', 'model.layers.20.self_attn.k_proj.weight_zero_point', 'model.layers.20.self_attn.o_proj.input_zero_point', 'model.layers.20.self_attn.o_proj.weight_zero_point', 'model.layers.20.self_attn.q_proj.input_zero_point', 'model.layers.20.self_attn.q_proj.weight_zero_point', 'model.layers.20.self_attn.v_proj.input_zero_point', 'model.layers.20.self_attn.v_proj.weight_zero_point', 'model.layers.21.mlp.down_proj.input_zero_point', 'model.layers.21.mlp.down_proj.weight_zero_point', 'model.layers.21.mlp.gate_proj.input_zero_point', 'model.layers.21.mlp.gate_proj.weight_zero_point', 'model.layers.21.mlp.up_proj.input_zero_point', 'model.layers.21.mlp.up_proj.weight_zero_point', 'model.layers.21.self_attn.k_proj.input_zero_point', 'model.layers.21.self_attn.k_proj.weight_zero_point', 'model.layers.21.self_attn.o_proj.input_zero_point', 'model.layers.21.self_attn.o_proj.weight_zero_point', 'model.layers.21.self_attn.q_proj.input_zero_point', 'model.layers.21.self_attn.q_proj.weight_zero_point', 'model.layers.21.self_attn.v_proj.input_zero_point', 'model.layers.21.self_attn.v_proj.weight_zero_point', 'model.layers.22.mlp.down_proj.input_zero_point', 'model.layers.22.mlp.down_proj.weight_zero_point', 'model.layers.22.mlp.gate_proj.input_zero_point', 'model.layers.22.mlp.gate_proj.weight_zero_point', 'model.layers.22.mlp.up_proj.input_zero_point', 'model.layers.22.mlp.up_proj.weight_zero_point', 'model.layers.22.self_attn.k_proj.input_zero_point', 'model.layers.22.self_attn.k_proj.weight_zero_point', 'model.layers.22.self_attn.o_proj.input_zero_point', 'model.layers.22.self_attn.o_proj.weight_zero_point', 'model.layers.22.self_attn.q_proj.input_zero_point', 'model.layers.22.self_attn.q_proj.weight_zero_point', 'model.layers.22.self_attn.v_proj.input_zero_point', 'model.layers.22.self_attn.v_proj.weight_zero_point', 'model.layers.23.mlp.down_proj.input_zero_point', 'model.layers.23.mlp.down_proj.weight_zero_point', 'model.layers.23.mlp.gate_proj.input_zero_point', 'model.layers.23.mlp.gate_proj.weight_zero_point', 'model.layers.23.mlp.up_proj.input_zero_point', 'model.layers.23.mlp.up_proj.weight_zero_point', 'model.layers.23.self_attn.k_proj.input_zero_point', 'model.layers.23.self_attn.k_proj.weight_zero_point', 'model.layers.23.self_attn.o_proj.input_zero_point', 'model.layers.23.self_attn.o_proj.weight_zero_point', 'model.layers.23.self_attn.q_proj.input_zero_point', 'model.layers.23.self_attn.q_proj.weight_zero_point', 'model.layers.23.self_attn.v_proj.input_zero_point', 'model.layers.23.self_attn.v_proj.weight_zero_point', 'model.layers.24.mlp.down_proj.input_zero_point', 'model.layers.24.mlp.down_proj.weight_zero_point', 'model.layers.24.mlp.gate_proj.input_zero_point', 'model.layers.24.mlp.gate_proj.weight_zero_point', 'model.layers.24.mlp.up_proj.input_zero_point', 'model.layers.24.mlp.up_proj.weight_zero_point', 'model.layers.24.self_attn.k_proj.input_zero_point', 'model.layers.24.self_attn.k_proj.weight_zero_point', 'model.layers.24.self_attn.o_proj.input_zero_point', 'model.layers.24.self_attn.o_proj.weight_zero_point', 'model.layers.24.self_attn.q_proj.input_zero_point', 'model.layers.24.self_attn.q_proj.weight_zero_point', 'model.layers.24.self_attn.v_proj.input_zero_point', 'model.layers.24.self_attn.v_proj.weight_zero_point', 'model.layers.25.mlp.down_proj.input_zero_point', 'model.layers.25.mlp.down_proj.weight_zero_point', 'model.layers.25.mlp.gate_proj.input_zero_point', 'model.layers.25.mlp.gate_proj.weight_zero_point', 'model.layers.25.mlp.up_proj.input_zero_point', 'model.layers.25.mlp.up_proj.weight_zero_point', 'model.layers.25.self_attn.k_proj.input_zero_point', 'model.layers.25.self_attn.k_proj.weight_zero_point', 'model.layers.25.self_attn.o_proj.input_zero_point', 'model.layers.25.self_attn.o_proj.weight_zero_point', 'model.layers.25.self_attn.q_proj.input_zero_point', 'model.layers.25.self_attn.q_proj.weight_zero_point', 'model.layers.25.self_attn.v_proj.input_zero_point', 'model.layers.25.self_attn.v_proj.weight_zero_point', 'model.layers.26.mlp.down_proj.input_zero_point', 'model.layers.26.mlp.down_proj.weight_zero_point', 'model.layers.26.mlp.gate_proj.input_zero_point', 'model.layers.26.mlp.gate_proj.weight_zero_point', 'model.layers.26.mlp.up_proj.input_zero_point', 'model.layers.26.mlp.up_proj.weight_zero_point', 'model.layers.26.self_attn.k_proj.input_zero_point', 'model.layers.26.self_attn.k_proj.weight_zero_point', 'model.layers.26.self_attn.o_proj.input_zero_point', 'model.layers.26.self_attn.o_proj.weight_zero_point', 'model.layers.26.self_attn.q_proj.input_zero_point', 'model.layers.26.self_attn.q_proj.weight_zero_point', 'model.layers.26.self_attn.v_proj.input_zero_point', 'model.layers.26.self_attn.v_proj.weight_zero_point', 'model.layers.27.mlp.down_proj.input_zero_point', 'model.layers.27.mlp.down_proj.weight_zero_point', 'model.layers.27.mlp.gate_proj.input_zero_point', 'model.layers.27.mlp.gate_proj.weight_zero_point', 'model.layers.27.mlp.up_proj.input_zero_point', 'model.layers.27.mlp.up_proj.weight_zero_point', 'model.layers.27.self_attn.k_proj.input_zero_point', 'model.layers.27.self_attn.k_proj.weight_zero_point', 'model.layers.27.self_attn.o_proj.input_zero_point', 'model.layers.27.self_attn.o_proj.weight_zero_point', 'model.layers.27.self_attn.q_proj.input_zero_point', 'model.layers.27.self_attn.q_proj.weight_zero_point', 'model.layers.27.self_attn.v_proj.input_zero_point', 'model.layers.27.self_attn.v_proj.weight_zero_point', 'model.layers.28.mlp.down_proj.input_zero_point', 'model.layers.28.mlp.down_proj.weight_zero_point', 'model.layers.28.mlp.gate_proj.input_zero_point', 'model.layers.28.mlp.gate_proj.weight_zero_point', 'model.layers.28.mlp.up_proj.input_zero_point', 'model.layers.28.mlp.up_proj.weight_zero_point', 'model.layers.28.self_attn.k_proj.input_zero_point', 'model.layers.28.self_attn.k_proj.weight_zero_point', 'model.layers.28.self_attn.o_proj.input_zero_point', 'model.layers.28.self_attn.o_proj.weight_zero_point', 'model.layers.28.self_attn.q_proj.input_zero_point', 'model.layers.28.self_attn.q_proj.weight_zero_point', 'model.layers.28.self_attn.v_proj.input_zero_point', 'model.layers.28.self_attn.v_proj.weight_zero_point', 'model.layers.29.mlp.down_proj.input_zero_point', 'model.layers.29.mlp.down_proj.weight_zero_point', 'model.layers.29.mlp.gate_proj.input_zero_point', 'model.layers.29.mlp.gate_proj.weight_zero_point', 'model.layers.29.mlp.up_proj.input_zero_point', 'model.layers.29.mlp.up_proj.weight_zero_point', 'model.layers.29.self_attn.k_proj.input_zero_point', 'model.layers.29.self_attn.k_proj.weight_zero_point', 'model.layers.29.self_attn.o_proj.input_zero_point', 'model.layers.29.self_attn.o_proj.weight_zero_point', 'model.layers.29.self_attn.q_proj.input_zero_point', 'model.layers.29.self_attn.q_proj.weight_zero_point', 'model.layers.29.self_attn.v_proj.input_zero_point', 'model.layers.29.self_attn.v_proj.weight_zero_point', 'model.layers.3.mlp.down_proj.input_zero_point', 'model.layers.3.mlp.down_proj.weight_zero_point', 'model.layers.3.mlp.gate_proj.input_zero_point', 'model.layers.3.mlp.gate_proj.weight_zero_point', 'model.layers.3.mlp.up_proj.input_zero_point', 'model.layers.3.mlp.up_proj.weight_zero_point', 'model.layers.3.self_attn.k_proj.input_zero_point', 'model.layers.3.self_attn.k_proj.weight_zero_point', 'model.layers.3.self_attn.o_proj.input_zero_point', 'model.layers.3.self_attn.o_proj.weight_zero_point', 'model.layers.3.self_attn.q_proj.input_zero_point', 'model.layers.3.self_attn.q_proj.weight_zero_point', 'model.layers.3.self_attn.v_proj.input_zero_point', 'model.layers.3.self_attn.v_proj.weight_zero_point', 'model.layers.30.mlp.down_proj.input_zero_point', 'model.layers.30.mlp.down_proj.weight_zero_point', 'model.layers.30.mlp.gate_proj.input_zero_point', 'model.layers.30.mlp.gate_proj.weight_zero_point', 'model.layers.30.mlp.up_proj.input_zero_point', 'model.layers.30.mlp.up_proj.weight_zero_point', 'model.layers.30.self_attn.k_proj.input_zero_point', 'model.layers.30.self_attn.k_proj.weight_zero_point', 'model.layers.30.self_attn.o_proj.input_zero_point', 'model.layers.30.self_attn.o_proj.weight_zero_point', 'model.layers.30.self_attn.q_proj.input_zero_point', 'model.layers.30.self_attn.q_proj.weight_zero_point', 'model.layers.30.self_attn.v_proj.input_zero_point', 'model.layers.30.self_attn.v_proj.weight_zero_point', 'model.layers.31.mlp.down_proj.input_zero_point', 'model.layers.31.mlp.down_proj.weight_zero_point', 'model.layers.31.mlp.gate_proj.input_zero_point', 'model.layers.31.mlp.gate_proj.weight_zero_point', 'model.layers.31.mlp.up_proj.input_zero_point', 'model.layers.31.mlp.up_proj.weight_zero_point', 'model.layers.31.self_attn.k_proj.input_zero_point', 'model.layers.31.self_attn.k_proj.weight_zero_point', 'model.layers.31.self_attn.o_proj.input_zero_point', 'model.layers.31.self_attn.o_proj.weight_zero_point', 'model.layers.31.self_attn.q_proj.input_zero_point', 'model.layers.31.self_attn.q_proj.weight_zero_point', 'model.layers.31.self_attn.v_proj.input_zero_point', 'model.layers.31.self_attn.v_proj.weight_zero_point', 'model.layers.4.mlp.down_proj.input_zero_point', 'model.layers.4.mlp.down_proj.weight_zero_point', 'model.layers.4.mlp.gate_proj.input_zero_point', 'model.layers.4.mlp.gate_proj.weight_zero_point', 'model.layers.4.mlp.up_proj.input_zero_point', 'model.layers.4.mlp.up_proj.weight_zero_point', 'model.layers.4.self_attn.k_proj.input_zero_point', 'model.layers.4.self_attn.k_proj.weight_zero_point', 'model.layers.4.self_attn.o_proj.input_zero_point', 'model.layers.4.self_attn.o_proj.weight_zero_point', 'model.layers.4.self_attn.q_proj.input_zero_point', 'model.layers.4.self_attn.q_proj.weight_zero_point', 'model.layers.4.self_attn.v_proj.input_zero_point', 'model.layers.4.self_attn.v_proj.weight_zero_point', 'model.layers.5.mlp.down_proj.input_zero_point', 'model.layers.5.mlp.down_proj.weight_zero_point', 'model.layers.5.mlp.gate_proj.input_zero_point', 'model.layers.5.mlp.gate_proj.weight_zero_point', 'model.layers.5.mlp.up_proj.input_zero_point', 'model.layers.5.mlp.up_proj.weight_zero_point', 'model.layers.5.self_attn.k_proj.input_zero_point', 'model.layers.5.self_attn.k_proj.weight_zero_point', 'model.layers.5.self_attn.o_proj.input_zero_point', 'model.layers.5.self_attn.o_proj.weight_zero_point', 'model.layers.5.self_attn.q_proj.input_zero_point', 'model.layers.5.self_attn.q_proj.weight_zero_point', 'model.layers.5.self_attn.v_proj.input_zero_point', 'model.layers.5.self_attn.v_proj.weight_zero_point', 'model.layers.6.mlp.down_proj.input_zero_point', 'model.layers.6.mlp.down_proj.weight_zero_point', 'model.layers.6.mlp.gate_proj.input_zero_point', 'model.layers.6.mlp.gate_proj.weight_zero_point', 'model.layers.6.mlp.up_proj.input_zero_point', 'model.layers.6.mlp.up_proj.weight_zero_point', 'model.layers.6.self_attn.k_proj.input_zero_point', 'model.layers.6.self_attn.k_proj.weight_zero_point', 'model.layers.6.self_attn.o_proj.input_zero_point', 'model.layers.6.self_attn.o_proj.weight_zero_point', 'model.layers.6.self_attn.q_proj.input_zero_point', 'model.layers.6.self_attn.q_proj.weight_zero_point', 'model.layers.6.self_attn.v_proj.input_zero_point', 'model.layers.6.self_attn.v_proj.weight_zero_point', 'model.layers.7.mlp.down_proj.input_zero_point', 'model.layers.7.mlp.down_proj.weight_zero_point', 'model.layers.7.mlp.gate_proj.input_zero_point', 'model.layers.7.mlp.gate_proj.weight_zero_point', 'model.layers.7.mlp.up_proj.input_zero_point', 'model.layers.7.mlp.up_proj.weight_zero_point', 'model.layers.7.self_attn.k_proj.input_zero_point', 'model.layers.7.self_attn.k_proj.weight_zero_point', 'model.layers.7.self_attn.o_proj.input_zero_point', 'model.layers.7.self_attn.o_proj.weight_zero_point', 'model.layers.7.self_attn.q_proj.input_zero_point', 'model.layers.7.self_attn.q_proj.weight_zero_point', 'model.layers.7.self_attn.v_proj.input_zero_point', 'model.layers.7.self_attn.v_proj.weight_zero_point', 'model.layers.8.mlp.down_proj.input_zero_point', 'model.layers.8.mlp.down_proj.weight_zero_point', 'model.layers.8.mlp.gate_proj.input_zero_point', 'model.layers.8.mlp.gate_proj.weight_zero_point', 'model.layers.8.mlp.up_proj.input_zero_point', 'model.layers.8.mlp.up_proj.weight_zero_point', 'model.layers.8.self_attn.k_proj.input_zero_point', 'model.layers.8.self_attn.k_proj.weight_zero_point', 'model.layers.8.self_attn.o_proj.input_zero_point', 'model.layers.8.self_attn.o_proj.weight_zero_point', 'model.layers.8.self_attn.q_proj.input_zero_point', 'model.layers.8.self_attn.q_proj.weight_zero_point', 'model.layers.8.self_attn.v_proj.input_zero_point', 'model.layers.8.self_attn.v_proj.weight_zero_point', 'model.layers.9.mlp.down_proj.input_zero_point', 'model.layers.9.mlp.down_proj.weight_zero_point', 'model.layers.9.mlp.gate_proj.input_zero_point', 'model.layers.9.mlp.gate_proj.weight_zero_point', 'model.layers.9.mlp.up_proj.input_zero_point', 'model.layers.9.mlp.up_proj.weight_zero_point', 'model.layers.9.self_attn.k_proj.input_zero_point', 'model.layers.9.self_attn.k_proj.weight_zero_point', 'model.layers.9.self_attn.o_proj.input_zero_point', 'model.layers.9.self_attn.o_proj.weight_zero_point', 'model.layers.9.self_attn.q_proj.input_zero_point', 'model.layers.9.self_attn.q_proj.weight_zero_point', 'model.layers.9.self_attn.v_proj.input_zero_point', 'model.layers.9.self_attn.v_proj.weight_zero_point']
+You should probably TRAIN this model on a down-stream task to be able to use it for predictions and inference.
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    print(f"=== {label} ({mid}) family={family} fp8_native={fp8} ===", flush=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 228, in model_run
+    gen_model = fresh()
+                       ^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 124, in generate_onpolicy
+    out = model.generate(
+          ^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/generation/utils.py", line 2564, in generate
+    result = decoding_method(
+             ^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/generation/utils.py", line 2784, in _sample
+    outputs = self(**model_inputs, return_dict=True)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/generic.py", line 918, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/llama/modeling_llama.py", line 459, in forward
+    outputs: BaseModelOutputWithPast = self.model(
+                                       ^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/generic.py", line 1072, in wrapper
+    outputs = func(self, *args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/llama/modeling_llama.py", line 395, in forward
+    hidden_states = decoder_layer(
+                    ^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/modeling_layers.py", line 94, in __call__
+    return super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/llama/modeling_llama.py", line 294, in forward
+    hidden_states, _ = self.self_attn(
+                       ^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/llama/modeling_llama.py", line 236, in forward
+    query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/compressed_tensors/quantization/lifecycle/forward.py", line 279, in quantized_forward
+    weight_data = forward_quantize(self, weight_data, "weight", scheme.weights)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/compressed_tensors/quantization/lifecycle/forward.py", line 322, in forward_quantize
+    return fake_quantize(
+           ^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/compressed_tensors/quantization/lifecycle/forward.py", line 172, in fake_quantize
+    return _process_quantization(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/compressed_tensors/quantization/lifecycle/forward.py", line 230, in _process_quantization
+    return _apply_quantize_op(
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/compressed_tensors/quantization/lifecycle/forward_helpers.py", line 28, in _apply_quantize_op
+    return _quantize_dequantize(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/compressed_tensors/quantization/lifecycle/forward_helpers.py", line 194, in _quantize_dequantize
+    scaled = x / scale
+             ~~^~~~~~~
+RuntimeError: Promotion for Float8 Types is not supported, attempted to promote Float8_e4m3fn and BFloat16
+RESULT {"label": "llama-3.1-8b-fp8", "model_id": "RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8", "family": "llama", "fp8_native": true, "ERROR": "Promotion for Float8 Types is not supported, attempted to promote Float8_e4m3fn and BFloat16", "secs": 50.9}
+=== gemma-2-2b (google/gemma-2-2b) family=gemma fp8_native=False ===
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/root/int-model-env/lib/python3.11/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/google/gemma-2-2b/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a31e0b7-6d8946840b828ca74027453f;b66db0ba-55b4-4f98-8565-b15065acdddc)
+
+Cannot access gated repo for url https://huggingface.co/google/gemma-2-2b/resolve/main/config.json.
+Access to model google/gemma-2-2b is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    print(f"=== {label} ({mid}) family={family} fp8_native={fp8} ===", flush=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 216, in model_run
+    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/google/gemma-2-2b.
+401 Client Error. (Request ID: Root=1-6a31e0b7-6d8946840b828ca74027453f;b66db0ba-55b4-4f98-8565-b15065acdddc)
+
+Cannot access gated repo for url https://huggingface.co/google/gemma-2-2b/resolve/main/config.json.
+Access to model google/gemma-2-2b is restricted. You must have access to it and be authenticated to access it. Please log in.
+RESULT {"label": "gemma-2-2b", "model_id": "google/gemma-2-2b", "family": "gemma", "fp8_native": false, "ERROR": "You are trying to access a gated repo.\nMake sure to have access to it at https://huggingface.co/google/gemma-2-2b.\n401 Client Error. (Request ID: Root=1-6a31e0b7-6d8946840b828ca74027453f;b66db0ba-55b4-4f98-8565-b15065acdddc)\n\nCannot access gated repo for url https://huggingface.co/google/gemma-2-2b/resolve/main/config.json.\nAccess to model google/gemma-2-2b is restricted. You must have access to i", "secs": 0.1}
+=== gemma-3-1b (google/gemma-3-1b-pt) family=gemma fp8_native=False ===
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/root/int-model-env/lib/python3.11/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/google/gemma-3-1b-pt/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a31e0b7-07cb0dd50a4dddd47e7be881;40126b4d-7eda-45ed-b047-d8bedb36b035)
+
+Cannot access gated repo for url https://huggingface.co/google/gemma-3-1b-pt/resolve/main/config.json.
+Access to model google/gemma-3-1b-pt is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    print(f"=== {label} ({mid}) family={family} fp8_native={fp8} ===", flush=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 216, in model_run
+    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/google/gemma-3-1b-pt.
+401 Client Error. (Request ID: Root=1-6a31e0b7-07cb0dd50a4dddd47e7be881;40126b4d-7eda-45ed-b047-d8bedb36b035)
+
+Cannot access gated repo for url https://huggingface.co/google/gemma-3-1b-pt/resolve/main/config.json.
+Access to model google/gemma-3-1b-pt is restricted. You must have access to it and be authenticated to access it. Please log in.
+RESULT {"label": "gemma-3-1b", "model_id": "google/gemma-3-1b-pt", "family": "gemma", "fp8_native": false, "ERROR": "You are trying to access a gated repo.\nMake sure to have access to it at https://huggingface.co/google/gemma-3-1b-pt.\n401 Client Error. (Request ID: Root=1-6a31e0b7-07cb0dd50a4dddd47e7be881;40126b4d-7eda-45ed-b047-d8bedb36b035)\n\nCannot access gated repo for url https://huggingface.co/google/gemma-3-1b-pt/resolve/main/config.json.\nAccess to model google/gemma-3-1b-pt is restricted. You must have ac", "secs": 0.1}
+=== gemma-3-4b (google/gemma-3-4b-pt) family=gemma fp8_native=False ===
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 403, in hf_raise_for_status
+    response.raise_for_status()
+  File "/root/int-model-env/lib/python3.11/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/google/gemma-3-4b-pt/resolve/main/config.json
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1121, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1662, in _raise_on_head_call_error
+    raise head_call_error
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1550, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1467, in get_hf_file_metadata
+    r = _request_wrapper(
+        ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 283, in _request_wrapper
+    response = _request_wrapper(
+               ^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 307, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/root/int-model-env/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(GatedRepoError, message, response) from e
+huggingface_hub.errors.GatedRepoError: 401 Client Error. (Request ID: Root=1-6a31e0b7-54b4168e77dfdf73032eb5bd;1e6d64d8-935a-4d33-bc1b-b526492259ae)
+
+Cannot access gated repo for url https://huggingface.co/google/gemma-3-4b-pt/resolve/main/config.json.
+Access to model google/gemma-3-4b-pt is restricted. You must have access to it and be authenticated to access it. Please log in.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    print(f"=== {label} ({mid}) family={family} fp8_native={fp8} ===", flush=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 216, in model_run
+    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/tokenization_auto.py", line 1109, in from_pretrained
+    config = AutoConfig.from_pretrained(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/utils/hub.py", line 543, in cached_files
+    raise OSError(
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/google/gemma-3-4b-pt.
+401 Client Error. (Request ID: Root=1-6a31e0b7-54b4168e77dfdf73032eb5bd;1e6d64d8-935a-4d33-bc1b-b526492259ae)
+
+Cannot access gated repo for url https://huggingface.co/google/gemma-3-4b-pt/resolve/main/config.json.
+Access to model google/gemma-3-4b-pt is restricted. You must have access to it and be authenticated to access it. Please log in.
+RESULT {"label": "gemma-3-4b", "model_id": "google/gemma-3-4b-pt", "family": "gemma", "fp8_native": false, "ERROR": "You are trying to access a gated repo.\nMake sure to have access to it at https://huggingface.co/google/gemma-3-4b-pt.\n401 Client Error. (Request ID: Root=1-6a31e0b7-54b4168e77dfdf73032eb5bd;1e6d64d8-935a-4d33-bc1b-b526492259ae)\n\nCannot access gated repo for url https://huggingface.co/google/gemma-3-4b-pt/resolve/main/config.json.\nAccess to model google/gemma-3-4b-pt is restricted. You must have ac", "secs": 0.1}
+=== smollm2-360m (HuggingFaceTB/SmolLM2-360M) family=smollm2 fp8_native=False ===
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    print(f"=== {label} ({mid}) family={family} fp8_native={fp8} ===", flush=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 228, in model_run
+    gen_model = fresh()
+                       ^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 118, in generate_onpolicy
+    enc = tok(batch, return_tensors="pt", add_special_tokens=True,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3073, in __call__
+    encodings = self._call_one(text=text, text_pair=text_pair, **all_kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3161, in _call_one
+    return self.batch_encode_plus(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3353, in batch_encode_plus
+    padding_strategy, truncation_strategy, max_length, kwargs = self._get_padding_truncation_strategies(
+                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 2969, in _get_padding_truncation_strategies
+    raise ValueError(
+ValueError: Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.
+RESULT {"label": "smollm2-360m", "model_id": "HuggingFaceTB/SmolLM2-360M", "family": "smollm2", "fp8_native": false, "ERROR": "Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.", "secs": 6.1}
+=== smollm2-1.7b (HuggingFaceTB/SmolLM2-1.7B) family=smollm2 fp8_native=False ===
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    print(f"=== {label} ({mid}) family={family} fp8_native={fp8} ===", flush=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 228, in model_run
+    gen_model = fresh()
+                       ^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 118, in generate_onpolicy
+    enc = tok(batch, return_tensors="pt", add_special_tokens=True,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3073, in __call__
+    encodings = self._call_one(text=text, text_pair=text_pair, **all_kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3161, in _call_one
+    return self.batch_encode_plus(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3353, in batch_encode_plus
+    padding_strategy, truncation_strategy, max_length, kwargs = self._get_padding_truncation_strategies(
+                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 2969, in _get_padding_truncation_strategies
+    raise ValueError(
+ValueError: Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.
+RESULT {"label": "smollm2-1.7b", "model_id": "HuggingFaceTB/SmolLM2-1.7B", "family": "smollm2", "fp8_native": false, "ERROR": "Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.", "secs": 12.6}
+=== phi-3-mini (microsoft/Phi-3-mini-4k-instruct) family=phi3 fp8_native=False ===
+A new version of the following files was downloaded from https://huggingface.co/microsoft/Phi-3-mini-4k-instruct:
+- configuration_phi3.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+A new version of the following files was downloaded from https://huggingface.co/microsoft/Phi-3-mini-4k-instruct:
+- modeling_phi3.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+`flash-attention` package not found, consider installing for better performance: No module named 'flash_attn'.
+Current `flash-attention` does not support `window_size`. Either upgrade or use `attn_implementation='eager'`.
+Fetching 2 files:   0%|          | 0/2 [00:00<?, ?it/s]Fetching 2 files:  50%|█████     | 1/2 [00:13<00:13, 13.35s/it]Fetching 2 files: 100%|██████████| 2/2 [00:13<00:00,  6.67s/it]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 34.57it/s]
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 321, in main
+    print(f"=== {label} ({mid}) family={family} fp8_native={fp8} ===", flush=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 228, in model_run
+    gen_model = fresh()
+                       ^
+  File "/workspace/projects/zk-hillclimb/capacity/rank_entropy_sweep.py", line 124, in generate_onpolicy
+    out = model.generate(
+          ^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/generation/utils.py", line 2564, in generate
+    result = decoding_method(
+             ^^^^^^^^^^^^^^^^
+  File "/root/int-model-env/lib/python3.11/site-packages/transformers/generation/utils.py", line 2781, in _sample
+    model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/.cache/huggingface/modules/transformers_modules/microsoft/Phi_hyphen_3_hyphen_mini_hyphen_4k_hyphen_instruct/f39ac1d28e925b323eae81227eaba4464caced4e/modeling_phi3.py", line 1291, in prepare_inputs_for_generation
+    past_length = past_key_values.seen_tokens
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DynamicCache' object has no attribute 'seen_tokens'
+RESULT {"label": "phi-3-mini", "model_id": "microsoft/Phi-3-mini-4k-instruct", "family": "phi3", "fp8_native": false, "ERROR": "'DynamicCache' object has no attribute 'seen_tokens'", "secs": 18.1}
+=== olmo-1b (allenai/OLMo-1B-hf) family=olmo fp8_native=False ===
+RESULT {"label": "olmo-1b", "model_id": "allenai/OLMo-1B-hf", "family": "olmo", "fp8_native": false, "n_params": 1176764416, "vocab": 50304, "n_completion_tokens": 7095, "n_swapped": 112, "R_rank": 0.30695966261650093, "frac_rank0": 0.9525017618040874, "max_rank": 4, "mean_rank": 0.05496828752642706, "secs": 61.7}
+DONE
