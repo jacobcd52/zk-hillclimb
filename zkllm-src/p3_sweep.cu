@@ -26,7 +26,7 @@ int main(int argc,char**argv){
     vector<gl_t> RX((size_t)B*IN),RW((size_t)IN*OUT),RY((size_t)B*OUT);
     for(auto&x:RX)x=rng();for(auto&x:RW)x=rng();for(auto&x:RY)x=rng();
     p3fri::g_gpu_merkle=true; p3bf::p3_enable_mempool();
-    { vector<gl_t> t; p3bf::commit_gpu(W,R,t); cudaDeviceSynchronize(); }   // prewarm
+    { vector<gl_t> d(1024,1ull),t; p3bf::commit_gpu(d,1,t); cudaDeviceSynchronize(); }   // tiny prewarm (free 24GB for the real opening)
     auto t0=clk::now(); auto pf=prove(X,W,Y,RX,RW,RY,bb,ii,oo,R,Q,12345,true); cudaDeviceSynchronize(); auto t1=clk::now();
     const char* why=nullptr; bool ok=verify(pf,Q,R,&why); auto t2=clk::now();
     size_t bytes = pf.msgs.empty()?0 : evb(pf.openX)+evb(pf.openW)+evb(pf.openY)+pf.msgs.size()*24+128;

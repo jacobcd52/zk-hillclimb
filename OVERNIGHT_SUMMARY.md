@@ -96,6 +96,8 @@ Prover = the current (post-fix) GPU device-resident path. "overhead" = prove / f
 | llama-68m  B=256 | 256 | 1024 | 4096 | 52.5 | 736.0 | 125.4 | 3107.4 | 14,026× |
 | gpt2-medium (1024×4096) | 16 | 1024 | 4096 | 12.0 | 570.9 | 107.3 | 2474.9 | 47,543× |
 | gpt2-large  (1280×5120) | 16 | 2048 | 8192 | 42.4 | 2179.4 | 120.5 | 2827.2 | 51,350× |
+| 3B-class    (4096×8192) | 16 | 4096 | 8192  | 161.4 | 4636.2 | 163.6 | 3009.4 | 28,725× |
+| wide        (2048×16384)| 16 | 2048 | 16384 | 148.4 | 4648.5 | 160.9 | 3017.3 | 31,330× |
 
 Plot: `sweep_plot.png` (left: batch scaling; right: model-size scaling).
 
@@ -108,9 +110,11 @@ Notes / findings:
   practical lever.
 - **Model-size scaling:** prove grows ~linearly with parameters (gpt2-large has 4× the params of
   gpt2-medium → ~3.8× the prove time, 571→2179 ms). Verify stays ~0.1 s and proof ~2–3 MB (succinct).
-- **Memory wall:** 3B- and 7B-class single layers (padded to 4096×16384) **OOM on the 24 GB card** —
-  the Merkle tree over the 2²⁸ codeword needs ~16 GB. Bigger layers need a memory-streamed Merkle or a
-  bigger/multi-GPU card. (Real finding, not a crash bug.)
+- **Memory wall:** layers up to W-size 2²⁶ codeword fit (4096×8192 and 2048×16384 prove in ~4.6 s with
+  a tiny GPU warm-up freeing the full 24 GB). The 7B-class layer (4096×16384, 2²⁸ codeword, ~16 GB
+  Merkle tree) still **OOMs the 24 GB card** — needs a memory-streamed Merkle or a bigger/multi-GPU
+  card. (Real finding, not a crash bug.) Prove scales ~linearly with params throughout (gpt2-medium
+  4.2M→0.57 s, gpt2-large 16.8M→2.18 s, 3B-class 33.6M→4.64 s).
 - All "overhead" figures are for the current prover, which (see §2D) is **integrity-only, not yet ZK**;
   the ZK-opening composition will add roughly a constant factor on top of these numbers.
 
