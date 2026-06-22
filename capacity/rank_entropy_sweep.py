@@ -238,16 +238,15 @@ def ranks_for_seqs(z_fp8, z_int, masks):
         g.exponential_(generator=gen).log_().neg_()
         zrf = zr + g
         zsf = zf + g
-        ref_pref = zrf.max(dim=-1).values
-        srv_tok = zsf.argmax(dim=-1)
-        delta = ref_pref[:, None] - zrf
-        margin = delta.gather(-1, srv_tok[:, None]).squeeze(-1)
-        ds, _ = torch.sort(delta, dim=-1)
-        rank = torch.searchsorted(ds, margin[:, None], right=False).squeeze(-1)
-        rank = rank.cpu().numpy().astype(np.int64)
+        srv_tok = zsf.argmax(dim=-1)                          # lowest-id tie-break (consistent)
+        s = zrf.gather(-1, srv_tok[:, None])                 # served token's reference score
+        ids = torch.arange(zrf.shape[-1], device=zrf.device)[None, :]
+        gt = (zrf > s).sum(dim=-1)                           # strictly greater score => above
+        eq_lower = ((zrf == s) & (ids < srv_tok[:, None])).sum(dim=-1)  # tie & lower id => above
+        rank = (gt + eq_lower).cpu().numpy().astype(np.int64)  # ties broken by token ID
         m = masks[pi]
         kept.append(rank[m])
-        del zf, zr, g, zrf, zsf, delta, ds, rank
+        del zf, zr, g, zrf, zsf, s, ids, gt, eq_lower, rank
         torch.cuda.empty_cache()
     return np.concatenate(kept)
 

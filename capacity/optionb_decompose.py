@@ -46,16 +46,18 @@ def flogits(model, ids):
     return model(input_ids=ids).logits.float().squeeze(0)   # [L,V] gpu
 
 def ranks(z_served, z_ref, gen):
+    """Post-Gumbel rank of the served token under the reference, ties broken by
+    token ID (lower token ID ranks higher) -> strict ordinal rank, consistent
+    with argmax's lowest-index selection."""
     g = torch.empty(z_served.shape, device="cuda", dtype=torch.float32)
     g.exponential_(generator=gen).log_().neg_()
     zrf = z_ref + g; zsf = z_served + g
-    ref_pref = zrf.max(dim=-1).values
-    srv = zsf.argmax(dim=-1)
-    delta = ref_pref[:, None] - zrf
-    margin = delta.gather(-1, srv[:, None]).squeeze(-1)
-    ds, _ = torch.sort(delta, dim=-1)
-    r = torch.searchsorted(ds, margin[:, None], right=False).squeeze(-1)
-    return r.cpu().numpy().astype(np.int64)
+    srv = zsf.argmax(dim=-1)                              # lowest-id tie-break (consistent)
+    s = zrf.gather(-1, srv[:, None])                      # [L,1] served token's ref score
+    ids = torch.arange(zrf.shape[-1], device=zrf.device)[None, :]
+    gt = (zrf > s).sum(dim=-1)                            # strictly greater score => above
+    eq_lower = ((zrf == s) & (ids < srv[:, None])).sum(dim=-1)  # tie & lower id => above
+    return (gt + eq_lower).cpu().numpy().astype(np.int64)
 
 def main():
     tok = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True, token=S.HF_TOKEN)

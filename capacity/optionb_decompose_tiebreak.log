@@ -1,0 +1,17 @@
+`torch_dtype` is deprecated! Use `dtype` instead!
+Compressing model:   0%|          | 0/319 [00:00<?, ?it/s]Compressing model:  37%|███▋      | 118/319 [00:00<00:00, 739.28it/s]Compressing model: 100%|██████████| 319/319 [00:00<00:00, 1328.24it/s]
+Decompressing model:   0%|          | 0/319 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 319/319 [00:00<00:00, 9474.19it/s]
+generated 48 seqs, 4967 completion tokens
+Compressing model:   0%|          | 0/319 [00:00<?, ?it/s]Compressing model:  49%|████▉     | 157/319 [00:00<00:00, 1562.80it/s]Compressing model: 100%|██████████| 319/319 [00:00<00:00, 1950.61it/s]
+Compressing model:   0%|          | 0/319 [00:00<?, ?it/s]Compressing model:  52%|█████▏    | 166/319 [00:00<00:00, 1656.72it/s]Compressing model: 100%|██████████| 319/319 [00:00<00:00, 1981.52it/s]
+Compressing model:   0%|          | 0/319 [00:00<?, ?it/s]Compressing model:  51%|█████     | 163/319 [00:00<00:00, 1625.39it/s]Compressing model: 100%|██████████| 319/319 [00:00<00:00, 1951.03it/s]
+swapped 168 linears per model; 3 models resident
+Decompressing model:   0%|          | 0/319 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 319/319 [00:00<00:00, 695778.98it/s]
+Decompressing model:   0%|          | 0/319 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 319/319 [00:00<00:00, 679524.11it/s]
+Decompressing model:   0%|          | 0/319 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 319/319 [00:00<00:00, 526972.42it/s]
+  seq 0/48
+  seq 10/48
+  seq 20/48
+  seq 30/48
+  seq 40/48
+RESULT {"model": "RedHatAI/Qwen2.5-0.5B-FP8-dynamic", "n_completion_tokens": 4967, "q_vs_codebook": {"R_rank": 0.355255814682625, "frac_rank0": 0.9416146567344473, "mean_rank": 0.06623716529092007, "max_rank": 4}, "q_vs_fp32": {"R_rank": 0.36148247943183587, "frac_rank0": 0.9414133279645661, "mean_rank": 0.0690557680692571, "max_rank": 9}, "codebook_vs_fp32": {"R_rank": 0.3280398418419099, "frac_rank0": 0.9484598349104088, "mean_rank": 0.059995973424602375, "max_rank": 4}, "logit_l2_mean": {"q_codebook": 97.03341741775012, "q_fp32": 96.63983924762809, "codebook_fp32": 89.91758787010382}}
