@@ -113,3 +113,26 @@ Notes / findings:
   bigger/multi-GPU card. (Real finding, not a crash bug.)
 - All "overhead" figures are for the current prover, which (see §2D) is **integrity-only, not yet ZK**;
   the ZK-opening composition will add roughly a constant factor on top of these numbers.
+
+---
+
+## 5. gpt-5.5-pro round-2 re-review (of the fixed code) — verdict
+
+- **Soundness forge (fix A): CONFIRMED CLOSED** (medium-high confidence) — `qr` is now bound to the
+  committed `q` opened at `r`; the old free-`qr` forge no longer works. Residual: `Sq` not separately
+  bound (relies on ~64-bit FS, not a forge), and soundness is base-field ~2⁻⁵⁸ (fix E).
+- **Privacy: STILL BROKEN, HIGH, confirmed with a runnable reproducer.** The Basefold opening's last
+  sumcheck round sends `s0=C_real·E·(1−rex)`, `s1=C_mask·E·rex` — so `C_real` (a real-tensor MLE
+  evaluation) is recovered exactly; repeating proofs and interpolating recovers the full tensor. I ran
+  its reproducer (`bf_leak_test.cu`): **`match=1`** (leaked == true real-slice eval). The mask-count
+  refusal (fix B) does NOT address this (the leaking row has zero mask coefficient).
+- **New detail (Finding 4):** even the `q` mask is opened with plain (non-ZK) Basefold, so in
+  allowed small-`V` regimes `q` itself is recoverable and the main sumcheck mask can be stripped — i.e.
+  binding `q` fixed soundness but did not make it ZK. Confirms that the fix for privacy must be a
+  genuine **ZK opening** (masked evaluation-sumcheck + ZK/query-masked FRI) for X, W, Y **and** q —
+  the full composition, exactly as noted in §2D. "Reordering ex / salting leaves / more mask count"
+  do not fix it; only real ZK openings do.
+
+**Net:** both red-teams + the round-2 re-review agree: **soundness of Y=X·W holds (forge fixed);
+zero-knowledge does NOT hold.** The single required fix is the ZK-opening composition; until it's built
+and re-red-teamed, no weight/activation-privacy claim should be made.
