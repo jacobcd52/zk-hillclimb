@@ -56,15 +56,24 @@ Note: this is still the **integrity** prover (zero-knowledge not yet achieved �
 sumcheck leak is the separate, #1 crypto task). These speedups carry over to the eventual ZK
 version.
 
-## Plot note: estimated generation (decode) time
+## Plot: context length 1024, with an estimated generation (decode) bar
 
-The plot adds an estimated **generation** bar alongside the measured prefill/forward bar.
-Generating tokens autoregressively (decode) runs **one token at a time and is
-memory-bandwidth bound** — each token re-reads the layer's weights — whereas prefill
-amortizes a single weight-pass across the whole batch (compute-bound). So we **estimate**
-decode of N tokens as `N x (the layer's forward-pass time)` (per-token decode ≈ one weight
-read). This is a rough estimate, not measured; it reflects the prefill-compute-bound vs
-decode-memory-bound behavior reported in vLLM benchmarks. Equivalently, per token decode is
-~B× slower than batched prefill. Against this more realistic generation time the proof
-overhead is ~B× lower than against prefill (e.g. 3B-class B=16: prove 2561 ms vs generate
-~2.6 ms vs prefill ~0.16 ms).
+The plot now uses a realistic **context length of 1024 tokens** and shows only the current
+prover (no "before" bars). Prove times grow modestly with token count because the X/Y
+openings and prep scale with B while the weight (W) commitment/opening dominate and are
+~B-independent — so a single proof still covers all 1024 tokens.
+
+**Generation (decode) estimate.** Autoregressive decode produces one token at a time and is
+**memory-bandwidth bound**: each token must read the layer's weights from HBM. The standard
+single-stream decode model is `t_token = weight_bytes / HBM_bandwidth` — the same roofline
+that gives e.g. ~24 tok/s for a 70B model on an H100 (3.35 TB/s). We estimate generation of
+N tokens as `N × t_token`. We take `t_token` = the **measured single-token forward (B=1)** of
+each layer, which on the RTX 4090 already sits right at the fp16 bandwidth roofline
+(llama up_proj ~8.8 µs, gpt2-large ~30 µs, 3B-class ~148 µs) — so this is grounded, not a
+launch-overhead-inflated number. Prefill (the measured `forward(B)`) amortizes one weight
+pass across all B tokens, so it is much faster than decode for the same tokens.
+
+Measured at B=1024 (RTX 4090): the proof overhead vs **realistic generation** is far smaller
+than vs prefill, e.g. 3B-class — prove 3484 ms vs **generate ~151 ms (~23×)** vs prefill
+~1.3 ms (~2700×). (Estimate, single-stream decode; sources: vLLM / LLM-inference roofline
+analyses.)
