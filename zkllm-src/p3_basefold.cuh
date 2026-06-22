@@ -16,6 +16,7 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <chrono>
 #include "p3_goldilocks.cuh"
 #include "p3_fri.cuh"
 #include "p3_ntt.cuh"
@@ -102,6 +103,44 @@ __global__ void p3bf_fold_kernel(const gl_t* f, gl_t* out, uint32_t half, gl_t w
     gl_t O = gl_mul(gl_mul(gl_sub(a,b), inv2), invx);
     out[c] = gl_add(gl_mul(gl_sub(1ULL,beta), E), gl_mul(beta, O));
 }
+// GPU build_eq: out[b] = prod_i (b_i ? z[i] : 1-z[i]).  Replaces the O(N*v) host loop.
+__global__ void p3bf_eq_kernel(const gl_t* z, gl_t* out, uint32_t v, uint32_t N) {
+    uint32_t b = blockIdx.x*blockDim.x + threadIdx.x; if (b >= N) return;
+    gl_t p = 1ULL;
+    for (uint32_t i = 0; i < v; i++) p = gl_mul(p, (b & (1u<<i)) ? z[i] : gl_sub(1ULL, z[i]));
+    out[b] = p;
+}
+// GPU dot product sum_i a[i]*b[i] (block-reduced)
+__global__ void p3bf_dot_kernel(const gl_t* a, const gl_t* b, gl_t* blk, uint32_t n) {
+    __shared__ gl_t sh[256]; uint32_t t=threadIdx.x; gl_t l=0;
+    for (uint32_t i=blockIdx.x*blockDim.x+t; i<n; i+=gridDim.x*blockDim.x) l=gl_add(l,gl_mul(a[i],b[i]));
+    sh[t]=l; __syncthreads();
+    for (uint32_t s=blockDim.x/2;s>0;s>>=1){ if(t<s) sh[t]=gl_add(sh[t],sh[t+s]); __syncthreads(); }
+    if(t==0) blk[blockIdx.x]=sh[0];
+}
+// GPU evaluation  c~(z) = sum_b c[b]*eq(b,z)  (replaces host build_eq+eval_h)
+static inline gl_t eval_h_gpu(const std::vector<gl_t>& c, const std::vector<gl_t>& z) {
+    uint32_t v=(uint32_t)z.size(), N=1u<<v; const uint32_t NB=256;
+    gl_t *dz,*deq,*dc,*dblk;
+    cudaMallocAsync(&dz,(size_t)v*8,0); cudaMemcpy(dz,z.data(),(size_t)v*8,cudaMemcpyHostToDevice);
+    cudaMallocAsync(&deq,(size_t)N*8,0); p3bf_eq_kernel<<<(N+255)/256,256>>>(dz,deq,v,N);
+    cudaMallocAsync(&dc,(size_t)N*8,0); cudaMemcpy(dc,c.data(),(size_t)N*8,cudaMemcpyHostToDevice);
+    cudaMallocAsync(&dblk,(size_t)NB*8,0); p3bf_dot_kernel<<<NB,256>>>(dc,deq,dblk,N);
+    std::vector<gl_t> hb(NB); cudaMemcpy(hb.data(),dblk,(size_t)NB*8,cudaMemcpyDeviceToHost);
+    gl_t s=0; for(auto x:hb) s=gl_add(s,x);
+    cudaFreeAsync(dz,0);cudaFreeAsync(deq,0);cudaFreeAsync(dc,0);cudaFreeAsync(dblk,0);
+    return s;
+}
+
+static inline std::vector<gl_t> build_eq_gpu(const std::vector<gl_t>& z) {
+    uint32_t v=(uint32_t)z.size(), N=1u<<v;
+    gl_t *dz,*d; cudaMalloc(&dz,(size_t)v*sizeof(gl_t)); cudaMalloc(&d,(size_t)N*sizeof(gl_t));
+    cudaMemcpy(dz,z.data(),(size_t)v*sizeof(gl_t),cudaMemcpyHostToDevice);
+    p3bf_eq_kernel<<<(N+255)/256,256>>>(dz,d,v,N);
+    std::vector<gl_t> out(N); cudaMemcpy(out.data(),d,(size_t)N*sizeof(gl_t),cudaMemcpyDeviceToHost);
+    cudaFree(dz); cudaFree(d); return out;
+}
+
 static inline std::vector<gl_t> fold_gpu(const std::vector<gl_t>& f, gl_t w_M, gl_t beta) {
     uint32_t M=(uint32_t)f.size(), half=M/2;
     gl_t *d_in,*d_out; cudaMalloc(&d_in,(size_t)M*sizeof(gl_t)); cudaMalloc(&d_out,(size_t)half*sizeof(gl_t));
@@ -136,10 +175,115 @@ static inline gl_t eq_point(const std::vector<gl_t>& alpha, const std::vector<gl
     return prod;
 }
 
+// device sumcheck message: per-block partial sums of (cl*wl, ch*wh, (2ch-cl)(2wh-wl))
+__global__ void p3bf_scmsg_kernel(const gl_t* c, const gl_t* w, gl_t* b0, gl_t* b1, gl_t* b2, uint32_t half) {
+    __shared__ gl_t s0[256], s1[256], s2[256];
+    uint32_t t=threadIdx.x; gl_t l0=0,l1=0,l2=0;
+    for (uint32_t i=blockIdx.x*blockDim.x+t; i<half; i+=gridDim.x*blockDim.x) {
+        gl_t cl=c[2*i],ch=c[2*i+1],wl=w[2*i],wh=w[2*i+1];
+        l0=gl_add(l0,gl_mul(cl,wl)); l1=gl_add(l1,gl_mul(ch,wh));
+        gl_t c2=gl_sub(gl_add(ch,ch),cl), w2=gl_sub(gl_add(wh,wh),wl); l2=gl_add(l2,gl_mul(c2,w2));
+    }
+    s0[t]=l0; s1[t]=l1; s2[t]=l2; __syncthreads();
+    for (uint32_t s=blockDim.x/2; s>0; s>>=1){ if(t<s){ s0[t]=gl_add(s0[t],s0[t+s]); s1[t]=gl_add(s1[t],s1[t+s]); s2[t]=gl_add(s2[t],s2[t+s]); } __syncthreads(); }
+    if(t==0){ b0[blockIdx.x]=s0[0]; b1[blockIdx.x]=s1[0]; b2[blockIdx.x]=s2[0]; }
+}
+// gather: out[t] = src[idx[t]]
+__global__ void p3bf_gather_kernel(const gl_t* src, const uint32_t* idx, gl_t* out, uint32_t n) {
+    uint32_t t=blockIdx.x*blockDim.x+threadIdx.x; if(t>=n) return; out[t]=src[idx[t]];
+}
+// device MLE bind: out[i] = in[2i] + a*(in[2i+1]-in[2i])
+__global__ void p3bf_bind_kernel(const gl_t* in, gl_t* out, uint32_t half, gl_t a) {
+    uint32_t i=blockIdx.x*blockDim.x+threadIdx.x; if(i>=half) return;
+    out[i]=gl_add(in[2*i], gl_mul(a, gl_sub(in[2*i+1], in[2*i])));
+}
+
+// Retain freed device memory in the async pool (don't return it to the driver) so
+// repeated allocations across operands/rounds are recycled. Call once at startup.
+static inline void p3_enable_mempool() {
+    cudaMemPool_t pool; cudaDeviceGetDefaultMemPool(&pool, 0);
+    uint64_t thr = UINT64_MAX; cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &thr);
+}
+
+// opening phase profiling accumulators (ms); reset/read by callers
+static double g_t_merkle=0, g_t_fold=0, g_t_query=0, g_t_eq=0, g_t_sc=0, g_t_setup=0, g_t_teardown=0;
+static inline double bf_now_ms(){ return std::chrono::duration<double,std::milli>(std::chrono::high_resolution_clock::now().time_since_epoch()).count(); }
+
+// fully device-resident opening (same protocol/transcript as prove_eval): codeword,
+// coeffs, and eq stay on the GPU across all rounds. Only the 3 scalar sumcheck values
+// per round and the Q query spot-checks/paths return to host. Used when g_gpu_merkle.
+static inline EvalProof prove_eval_dev(const std::vector<gl_t>& c, const std::vector<gl_t>& z, gl_t y,
+                                       uint32_t R, uint32_t Q, const std::vector<gl_t>& cw0, const std::string& seed) {
+    uint32_t v=(uint32_t)z.size(), logM0=v+R, M0=1u<<logM0, N=1u<<v;
+    EvalProof pf; pf.logN=v; pf.R=R; pf.Q=Q; pf.z=z; pf.y=y;
+    fs::Transcript tr(seed); tr.absorb("z",z.data(),z.size()*sizeof(gl_t)); tr.absorb("y",&y,sizeof(gl_t));
+    double tsetup=bf_now_ms();
+    gl_t *d_c,*d_w; cudaMallocAsync(&d_c,(size_t)N*sizeof(gl_t),0); cudaMemcpy(d_c,c.data(),(size_t)N*sizeof(gl_t),cudaMemcpyHostToDevice);
+    { gl_t* dz; cudaMallocAsync(&dz,(size_t)v*sizeof(gl_t),0); cudaMemcpy(dz,z.data(),(size_t)v*sizeof(gl_t),cudaMemcpyHostToDevice);
+      cudaMallocAsync(&d_w,(size_t)N*sizeof(gl_t),0); p3bf_eq_kernel<<<(N+255)/256,256>>>(dz,d_w,v,N); cudaFreeAsync(dz,0); }
+    std::vector<gl_t*> d_cw(v+1,nullptr);
+    cudaMallocAsync(&d_cw[0],(size_t)M0*sizeof(gl_t),0); cudaMemcpy(d_cw[0],cw0.data(),(size_t)M0*sizeof(gl_t),cudaMemcpyHostToDevice);
+    std::vector<p3fri::DeviceMerkle> dtrees(v);
+    const uint32_t NB=256; gl_t *db0,*db1,*db2; cudaMallocAsync(&db0,NB*8,0);cudaMallocAsync(&db1,NB*8,0);cudaMallocAsync(&db2,NB*8,0);
+    std::vector<gl_t> hb0(NB),hb1(NB),hb2(NB);
+    cudaDeviceSynchronize(); g_t_setup += bf_now_ms()-tsetup;
+    for (uint32_t r=0;r<v;r++){
+        uint32_t Mr=M0>>r, n=N>>r, half=n/2;
+        double tm=bf_now_ms();
+        dtrees[r].build_dev(d_cw[r],Mr); cudaDeviceSynchronize(); Hash root=dtrees[r].root();
+        g_t_merkle+=bf_now_ms()-tm;
+        pf.roots.push_back(root); tr.absorb("root",root.data(),32);
+        double tsc=bf_now_ms();
+        p3bf_scmsg_kernel<<<NB,256>>>(d_c,d_w,db0,db1,db2,half);
+        cudaMemcpy(hb0.data(),db0,NB*8,cudaMemcpyDeviceToHost); cudaMemcpy(hb1.data(),db1,NB*8,cudaMemcpyDeviceToHost); cudaMemcpy(hb2.data(),db2,NB*8,cudaMemcpyDeviceToHost);
+        gl_t s0=0,s1=0,s2=0; for(uint32_t i=0;i<NB;i++){s0=gl_add(s0,hb0[i]);s1=gl_add(s1,hb1[i]);s2=gl_add(s2,hb2[i]);}
+        SumMsg msg{s0,s1,s2}; pf.msgs.push_back(msg); tr.absorb("sc",&msg,sizeof(SumMsg));
+        gl_t a=alpha_from(tr);
+        gl_t *nc,*nw; cudaMallocAsync(&nc,(size_t)half*sizeof(gl_t),0); cudaMallocAsync(&nw,(size_t)half*sizeof(gl_t),0);
+        p3bf_bind_kernel<<<(half+255)/256,256>>>(d_c,nc,half,a); p3bf_bind_kernel<<<(half+255)/256,256>>>(d_w,nw,half,a);
+        cudaFreeAsync(d_c,0); cudaFreeAsync(d_w,0); d_c=nc; d_w=nw;
+        g_t_sc+=bf_now_ms()-tsc;
+        double tf=bf_now_ms();
+        gl_t w=gl_root_of_unity(logM0-r), winv=gl_inv(w), inv2=gl_inv(2ULL); uint32_t fh=Mr/2;
+        cudaMallocAsync(&d_cw[r+1],(size_t)fh*sizeof(gl_t),0);
+        p3bf_fold_kernel<<<(fh+255)/256,256>>>(d_cw[r],d_cw[r+1],fh,winv,a,inv2);
+        cudaDeviceSynchronize(); g_t_fold+=bf_now_ms()-tf;
+    }
+    pf.final_word.resize(1u<<R); cudaMemcpy(pf.final_word.data(),d_cw[v],(size_t)(1u<<R)*sizeof(gl_t),cudaMemcpyDeviceToHost);
+    tr.absorb("final",pf.final_word.data(),pf.final_word.size()*sizeof(gl_t));
+    double tq=bf_now_ms();
+    // derive all query coset indices per (query, round) from the transcript
+    std::vector<std::vector<uint32_t>> ccq(Q, std::vector<uint32_t>(v));
+    for (uint32_t q=0;q<Q;q++){ uint32_t c0=(uint32_t)idx_from(tr,M0/2), p=c0;
+        for (uint32_t r=0;r<v;r++){ uint32_t h=(M0>>r)/2; uint32_t cc=p%h; ccq[q][r]=cc; p=cc; } }
+    std::vector<QueryProof> qps(Q); for(auto& x:qps) x.rounds.resize(v);
+    for (uint32_t r=0;r<v;r++){
+        uint32_t h=(M0>>r)/2; std::vector<uint32_t> idxs(2*Q);
+        for (uint32_t q=0;q<Q;q++){ idxs[2*q]=ccq[q][r]; idxs[2*q+1]=ccq[q][r]+h; }
+        uint32_t* d_idx; cudaMallocAsync(&d_idx,(size_t)2*Q*4,0); cudaMemcpy(d_idx,idxs.data(),(size_t)2*Q*4,cudaMemcpyHostToDevice);
+        gl_t* d_val; cudaMallocAsync(&d_val,(size_t)2*Q*sizeof(gl_t),0);
+        p3bf_gather_kernel<<<(2*Q+255)/256,256>>>(d_cw[r],d_idx,d_val,2*Q);
+        std::vector<gl_t> vals(2*Q); cudaMemcpy(vals.data(),d_val,(size_t)2*Q*sizeof(gl_t),cudaMemcpyDeviceToHost);
+        cudaFreeAsync(d_idx,0); cudaFreeAsync(d_val,0);
+        auto paths = dtrees[r].paths_batch(idxs);
+        for (uint32_t q=0;q<Q;q++){ qps[q].rounds[r].a=vals[2*q]; qps[q].rounds[r].b=vals[2*q+1];
+            qps[q].rounds[r].pa=paths[2*q]; qps[q].rounds[r].pb=paths[2*q+1]; }
+    }
+    pf.queries=qps;
+    g_t_query+=bf_now_ms()-tq;
+    double ttd=bf_now_ms();
+    for (uint32_t r=0;r<=v;r++) if(d_cw[r]) cudaFreeAsync(d_cw[r],0);
+    for (auto& t:dtrees) t.free_();
+    cudaFreeAsync(d_c,0);cudaFreeAsync(d_w,0);cudaFreeAsync(db0,0);cudaFreeAsync(db1,0);cudaFreeAsync(db2,0);
+    cudaDeviceSynchronize(); g_t_teardown += bf_now_ms()-ttd;
+    return pf;
+}
+
 // ---------------- prover ----------------
 static inline EvalProof prove_eval(std::vector<gl_t> c, const std::vector<gl_t>& z, gl_t y,
                                    uint32_t R, uint32_t Q,
                                    const std::vector<gl_t>& cw0, const std::string& seed = "p3-bf") {
+    if (p3fri::g_gpu_merkle) return prove_eval_dev(c, z, y, R, Q, cw0, seed);
     uint32_t v = (uint32_t)z.size(), logM0 = v + R, M0 = 1u << logM0;
     EvalProof pf; pf.logN = v; pf.R = R; pf.Q = Q; pf.z = z; pf.y = y;
     fs::Transcript tr(seed);
@@ -150,15 +294,20 @@ static inline EvalProof prove_eval(std::vector<gl_t> c, const std::vector<gl_t>&
     bool GM = p3fri::g_gpu_merkle;                 // device-resident Merkle for large openings
     std::vector<Merkle> trees;
     std::vector<p3fri::DeviceMerkle> dtrees;
-    std::vector<gl_t> cur_c = c, cur_w = build_eq(z), alphas;
+    double teq=bf_now_ms();
+    std::vector<gl_t> cur_c = c, cur_w = (GM && z.size()>=10) ? build_eq_gpu(z) : build_eq(z), alphas;
+    g_t_eq += bf_now_ms()-teq;
 
     for (uint32_t r = 0; r < v; r++) {
         Hash root;
-        if (GM) { p3fri::DeviceMerkle mk; mk.build(words[r]); root=mk.root(); dtrees.push_back(mk); }
+        double tm=bf_now_ms();
+        if (GM) { p3fri::DeviceMerkle mk; mk.build(words[r]); cudaDeviceSynchronize(); root=mk.root(); dtrees.push_back(mk); }
         else    { Merkle mk; mk.build(words[r]); root=mk.root(); trees.push_back(mk); }
+        g_t_merkle += bf_now_ms()-tm;
         pf.roots.push_back(root);
         tr.absorb("root", root.data(), 32);
         // sumcheck message over the LSB split of cur_c, cur_w
+        double tsc=bf_now_ms();
         uint32_t n = (uint32_t)cur_c.size(), half = n / 2;
         gl_t s0 = 0, s1 = 0, s2 = 0;
         for (uint32_t b = 0; b < half; b++) {
@@ -178,12 +327,17 @@ static inline EvalProof prove_eval(std::vector<gl_t> c, const std::vector<gl_t>&
             nw[b] = gl_add(cur_w[2*b], gl_mul(a, gl_sub(cur_w[2*b+1], cur_w[2*b])));
         }
         cur_c = nc; cur_w = nw;
+        g_t_sc += bf_now_ms()-tsc;
         gl_t w = gl_root_of_unity(logM0 - r);
+        double tf=bf_now_ms();
         words.push_back(GM ? fold_gpu(words[r], w, a) : fold(words[r], w, a, /*mle=*/true));
+        if(GM) cudaDeviceSynchronize();
+        g_t_fold += bf_now_ms()-tf;
     }
     pf.final_word = words[v];
     tr.absorb("final", pf.final_word.data(), pf.final_word.size() * sizeof(gl_t));
 
+    double tq=bf_now_ms();
     for (uint32_t q = 0; q < Q; q++) {
         uint32_t c0 = (uint32_t)idx_from(tr, M0 / 2);
         QueryProof qp; uint32_t p = c0;
@@ -196,6 +350,7 @@ static inline EvalProof prove_eval(std::vector<gl_t> c, const std::vector<gl_t>&
         }
         pf.queries.push_back(qp);
     }
+    g_t_query += bf_now_ms()-tq;
     if (GM) for (auto& t : dtrees) t.free_();
     return pf;
 }

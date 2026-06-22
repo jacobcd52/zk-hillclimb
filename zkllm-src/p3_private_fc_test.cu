@@ -14,7 +14,8 @@ static vector<gl_t> matmul(const vector<gl_t>&X,const vector<gl_t>&W,uint32_t B,
     return Y;
 }
 int main(){
-    printf("=== P3.5 private FC prover test ===\n");
+    printf("=== P3.5 private FC prover test (GPU device-resident opening path) ===\n");
+    p3fri::g_gpu_merkle = true; p3bf::p3_enable_mempool();   // exercise prove_eval_dev with the full soundness battery
     uint32_t bb=2,ii=3,oo=2, B=1u<<bb,IN=1u<<ii,OUT=1u<<oo, R=2,Q=24;
     vector<gl_t> X((size_t)B*IN),W((size_t)IN*OUT); for(auto&x:X)x=rng()%257; for(auto&x:W)x=rng()%257;
     auto Y=matmul(X,W,B,IN,OUT);

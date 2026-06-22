@@ -37,9 +37,9 @@ int main(){
     vector<gl_t> RX((size_t)B*IN),RW((size_t)IN*OUT),RY((size_t)B*OUT);
     for(auto&x:RX)x=rng(); for(auto&x:RW)x=rng(); for(auto&x:RY)x=rng();
 
-    uint32_t R=2, Q=32;
-    p3fri::g_gpu_merkle=true;
-    { vector<gl_t> tmp; p3bf::commit_gpu(W,R,tmp); cudaDeviceSynchronize(); }  // prewarm CUDA
+    uint32_t R=1, Q=64;   // rate 1/2 + 64 queries (R is a soundness knob, not privacy)
+    p3fri::g_gpu_merkle=true; p3bf::p3_enable_mempool();
+    { vector<gl_t> tmp; p3bf::commit_gpu(W,R,tmp); cudaDeviceSynchronize(); }  // prewarm CUDA + pool
 
     Timing tm;
     auto t0=clk::now();
@@ -58,6 +58,13 @@ int main(){
     printf("  prep   (contractions + factor build)      : %8.1f ms\n", tm.prep_ms);
     printf("  sumcheck (combined ZK, %u rounds)          : %8.1f ms\n", ii+3, tm.sumcheck_ms);
     printf("  openings (3 ZK Basefold)                  : %8.1f ms\n", tm.open_ms);
+    printf("      |- merkle build : %8.1f ms\n", p3bf::g_t_merkle);
+    printf("      |- gpu fold     : %8.1f ms\n", p3bf::g_t_fold);
+    printf("      |- build_eq(host): %8.1f ms\n", p3bf::g_t_eq);
+    printf("      |- sumcheck(host): %8.1f ms\n", p3bf::g_t_sc);
+    printf("      |- query/paths  : %8.1f ms\n", p3bf::g_t_query);
+    printf("      |- setup(upload): %8.1f ms\n", p3bf::g_t_setup);
+    printf("      |- teardown(free): %8.1f ms\n", p3bf::g_t_teardown);
     printf("  prove TOTAL                               : %8.1f ms\n", ms(t0,t1));
     printf("  verify                                    : %8.1f ms\n", ms(t1,t2));
     printf("  proof size                                : %8.2f KB\n", bytes/1024.0);

@@ -65,7 +65,7 @@ static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,
     pf.rootW = gpu?p3bf::commit_gpu(Wh,R,cwW):p3bf::commit(Wh,R,cwW);
     pf.rootY = gpu?p3bf::commit_gpu(Yh,R,cwY):p3bf::commit(Yh,R,cwY);
 
-    double t1=now_ms(); if(tm) tm->commit_ms=t1-t0;
+    cudaDeviceSynchronize(); double t1=now_ms(); if(tm) tm->commit_ms=t1-t0;
     fs::Transcript tr("p3-pfc");
     tr.absorb("rX",pf.rootX.data(),32); tr.absorb("rW",pf.rootW.data(),32); tr.absorb("rY",pf.rootY.data(),32);
     std::vector<gl_t> r_i=chal_vec(tr,bb), r_k=chal_vec(tr,oo);
@@ -118,11 +118,13 @@ static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,
     auto zX=cat(cat(r_j,r_i),std::vector<gl_t>{rexX});      // (j, i, exX)
     auto zW=cat(cat(r_k,r_j),std::vector<gl_t>{rexW});      // (k, j, exW)
     auto zY=cat(cat(r_k,r_i),std::vector<gl_t>{rey});       // (k, i, ey)
-    gl_t yX=p3bf::eval_h(Xh,p3bf::build_eq(zX)), yW=p3bf::eval_h(Wh,p3bf::build_eq(zW)), yY=p3bf::eval_h(Yh,p3bf::build_eq(zY));
+    gl_t yX = gpu ? p3bf::eval_h_gpu(Xh,zX) : p3bf::eval_h(Xh,p3bf::build_eq(zX));
+    gl_t yW = gpu ? p3bf::eval_h_gpu(Wh,zW) : p3bf::eval_h(Wh,p3bf::build_eq(zW));
+    gl_t yY = gpu ? p3bf::eval_h_gpu(Yh,zY) : p3bf::eval_h(Yh,p3bf::build_eq(zY));
     pf.openX=p3bf::prove_eval(Xh,zX,yX,R,Q,cwX,"pfc-X");
     pf.openW=p3bf::prove_eval(Wh,zW,yW,R,Q,cwW,"pfc-W");
     pf.openY=p3bf::prove_eval(Yh,zY,yY,R,Q,cwY,"pfc-Y");
-    if(tm) tm->open_ms=now_ms()-t3;
+    cudaDeviceSynchronize(); if(tm) tm->open_ms=now_ms()-t3;
     return pf;
 }
 
