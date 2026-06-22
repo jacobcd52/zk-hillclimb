@@ -1,0 +1,70 @@
+{
+  "o_proj/qkv 896x896": {
+    "bf16": {
+      "ms": 0.0513,
+      "tops": 128.2,
+      "deterministic_run2run": true
+    },
+    "fp8": {
+      "ms": 0.0467,
+      "tops": 140.9,
+      "deterministic_run2run": true
+    },
+    "int8": {
+      "ms": 0.0263,
+      "tops": 250.0,
+      "deterministic_run2run": true
+    }
+  },
+  "up/gate 896x4864": {
+    "bf16": {
+      "ms": 0.2378,
+      "tops": 150.2,
+      "deterministic_run2run": true
+    },
+    "fp8": {
+      "ms": 0.1998,
+      "tops": 178.7,
+      "deterministic_run2run": true
+    },
+    "int8": {
+      "ms": 0.1209,
+      "tops": 295.4,
+      "deterministic_run2run": true
+    }
+  },
+  "down 4864x896": {
+    "bf16": {
+      "ms": 0.2331,
+      "tops": 153.2,
+      "deterministic_run2run": true
+    },
+    "fp8": {
+      "ms": 0.1482,
+      "tops": 240.9,
+      "deterministic_run2run": true
+    },
+    "int8": {
+      "ms": 0.1105,
+      "tops": 323.0,
+      "deterministic_run2run": true
+    }
+  },
+  "lm_head 896x152k": {
+    "bf16": {
+      "ms": 10.8582,
+      "tops": 102.7,
+      "deterministic_run2run": true
+    },
+    "fp8": {
+      "ms": 5.7524,
+      "tops": 193.9,
+      "deterministic_run2run": true
+    },
+    "int8": {
+      "ms": 3.2604,
+      "tops": 342.0,
+      "deterministic_run2run": true
+    }
+  }
+}
