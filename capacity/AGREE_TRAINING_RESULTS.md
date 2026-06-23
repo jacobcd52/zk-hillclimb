@@ -25,8 +25,9 @@ losses {top-K KL, hard-CE on M_q argmax, Gumbel-coupled CE} x LR {1e-6 ... 1e-3}
 | head     | int8 | head     | hard_ce | 1e-3 | 0.784 | 1.424 |
 | head     | fp8  | head     | topk_kl | 1e-3 | 0.641 | 0.740 |
 | head     | fp8  | head     | gumbel  | 1e-3 | 0.641 | 0.984 |
+| head     | int8 | head     | gumbel  | 1e-3 | 0.784 | 1.061 |
 
-(int8 Gumbel runs match the pattern.) In every case `best_rrank == init_rrank`: training
+In every case `best_rrank == init_rrank`: training
 never beat the untrained model at any checkpoint. Loss went DOWN while R_rank went UP — the
 surrogate losses are flat-to-anti-correlated with R_rank.
 
