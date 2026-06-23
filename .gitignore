@@ -6,3 +6,7 @@ __pycache__/
 zkllm-src/model-storage/
 # recomputable logit cache for the temperature sweep (~850 MB; regenerated in ~40s)
 capacity/z_int_*.npz
+capacity/corpus/
+*.npz
+capacity/*.log
+capacity/agree_runs/*.log
