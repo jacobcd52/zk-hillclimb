@@ -1,0 +1,17 @@
+{
+  "tag": "frozen_int8",
+  "mode": "frozen",
+  "loss": "topk_kl",
+  "lr": 0.0001,
+  "neartie": false,
+  "init_rrank": 0.7844465512859359,
+  "final_rrank": 0.7844465512859359,
+  "best_rrank": 0.7844465512859359,
+  "hist": [
+    {
+      "step": 0,
+      "rrank": 0.7844465512859359,
+      "frac0": 0.8581876899696048
+    }
+  ]
+}

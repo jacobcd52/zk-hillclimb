@@ -1,0 +1,14 @@
+corpus 3980 seqs; train 3582 held 398
+`torch_dtype` is deprecated! Use `dtype` instead!
+[init] R_rank=0.7844 frac0=0.8582 (n=21056)
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/train_agree.py", line 208, in <module>
+    if __name__=="__main__": main()
+                             ^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/train_agree.py", line 192, in main
+    l,ntok=loss_fn(z,sel,cm,tv,ti,argm,a.loss,a.neartie)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/train_agree.py", line 116, in loss_fn
+    g=torch.empty_like(tvi); gen=torch.Generator(device='cuda'); gen.manual_seed(1234+i)
+                                                                 ^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: an integer is required

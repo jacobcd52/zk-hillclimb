@@ -1,0 +1,9 @@
+corpus 3980 seqs; train 3582 held 398
+`torch_dtype` is deprecated! Use `dtype` instead!
+[init] R_rank=0.6412 frac0=0.8859 (n=21056)
+[200] loss=1.8275 R_rank=0.8951 frac0=0.8383 (40s)
+[400] loss=1.8000 R_rank=0.9213 frac0=0.8330 (92s)
+[600] loss=2.2419 R_rank=0.9689 frac0=0.8262 (141s)
+[800] loss=1.5899 R_rank=0.9840 frac0=0.8223 (192s)
+[final] R_rank=0.9840 frac0=0.8223 best=0.6412
+RESULT {"tag": "fp8_head_gum_1e3", "mode": "head", "base": "fp8", "loss": "gumbel", "lr": 0.001, "neartie": false, "init_rrank": 0.6411791680969494, "final_rrank": 0.9839827003748048, "best_rrank": 0.6411791680969494}

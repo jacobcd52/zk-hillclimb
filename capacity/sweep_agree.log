@@ -1,0 +1,6 @@
+>>> fp8_frozen --mode frozen --base fp8
+RESULT {"tag": "fp8_frozen", "mode": "frozen", "base": "fp8", "loss": "topk_kl", "lr": 0.0001, "neartie": false, "init_rrank": 0.6411791680969494, "final_rrank": 0.6411791680969494, "best_rrank": 0.6411791680969494}
+>>> fp8_qat_kl_1e4 --mode full_qat --base fp8 --loss topk_kl --lr 1e-4
+Traceback (most recent call last):
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.56 GiB. GPU 0 has a total capacity of 23.53 GiB of which 1.04 GiB is free. Including non-PyTorch memory, this process has 22.48 GiB memory in use. Of the allocated memory 18.47 GiB is allocated by PyTorch, and 3.54 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+>>> fp8_qat_ce_1e4 --mode full_qat --base fp8 --loss hard_ce --lr 1e-4

@@ -1,0 +1,19 @@
+corpus 3980 seqs; train 3582 held 398
+`torch_dtype` is deprecated! Use `dtype` instead!
+[init] R_rank=0.6412 frac0=0.8859 (n=21056)
+[200] loss=1.6863 R_rank=2.9588 frac0=0.5355 (58s)
+Traceback (most recent call last):
+  File "/workspace/projects/zk-hillclimb/capacity/train_agree.py", line 184, in <module>
+    out={"tag":a.tag,"mode":a.mode,"base":a.base,"loss":a.loss,"lr":a.lr,"neartie":a.neartie,"init_rrank":r0,"final_rrank":rF,"best_rrank":min(best,rF),"hist":hist}
+                         ^^^^^^
+  File "/workspace/projects/zk-hillclimb/capacity/train_agree.py", line 169, in main
+    if a.mode!="frozen":
+                         
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/_tensor.py", line 648, in backward
+    torch.autograd.backward(
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/autograd/__init__.py", line 353, in backward
+    _engine_run_backward(
+  File "/root/int-model-env/lib/python3.11/site-packages/torch/autograd/graph.py", line 824, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.56 GiB. GPU 0 has a total capacity of 23.53 GiB of which 911.69 MiB is free. Including non-PyTorch memory, this process has 22.63 GiB memory in use. Of the allocated memory 18.48 GiB is allocated by PyTorch, and 3.69 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

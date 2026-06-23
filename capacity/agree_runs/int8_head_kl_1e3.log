@@ -1,0 +1,9 @@
+corpus 3980 seqs; train 3582 held 398
+`torch_dtype` is deprecated! Use `dtype` instead!
+[init] R_rank=0.7844 frac0=0.8582 (n=21056)
+[200] loss=0.0386 R_rank=0.8179 frac0=0.8520 (47s)
+[400] loss=0.0495 R_rank=0.8391 frac0=0.8477 (106s)
+[600] loss=0.0508 R_rank=0.8481 frac0=0.8455 (166s)
+[800] loss=0.0638 R_rank=0.8679 frac0=0.8426 (226s)
+[final] R_rank=0.8679 frac0=0.8426 best=0.7844
+RESULT {"tag": "int8_head_kl_1e3", "mode": "head", "base": "int8", "loss": "topk_kl", "lr": 0.001, "neartie": false, "init_rrank": 0.7844465512859359, "final_rrank": 0.8679424265721404, "best_rrank": 0.7844465512859359}

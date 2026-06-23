@@ -1,0 +1,18 @@
+{
+  "tag": "fp8_frozen",
+  "mode": "frozen",
+  "base": "fp8",
+  "loss": "topk_kl",
+  "lr": 0.0001,
+  "neartie": false,
+  "init_rrank": 0.6411791680969494,
+  "final_rrank": 0.6411791680969494,
+  "best_rrank": 0.6411791680969494,
+  "hist": [
+    {
+      "step": 0,
+      "rrank": 0.6411791680969494,
+      "frac0": 0.8859232522796353
+    }
+  ]
+}

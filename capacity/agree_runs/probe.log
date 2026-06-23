@@ -1,0 +1,6 @@
+corpus 3980 seqs; train 3582 held 398
+`torch_dtype` is deprecated! Use `dtype` instead!
+[init] R_rank=0.7981 frac0=0.8604 (n=4348)
+[12] loss=0.4986 R_rank=2.7649 frac0=0.5361 (6s)
+[final] R_rank=2.7649 frac0=0.5361 best=0.7981
+RESULT {"tag": "probe", "mode": "full_qat", "base": "int8", "loss": "topk_kl", "lr": 0.0001, "neartie": false, "init_rrank": 0.7980651075610109, "final_rrank": 2.764876015115214, "best_rrank": 0.7980651075610109}

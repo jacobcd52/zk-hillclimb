@@ -1,0 +1,19 @@
+4000 prompts
+`torch_dtype` is deprecated! Use `dtype` instead!
+generated 3980 seqs, 419900 comp tokens in 735s
+M_q: 168 fp8 linears
+  teacher-force 0/3980 (0s)
+  teacher-force 300/3980 (11s)
+  teacher-force 600/3980 (23s)
+  teacher-force 900/3980 (34s)
+  teacher-force 1200/3980 (45s)
+  teacher-force 1500/3980 (57s)
+  teacher-force 1800/3980 (68s)
+  teacher-force 2100/3980 (79s)
+  teacher-force 2400/3980 (91s)
+  teacher-force 2700/3980 (102s)
+  teacher-force 3000/3980 (114s)
+  teacher-force 3300/3980 (125s)
+  teacher-force 3600/3980 (137s)
+  teacher-force 3900/3980 (148s)
+DONE saved 3980 seqs / 419900 comp tokens -> /workspace/projects/zk-hillclimb/capacity/corpus/mq_corpus.npz
