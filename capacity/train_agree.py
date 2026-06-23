@@ -129,18 +129,16 @@ def loss_fn(z, sel, cm, tv, ti, argm, kind, neartie, topm=16):
     return tot/max(ntok,1), ntok
 
 @torch.no_grad()
-def eval_rrank(m, idx, ids, mask, tv, ti, head=None):
+def eval_rrank(m, idx, ids, mask, tv, ti, head=None, served_cache=None):
     m.eval(); ranks=[]; ranksk=[]
     for i in idx:
         bi,am,cm=collate([i],ids,mask)
         z=logits_of(m,head,bi,am)[0]  # [L,V]
         n=len(ids[i]); z=z[:n]
-        tvi=torch.from_numpy(tv[i]).cuda().float(); tii=torch.from_numpy(ti[i]).cuda().long()
-        # ONE shared full-vocab Gumbel added to BOTH M_q and M_int (correct coupling)
+        tii=torch.from_numpy(ti[i]).cuda().long()
         gen=torch.Generator(device='cuda'); gen.manual_seed(EVAL_SEED+int(i))
-        g=torch.empty_like(z); g.exponential_(generator=gen).log_().neg_()   # [L,V]
-        g_at=torch.gather(g,1,tii)                                           # gumbel at M_q's top-K
-        served=tii.gather(1,(tvi+g_at).argmax(1,keepdim=True)).squeeze(1)    # [L] M_q served token (top-K approx)
+        g=torch.empty_like(z); g.exponential_(generator=gen).log_().neg_()   # [L,V] shared Gumbel
+        served=torch.from_numpy(served_cache[i].astype(np.int64)).cuda()[:z.shape[0]]  # FULL-vocab served
         zr=z+g                                                              # M_int + same gumbel
         s=zr.gather(1,served[:,None])
         ids_row=torch.arange(z.shape[-1],device=z.device)[None,:]
@@ -177,6 +175,7 @@ def main():
             print("SMOKE OK"); return
     C=np.load(os.path.join(HERE,"corpus","mq_corpus.npz"),allow_pickle=True)
     ids=C["ids"]; mask=C["mask"]; tv=C["topk_val"]; ti=C["topk_idx"]; argm=C["argmax"]
+    SV=np.load(os.path.join(HERE,"corpus","served_full.npz"),allow_pickle=True)["served"]
     N=len(ids); rng=np.random.default_rng(0); perm=rng.permutation(N)
     held=perm[:max(a.neval,N//10)]; train=perm[len(held):] if False else perm[N//10:]
     held=perm[:N//10]; train=perm[N//10:]
@@ -193,7 +192,7 @@ def main():
             except Exception as e: print("grad-ckpt unavailable:",e,flush=True)
         tp = list(head.parameters()) if head is not None else trainable(m)
         opt=torch.optim.Adam(tp,lr=a.lr)
-        r0,f0,nt,rk0=eval_rrank(m, held[:a.neval], ids,mask,tv,ti,head); print(f"[init] R_rank={r0:.4f} R_topK={rk0:.4f} frac0={f0:.4f} (n={nt})",flush=True)
+        r0,f0,nt,rk0=eval_rrank(m, held[:a.neval], ids,mask,tv,ti,head,SV); print(f"[init] R_rank={r0:.4f} R_topK={rk0:.4f} frac0={f0:.4f} (n={nt})",flush=True)
         best=r0; hist=[{"step":0,"rrank":r0,"frac0":f0}]; step=0; t0=time.time()
         if a.mode!="frozen":
             for bstart in range(0,len(train),a.bs):
@@ -203,12 +202,12 @@ def main():
                 opt.zero_grad(); l.backward(); torch.nn.utils.clip_grad_norm_(tp,1.0); opt.step()
                 step+=1
                 if step%a.eval_every==0:
-                    r,f,_,rk=eval_rrank(m,held[:a.neval],ids,mask,tv,ti,head); m.train()
+                    r,f,_,rk=eval_rrank(m,held[:a.neval],ids,mask,tv,ti,head,SV); m.train()
                     hist.append({"step":step,"loss":float(l),"rrank":r,"frac0":f})
                     print(f"[{step}] loss={float(l):.4f} R_rank={r:.4f} R_topK={rk:.4f} frac0={f:.4f} ({time.time()-t0:.0f}s)",flush=True)
                     best=min(best,r)
                 if step>=a.max_steps: break
-        rF,fF,_,rkF=eval_rrank(m,held[:a.neval],ids,mask,tv,ti,head)
+        rF,fF,_,rkF=eval_rrank(m,held[:a.neval],ids,mask,tv,ti,head,SV)
         print(f"[final] R_rank={rF:.4f} frac0={fF:.4f} best={min(best,rF):.4f}",flush=True)
     out={"tag":a.tag,"mode":a.mode,"base":a.base,"dtype":a.dtype,"topm":a.topm,"loss":a.loss,"lr":a.lr,"neartie":a.neartie,"init_rrank":r0,"final_rrank":rF,"best_rrank":min(best,rF),"hist":hist}
     os.makedirs(os.path.join(HERE,"agree_runs"),exist_ok=True)

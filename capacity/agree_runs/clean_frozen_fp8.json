@@ -1,0 +1,20 @@
+{
+  "tag": "clean_frozen_fp8",
+  "mode": "frozen",
+  "base": "fp8",
+  "dtype": "fp32",
+  "topm": 16,
+  "loss": "topk_kl",
+  "lr": 0.0001,
+  "neartie": false,
+  "init_rrank": 0.3839470148932516,
+  "final_rrank": 0.3839470148932516,
+  "best_rrank": 0.3839470148932516,
+  "hist": [
+    {
+      "step": 0,
+      "rrank": 0.3839470148932516,
+      "frac0": 0.936876026791356
+    }
+  ]
+}

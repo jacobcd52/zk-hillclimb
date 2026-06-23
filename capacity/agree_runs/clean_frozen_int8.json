@@ -1,0 +1,20 @@
+{
+  "tag": "clean_frozen_int8",
+  "mode": "frozen",
+  "base": "int8",
+  "dtype": "bf16",
+  "topm": 16,
+  "loss": "topk_kl",
+  "lr": 0.0001,
+  "neartie": false,
+  "init_rrank": 0.5678467402527129,
+  "final_rrank": 0.5678467402527129,
+  "best_rrank": 0.5678467402527129,
+  "hist": [
+    {
+      "step": 0,
+      "rrank": 0.5678467402527129,
+      "frac0": 0.9012068747630482
+    }
+  ]
+}

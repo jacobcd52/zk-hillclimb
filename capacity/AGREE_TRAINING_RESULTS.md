@@ -83,3 +83,27 @@ Findings:
 **The bottleneck is the tail.** To convert the clean R_topK gain into a full-R_rank gain, the
 next lever is tail control: a logsumexp/tail-suppression term, or re-caching FULL M_q logits
 for a full-distribution match (top-m MSE only constrains m tokens).
+
+## CORRECTION: the harness R_rank was inflated by a served-token bug (found via verification)
+
+The eval approximated M_q's "served" token as its argmax over the cached **top-64** logits
+instead of the **full vocab**. For the ~5% of positions where M_q's true Gumbel-argmax is a
+lower-probability token, this breaks the shared-Gumbel coupling and inflates R_rank.
+
+Verification (`verify_rrank.py`, exact codebook, full logits):
+- R_rank, **clean** (full-vocab served) = **0.392**   (matches the original 0.355)
+- R_rank, harness (top-64 served)        = 0.648  (the inflated number)
+- competitors outside M_q top-64 = **0.011/token** -> the "tail" is negligible; R_rank is
+  near-tie-dominated *within* the top. (My earlier "tail is the bottleneck" was wrong.)
+
+Fixed the eval to use a cached full-vocab served token (`cache_served.py` ->
+`corpus/served_full.npz`). **Clean frozen baselines:** int8 **0.568**, fp8/codebook **0.384**
+(R_topK 0.519 / 0.349; R_rank now ~= R_topK, confirming no tail).
+
+**Clean training (MSE-top-m, fp32, full-vocab eval):**
+- int8, top-16, lr 3e-7: R_rank **0.580 -> 0.528** (R_topK 0.530 -> 0.470). Real, modest.
+- int8, lr 1e-6: no improvement (window even tighter on the clean metric).
+- fp8/codebook: (runs in progress) — testing whether 0.384 can go toward/below the 0.355 floor.
+
+Net so far: with the corrected metric, MSE-on-top-logit-values at tiny LR gives a real but
+modest R_rank reduction (int8 ~0.58->0.53); the codebook is already near the ~0.38 floor.
