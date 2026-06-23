@@ -1,0 +1,1 @@
+>>> mse5_fp8_qat_1e6 --mode full_qat --base fp8 --lr 1e-6 --max_steps 600 --eval_every 100

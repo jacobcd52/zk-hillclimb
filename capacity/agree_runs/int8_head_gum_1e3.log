@@ -1,14 +1,9 @@
 corpus 3980 seqs; train 3582 held 398
 `torch_dtype` is deprecated! Use `dtype` instead!
 [init] R_rank=0.7844 frac0=0.8582 (n=21056)
-Traceback (most recent call last):
-  File "/workspace/projects/zk-hillclimb/capacity/train_agree.py", line 208, in <module>
-    if __name__=="__main__": main()
-                             ^^^^^^
-  File "/workspace/projects/zk-hillclimb/capacity/train_agree.py", line 192, in main
-    l,ntok=loss_fn(z,sel,cm,tv,ti,argm,a.loss,a.neartie)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/projects/zk-hillclimb/capacity/train_agree.py", line 116, in loss_fn
-    g=torch.empty_like(tvi); gen=torch.Generator(device='cuda'); gen.manual_seed(1234+i)
-                                                                 ^^^^^^^^^^^^^^^^^^^^^^^
-TypeError: an integer is required
+[200] loss=1.8669 R_rank=1.0099 frac0=0.8139 (48s)
+[400] loss=1.8290 R_rank=1.0174 frac0=0.8152 (107s)
+[600] loss=2.2785 R_rank=1.0543 frac0=0.8078 (167s)
+[800] loss=1.6192 R_rank=1.0609 frac0=0.8078 (226s)
+[final] R_rank=1.0609 frac0=0.8078 best=0.7844
+RESULT {"tag": "int8_head_gum_1e3", "mode": "head", "base": "int8", "loss": "gumbel", "lr": 0.001, "neartie": false, "init_rrank": 0.7844465512859359, "final_rrank": 1.0608747985143787, "best_rrank": 0.7844465512859359}

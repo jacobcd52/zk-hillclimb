@@ -1,0 +1,26 @@
+>>> mse5_qat_1e6 --mode full_qat --base int8 --lr 1e-6 --max_steps 300 --eval_every 50
+[250] loss=0.1934 R_rank=0.7719 R_topK=0.5115 frac0=0.8604 (129s)
+[300] loss=0.2527 R_rank=0.7724 R_topK=0.5090 frac0=0.8606 (153s)
+RESULT {"tag": "mse5_qat_1e6", "mode": "full_qat", "base": "int8", "loss": "mse5", "lr": 1e-06, "neartie": false, "init_rrank": 0.7910424008579459, "final_rrank": 0.7723769555945754, "best_rrank": 0.7615715834497717}
+
+>>> mse5_qat_3e6 --mode full_qat --base int8 --lr 3e-6 --max_steps 300 --eval_every 50
+[250] loss=0.2231 R_rank=0.8144 R_topK=0.5477 frac0=0.8521 (119s)
+[300] loss=0.4981 R_rank=0.8257 R_topK=0.5562 frac0=0.8515 (143s)
+RESULT {"tag": "mse5_qat_3e6", "mode": "full_qat", "base": "int8", "loss": "mse5", "lr": 3e-06, "neartie": false, "init_rrank": 0.7910424008579459, "final_rrank": 0.8257230509244566, "best_rrank": 0.7910424008579459}
+
+>>> mse5_qat_1e5 --mode full_qat --base int8 --lr 1e-5 --max_steps 300 --eval_every 50
+[250] loss=0.4622 R_rank=1.1019 R_topK=0.7910 frac0=0.7979 (119s)
+[300] loss=1.1234 R_rank=1.1469 R_topK=0.8206 frac0=0.7873 (143s)
+RESULT {"tag": "mse5_qat_1e5", "mode": "full_qat", "base": "int8", "loss": "mse5", "lr": 1e-05, "neartie": false, "init_rrank": 0.7910424008579459, "final_rrank": 1.146872259310401, "best_rrank": 0.7910424008579459}
+
+>>> mse5_qat_3e5 --mode full_qat --base int8 --lr 3e-5 --max_steps 300 --eval_every 50
+[250] loss=1.4571 R_rank=2.2937 R_topK=1.5668 frac0=0.5916 (118s)
+[300] loss=2.8083 R_rank=2.7228 R_topK=1.7287 frac0=0.5183 (143s)
+RESULT {"tag": "mse5_qat_3e5", "mode": "full_qat", "base": "int8", "loss": "mse5", "lr": 3e-05, "neartie": false, "init_rrank": 0.7910424008579459, "final_rrank": 2.7228158099013067, "best_rrank": 0.7910424008579459}
+
+>>> mse5_head_1e3 --mode head --base int8 --lr 1e-3 --max_steps 600 --eval_every 150
+[init] R_rank=0.7910 R_topK=0.5533 frac0=0.8555 (n=15504)
+[300] loss=0.2630 R_rank=0.8473 R_topK=0.6168 frac0=0.8438 (75s)
+RESULT {"tag": "mse5_head_1e3", "mode": "head", "base": "int8", "loss": "mse5", "lr": 0.001, "neartie": false, "init_rrank": 0.7910424008579459, "final_rrank": 0.8642581445664906, "best_rrank": 0.7910424008579459}
+
+ALLDONE

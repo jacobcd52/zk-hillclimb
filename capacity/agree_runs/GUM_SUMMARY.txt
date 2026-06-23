@@ -1,0 +1,11 @@
+>>> int8_head_gum_1e3 --mode head --base int8 --loss gumbel --lr 1e-3 --max_steps 800 --eval_every 200
+RESULT {"tag": "int8_head_gum_1e3", "mode": "head", "base": "int8", "loss": "gumbel", "lr": 0.001, "neartie": false, "init_rrank": 0.7844465512859359, "final_rrank": 1.0608747985143787, "best_rrank": 0.7844465512859359}
+
+>>> fp8_head_gum_1e3 --mode head --base fp8 --loss gumbel --lr 1e-3 --max_steps 800 --eval_every 200
+RESULT {"tag": "fp8_head_gum_1e3", "mode": "head", "base": "fp8", "loss": "gumbel", "lr": 0.001, "neartie": false, "init_rrank": 0.6411791680969494, "final_rrank": 0.981253325445618, "best_rrank": 0.6411791680969494}
+
+>>> int8_qat_gum_3e6 --mode full_qat --base int8 --loss gumbel --lr 3e-6 --max_steps 400 --eval_every 100
+Traceback (most recent call last):
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 982.00 MiB. GPU 0 has a total capacity of 23.53 GiB of which 285.69 MiB is free. Including non-PyTorch memory, this process has 23.24 GiB memory in use. Of the allocated memory 21.72 GiB is allocated by PyTorch, and 1.06 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+ALLDONE
