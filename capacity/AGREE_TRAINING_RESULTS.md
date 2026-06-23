@@ -51,3 +51,35 @@ is a loss-vs-metric misalignment, not mere training instability.
   deployed model and, per the near-tie analysis, would only lower R_rank by sharpening the
   model's distribution (overconfidence) -> a capability/calibration cost.
 - Plot: `agree_training_plot.png`. Corpus: `corpus/mq_corpus.npz`. Harness: `train_agree.py`.
+
+## Update: MSE-on-top-logits loss (the loss that finally moves R_rank the right way)
+
+Earlier losses (top-K KL, hard-CE, gumbel-CE) all *raised* R_rank. Switching to **MSE on
+M_q's top-m logit VALUES, computed in fp32** (so small `z_int-z_q` diffs don't round to zero
+in bf16) at **very low LR** finally reduces it. Diagnostic added: `R_topK` = rank restricted
+to M_q's top-K candidate set (isolates the tail).
+
+| base | loss | lr | R_rank init→best | R_topK init→best | notes |
+|---|---|---|---|---|---|
+| int8 | mse top-5  | 1e-6 | 0.791 → 0.762 | 0.553 → 0.509 | best ~step50, noisy |
+| int8 | mse top-16 | 1e-6 | 0.795 → 0.784 | 0.555 → 0.511 | best ~step500 then OVERSHOOTS back to 0.80 |
+| int8 | mse top-* | ≥3e-6 | worsens | worsens | LR window razor-thin |
+| fp8/codebook | mse top-16 | 3e-7 | 0.644 → 0.638 | 0.372 → 0.355 | first time below the codebook floor |
+| fp8/codebook | mse top-16 | 1e-6 | 0.644 → 0.674 | — | too high |
+
+Findings:
+- **MSE-on-logit-values + fp32 + tiny LR genuinely lowers R_rank** (reverses the earlier
+  "training always hurts"). The earlier failures were the wrong loss (KL/CE optimize
+  distribution shape/argmax, not the logit values that set the ranking) + too-high LR.
+- But the gains are **small, fragile, and tail-limited**: R_topK (the top-K ordering MSE
+  directly targets) improves cleanly (~0.55→0.51, ~0.37→0.355), while full-vocab R_rank
+  improves only marginally because the unconstrained ~152k-token tail dominates it (each tail
+  token gets its own Gumbel; full-param training lets the tail drift up and overtake).
+- LR window is razor-thin (int8 ≤1e-6, fp8 ≤3e-7) and runs **overshoot** with more steps →
+  early-stopping required. top-16 ≈ top-5 on full R_rank (both tail-limited).
+- **No config beats the untrained codebook floor (~0.64 here)** by a meaningful margin; the
+  best is the codebook itself nudged to ~0.638.
+
+**The bottleneck is the tail.** To convert the clean R_topK gain into a full-R_rank gain, the
+next lever is tail control: a logsumexp/tail-suppression term, or re-caching FULL M_q logits
+for a full-distribution match (top-m MSE only constrains m tokens).

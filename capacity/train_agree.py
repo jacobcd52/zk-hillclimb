@@ -95,7 +95,7 @@ def logits_of(m, head, bi, am):
     out=m(input_ids=bi, attention_mask=am, output_hidden_states=True)
     return head(out.logits.float(), out.hidden_states[-1])
 
-def loss_fn(z, sel, cm, tv, ti, argm, kind, neartie):
+def loss_fn(z, sel, cm, tv, ti, argm, kind, neartie, topm=16):
     # z:[B,L,V]; gather cached targets per (b,pos)
     B,L,V=z.shape
     tot=0.0; ntok=0
@@ -120,8 +120,8 @@ def loss_fn(z, sel, cm, tv, ti, argm, kind, neartie):
             l=F.cross_entropy(zr, served, reduction='none')
         elif kind=="mse5":
             # MSE between M_int's logits and M_q's VALUES at M_q's top-5 tokens, in fp32
-            zk=torch.gather(zr.float(),1,tii[:,:5])           # [t,5] M_int logits (fp32)
-            l=((zk - tvi[:,:5].float())**2).mean(-1)          # per-position MSE over top-5
+            zk=torch.gather(zr.float(),1,tii[:,:topm])        # [t,topm] M_int logits (fp32)
+            l=((zk - tvi[:,:topm].float())**2).mean(-1)      # per-position MSE over top-m
         if neartie:
             w=(tvi[:,0]-tvi[:,1]); wt=torch.exp(-w).clamp(max=10.0)  # small margin -> high weight
             l=l*wt
@@ -163,7 +163,7 @@ def main():
     ap.add_argument("--lr",type=float,default=1e-4); ap.add_argument("--bs",type=int,default=8)
     ap.add_argument("--neartie",action="store_true"); ap.add_argument("--max_steps",type=int,default=100000)
     ap.add_argument("--eval_every",type=int,default=200); ap.add_argument("--neval",type=int,default=200)
-    ap.add_argument("--rank",type=int,default=64); ap.add_argument("--dtype",default="bf16"); ap.add_argument("--smoke",action="store_true"); ap.add_argument("--tag",default="run")
+    ap.add_argument("--rank",type=int,default=64); ap.add_argument("--topm",type=int,default=16); ap.add_argument("--dtype",default="bf16"); ap.add_argument("--smoke",action="store_true"); ap.add_argument("--tag",default="run")
     a=ap.parse_args()
     if a.smoke:
         with S.GpuLock():
@@ -199,7 +199,7 @@ def main():
             for bstart in range(0,len(train),a.bs):
                 sel=list(train[bstart:bstart+a.bs])
                 bi,am,cm=collate(sel,ids,mask); z=logits_of(m,head,bi,am)
-                l,ntok=loss_fn(z,sel,cm,tv,ti,argm,a.loss,a.neartie)
+                l,ntok=loss_fn(z,sel,cm,tv,ti,argm,a.loss,a.neartie,a.topm)
                 opt.zero_grad(); l.backward(); torch.nn.utils.clip_grad_norm_(tp,1.0); opt.step()
                 step+=1
                 if step%a.eval_every==0:
@@ -210,7 +210,7 @@ def main():
                 if step>=a.max_steps: break
         rF,fF,_,rkF=eval_rrank(m,held[:a.neval],ids,mask,tv,ti,head)
         print(f"[final] R_rank={rF:.4f} frac0={fF:.4f} best={min(best,rF):.4f}",flush=True)
-    out={"tag":a.tag,"mode":a.mode,"base":a.base,"dtype":a.dtype,"loss":a.loss,"lr":a.lr,"neartie":a.neartie,"init_rrank":r0,"final_rrank":rF,"best_rrank":min(best,rF),"hist":hist}
+    out={"tag":a.tag,"mode":a.mode,"base":a.base,"dtype":a.dtype,"topm":a.topm,"loss":a.loss,"lr":a.lr,"neartie":a.neartie,"init_rrank":r0,"final_rrank":rF,"best_rrank":min(best,rF),"hist":hist}
     os.makedirs(os.path.join(HERE,"agree_runs"),exist_ok=True)
     json.dump(out,open(os.path.join(HERE,"agree_runs",f"{a.tag}.json"),"w"),indent=2)
     print("RESULT "+json.dumps({k:out[k] for k in ['tag','mode','base','loss','lr','neartie','init_rrank','final_rrank','best_rrank']}),flush=True)
