@@ -2,3 +2,15 @@
 RESULT {"tag": "clean_int8_t16_3e7", "mode": "full_qat", "base": "int8", "loss": "mse5", "lr": 3e-07, "neartie": false, "init_rrank": 0.5801684522943724, "final_rrank": 0.527665331800535, "best_rrank": 0.527665331800535}
 
 >>> clean_int8_t16_1e6 --base int8 --topm 16 --lr 1e-6 --bs 2 --max_steps 1200 --eval_every 200
+RESULT {"tag": "clean_int8_t16_1e6", "mode": "full_qat", "base": "int8", "loss": "mse5", "lr": 1e-06, "neartie": false, "init_rrank": 0.5801684522943724, "final_rrank": 0.5532921909650008, "best_rrank": 0.5401776162165356}
+
+>>> clean_int8_t64_3e7 --base int8 --topm 64 --lr 3e-7 --bs 2 --max_steps 1200 --eval_every 200
+RESULT {"tag": "clean_int8_t64_3e7", "mode": "full_qat", "base": "int8", "loss": "mse5", "lr": 3e-07, "neartie": false, "init_rrank": 0.5801684522943724, "final_rrank": 0.5381387397020897, "best_rrank": 0.5247173707022772}
+
+>>> clean_fp8_t16_3e7 --base fp8 --topm 16 --lr 3e-7 --bs 4 --max_steps 1000 --eval_every 200
+RESULT {"tag": "clean_fp8_t16_3e7", "mode": "full_qat", "base": "fp8", "loss": "mse5", "lr": 3e-07, "neartie": false, "init_rrank": 0.3887801856793754, "final_rrank": 0.38667274044740685, "best_rrank": 0.37863871736301663}
+
+>>> clean_fp8_t64_3e7 --base fp8 --topm 64 --lr 3e-7 --bs 4 --max_steps 1000 --eval_every 200
+RESULT {"tag": "clean_fp8_t64_3e7", "mode": "full_qat", "base": "fp8", "loss": "mse5", "lr": 3e-07, "neartie": false, "init_rrank": 0.3887801856793754, "final_rrank": 0.3878005152864429, "best_rrank": 0.3768550849702894}
+
+ALLDONE
