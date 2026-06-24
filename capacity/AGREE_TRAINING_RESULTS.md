@@ -107,3 +107,22 @@ Fixed the eval to use a cached full-vocab served token (`cache_served.py` ->
 
 Net so far: with the corrected metric, MSE-on-top-logit-values at tiny LR gives a real but
 modest R_rank reduction (int8 ~0.58->0.53); the codebook is already near the ~0.38 floor.
+
+## Long run from codebook init (lr 1e-7, 12k steps, data cycled): hits the floor
+
+To test whether a very stable low-LR descent could break the codebook's floor, ran
+full_qat fp8/codebook base, MSE-top64, lr 1e-7, bs4, 12000 steps (data cycled ~7x).
+Result: R_rank **oscillates in 0.376-0.398** the whole run; init 0.389, best 0.376 (R_topK
+0.333, ~the original 0.355), final 0.390. **No real descent** — the codebook sits at its
+near-tie floor and training just wanders there.
+
+## Definitive conclusion (training to lower R_rank)
+- The operand-matched **codebook is the floor (~0.38, R_topK ~0.335 ~= original 0.355)** and
+  CANNOT be trained lower (any loss / LR / length just oscillates).
+- A coarser integer model (**int8, 0.58**) CAN be trained DOWN toward that floor (~0.525 via
+  MSE-on-top-logit-values, fp32, lr 3e-7), recovering int8's extra quantization error, but
+  not past the codebook.
+- => Training-for-agreement = "let a cheap integer model catch up to the codebook," NOT "beat
+  the codebook." The near-tie nondeterminism floor is irreducible by training.
+- (The earlier "training always worsens R_rank" and "tail is the bottleneck" were artifacts of
+  the top-64 served-token eval bug; fixed via full-vocab served caching.)

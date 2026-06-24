@@ -195,18 +195,21 @@ def main():
         r0,f0,nt,rk0=eval_rrank(m, held[:a.neval], ids,mask,tv,ti,head,SV); print(f"[init] R_rank={r0:.4f} R_topK={rk0:.4f} frac0={f0:.4f} (n={nt})",flush=True)
         best=r0; hist=[{"step":0,"rrank":r0,"frac0":f0}]; step=0; t0=time.time()
         if a.mode!="frozen":
-            for bstart in range(0,len(train),a.bs):
-                sel=list(train[bstart:bstart+a.bs])
-                bi,am,cm=collate(sel,ids,mask); z=logits_of(m,head,bi,am)
-                l,ntok=loss_fn(z,sel,cm,tv,ti,argm,a.loss,a.neartie,a.topm)
-                opt.zero_grad(); l.backward(); torch.nn.utils.clip_grad_norm_(tp,1.0); opt.step()
-                step+=1
-                if step%a.eval_every==0:
-                    r,f,_,rk=eval_rrank(m,held[:a.neval],ids,mask,tv,ti,head,SV); m.train()
-                    hist.append({"step":step,"loss":float(l),"rrank":r,"frac0":f})
-                    print(f"[{step}] loss={float(l):.4f} R_rank={r:.4f} R_topK={rk:.4f} frac0={f:.4f} ({time.time()-t0:.0f}s)",flush=True)
-                    best=min(best,r)
-                if step>=a.max_steps: break
+            erng=np.random.default_rng(1); done=False
+            while not done:
+                tr=train.copy(); erng.shuffle(tr)            # reshuffle each pass (data cycles)
+                for bstart in range(0,len(tr),a.bs):
+                    sel=list(tr[bstart:bstart+a.bs])
+                    bi,am,cm=collate(sel,ids,mask); z=logits_of(m,head,bi,am)
+                    l,ntok=loss_fn(z,sel,cm,tv,ti,argm,a.loss,a.neartie,a.topm)
+                    opt.zero_grad(); l.backward(); torch.nn.utils.clip_grad_norm_(tp,1.0); opt.step()
+                    step+=1
+                    if step%a.eval_every==0:
+                        r,f,_,rk=eval_rrank(m,held[:a.neval],ids,mask,tv,ti,head,SV); m.train()
+                        hist.append({"step":step,"loss":float(l),"rrank":r,"frac0":f})
+                        print(f"[{step}] loss={float(l):.4f} R_rank={r:.4f} R_topK={rk:.4f} frac0={f:.4f} ({time.time()-t0:.0f}s)",flush=True)
+                        best=min(best,r)
+                    if step>=a.max_steps: done=True; break
         rF,fF,_,rkF=eval_rrank(m,held[:a.neval],ids,mask,tv,ti,head,SV)
         print(f"[final] R_rank={rF:.4f} frac0={fF:.4f} best={min(best,rF):.4f}",flush=True)
     out={"tag":a.tag,"mode":a.mode,"base":a.base,"dtype":a.dtype,"topm":a.topm,"loss":a.loss,"lr":a.lr,"neartie":a.neartie,"init_rrank":r0,"final_rrank":rF,"best_rrank":min(best,rF),"hist":hist}
