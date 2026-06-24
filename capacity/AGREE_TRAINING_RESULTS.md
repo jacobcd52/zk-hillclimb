@@ -126,3 +126,25 @@ near-tie floor and training just wanders there.
   the codebook." The near-tie nondeterminism floor is irreducible by training.
 - (The earlier "training always worsens R_rank" and "tail is the bottleneck" were artifacts of
   the top-64 served-token eval bug; fixed via full-vocab served caching.)
+
+## Option A: fix M_int (codebook), train M_q (fp8) toward it -- also hits the floor
+
+Theory (rigorous): with M_int fixed, sharpening M_q does NOT help -- in the flip condition
+delta[t]-delta[t*]>m_t, a huge z_q[T] cancels on both sides, leaving flip <=> M_int's own
+Gumbel-argmax. The optimum is z_q=z_int (match), and the floor is M_q's intrinsic accumulation
+noise (the lossy model is still M_q) -- SAME floor as Option B by symmetry. "Willing to lose
+capability" buys nothing: sharpening only decouples M_q's served token from M_int's argmax and
+RAISES R_rank.
+
+Empirical (train_mq.py, QATFp8 M_q trained toward frozen CodebookLinear via MSE-top16, lr3e-7):
+init R_rank 0.371 -> oscillates 0.371-0.375, no descent. Confirmed.
+
+## FINAL CLOSURE of "train for agreement"
+Every route to lower R_rank below the operand-matched floor (~0.38 codebook / ~0.355 orig) fails:
+- Train M_int toward fixed M_q (Option B): int8 0.58->0.525 (catch-up), codebook stuck at floor.
+- Predict the accumulation noise with an aux net: sign unpredictable (53.8% w/ full info ~= chance).
+- Train M_q toward fixed M_int (Option A): oscillates at floor; sharpening provably hurts.
+Root cause (one sentence): R_rank's residual is M_q's fp32 accumulation-rounding flipping near-ties;
+the sign of that noise is the chaotic low-bits of an ordered float sum -- not representable by a
+clean integer model, not predictable from operands, and not removable by training EITHER model.
+Only deterministic/integer serving (delta=0 by construction) or exact replay gets below it.
