@@ -179,6 +179,15 @@ static inline Proof prove(const std::vector<gl_t>& X,const std::vector<gl_t>& W,
     pf.openQ = p3bf::prove_eval(q0,r,yQ,R,Q,cwQ,"pfc-Q");
     pf.qr = yQ;
     cudaDeviceSynchronize(); if(tm) tm->open_ms=now_ms()-t3;
+    // Fable red-team Finding F1: the GPU path ignores all CUDA return codes; at large shapes
+    // the device OOMs (mempool never releases) and kernels scribble garbage into roots, yet a
+    // structurally-complete but CORRUPT proof was still returned. Surface the error instead:
+    // an empty proof makes verify() reject cleanly (msg-count) rather than silently mislead.
+    { cudaError_t e=cudaGetLastError();
+      if(e!=cudaSuccess){
+        fprintf(stderr,"p3pfc::prove ABORTED: CUDA error during proving (%s) -- likely device OOM"
+                       " at this shape; returning empty proof.\n", cudaGetErrorString(e));
+        return Proof{}; } }
     return pf;
 }
 
