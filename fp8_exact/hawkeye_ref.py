@@ -205,6 +205,65 @@ def dump_product_witness(path, layers):
     return n, allc
 
 
+# ---------------- golden full-layer battery for the composed ZKP ----------------
+
+def layer_battery():
+    """(name, x_codes, xs, w_codes, ws) tuples covering the composed-proof edge
+    cases: shift0, shift>=width, negatives, absent/masked lanes, NaN codes,
+    K%32!=0, multi-group acc chains, zero/negative scales, all-zero rows."""
+    rng = np.random.default_rng(20260702)
+    out = []
+    def rnd(B, K, N, name, xs=None, ws=None):
+        x = rng.integers(0, 256, (B, K)).astype(np.uint8)
+        w = rng.integers(0, 256, (N, K)).astype(np.uint8)
+        if xs is None: xs = np.exp(rng.normal(0, 2, B)).astype(np.float32)
+        if ws is None: ws = np.exp(rng.normal(0, 2, N)).astype(np.float32)
+        out.append((name, x, xs, w, ws))
+    rnd(4, 64, 8,  "rand 4x64x8 (2 groups)")
+    rnd(2, 40, 4,  "rand 2x40x4 (K%32=8 masked tail)")
+    rnd(3, 96, 4,  "rand 3x96x4 (3-group chain)")
+    rnd(1, 1, 1,   "minimal 1x1x1")
+    rnd(1, 31, 2,  "single partial group K=31")
+    rnd(2, 33, 3,  "K%32=1")
+    rnd(2, 256, 4, "8-group acc chain")
+    # zero and negative scales (bf16 sign-of-zero paths)
+    xs = np.array([0.0, 2.5], np.float32); ws = np.array([-3.5, 1.0, 0.0], np.float32)
+    rnd(2, 64, 3, "zero & negative scales", xs=xs, ws=ws)
+    # directed: huge-exponent first product forces shift>=15 -> al=0 lanes
+    x = np.full((2, 32), 0x08, np.uint8); x[0, 0] = 0x78
+    w = np.full((3, 32), 0x08, np.uint8); w[0, 0] = 0x78
+    out.append(("directed big-shift", x, np.ones(2, np.float32), w, np.ones(3, np.float32)))
+    # directed: equal exponents (shift 0), negatives, zeros interleaved
+    x = np.tile(np.array([0x3F, 0xBF, 0x00, 0x40], np.uint8), (2, 8))
+    w = np.tile(np.array([0xBF, 0x3F, 0x40, 0x00], np.uint8), (3, 8))
+    out.append(("directed shift0/neg/zero", x, np.ones(2, np.float32), w, np.ones(3, np.float32)))
+    # NaN codes decoded as values + an all-zero X row (Y row = +-0)
+    x = rng.integers(0, 256, (3, 40)).astype(np.uint8)
+    x[0, ::3] = 0x7F; x[1, ::5] = 0xFF; x[2, :] = 0
+    w = rng.integers(0, 256, (4, 40)).astype(np.uint8); w[0, ::4] = 0x7F
+    out.append(("nan codes + zero row", x,
+                np.array([1.0, -2.0, 3.0], np.float32), w,
+                np.exp(rng.normal(0, 2, 4)).astype(np.float32)))
+    return out
+
+
+def dump_layers(path):
+    layers = layer_battery()
+    with open(path, 'wb') as f:
+        np.array([0x484B4C59, len(layers)], I64).tofile(f)   # 'HKLY', count
+        for (name, x, xs, w, ws) in layers:
+            B, K = x.shape; N = w.shape[0]
+            ref = hawkeye_ref(x, xs, w, ws)
+            tri = run_triton(x, xs, w, ws)
+            assert (ref == tri).all(), f"layer '{name}': ref != triton"
+            np.array([B, K, N], I64).tofile(f)
+            x.tofile(f); w.tofile(f)
+            xs.view(np.uint32).tofile(f); ws.view(np.uint32).tofile(f)
+            ref.tofile(f)
+            print(f"  dumped '{name}' B={B} K={K} N={N} (triton-checked)")
+    print(f"wrote {len(layers)} golden layers to {path}")
+
+
 # ---------------- Triton bitwise comparison battery ----------------
 
 def run_triton(x_codes, x_scale, w_codes, w_scale, **kw):
@@ -300,3 +359,6 @@ if __name__ == '__main__':
         mx = {k: int(v.max()) for k, v in cols.items()}
         print(f"wrote {n} product-witness rows to {path}; col maxima: {mx}")
         assert nfail == 0, "REFUSING to bless vectors: Triton mismatch above"
+    if '--dumplayers' in sys.argv:
+        assert nfail == 0, "REFUSING to bless layers: Triton mismatch above"
+        dump_layers(sys.argv[sys.argv.index('--dumplayers') + 1])
