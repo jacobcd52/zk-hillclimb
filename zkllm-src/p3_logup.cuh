@@ -25,14 +25,26 @@
 #pragma once
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include "p3_goldilocks.cuh"
 #include "p3_basefold.cuh"
+#include "p3_batchopen.cuh"
+#include "p3_scgpu.cuh"
 #include "fs_transcript.hpp"
 
 namespace p3lu {
+
+// device functor of the batched cubic sumcheck term:
+// cols = [H, V, E, D], par = [lam, beta]:  lam*H + E*(H*(V+beta) - D)
+struct FLuGpu {
+    static __device__ gl_t eval(const gl_t* c, const gl_t* p) {
+        return gl_add(gl_mul(p[0], c[0]),
+                      gl_mul(c[2], gl_sub(gl_mul(c[0], gl_add(c[1], p[1])), c[3])));
+    }
+};
 
 // ---- committed column: values + Basefold root + codeword (kept for opening) ----
 struct Col {
@@ -43,6 +55,12 @@ struct Col {
 static inline Col commit_col(std::vector<gl_t> vals, uint32_t R, bool gpu = true) {
     Col c; c.v = std::move(vals);
     c.root = gpu ? p3bf::commit_gpu(c.v, R, c.cw) : p3bf::commit(c.v, R, c.cw);
+    return c;
+}
+// commit without materializing the host codeword (deferred/batched openings)
+static inline Col commit_col_nc(std::vector<gl_t> vals, uint32_t R) {
+    Col c; c.v = std::move(vals);
+    c.root = p3bf::commit_gpu_rootonly(c.v, R);
     return c;
 }
 
@@ -68,8 +86,13 @@ struct LookupProof {
     gl_t S = 0;                            // claimed common rational sum
     std::vector<Msg4> msgsA, msgsT;
     p3bf::EvalProof open_hA;               // at rA
-    std::vector<p3bf::EvalProof> open_W;   // each witness column at rA
+    std::vector<p3bf::EvalProof> open_W;   // each COMMITTED witness column at rA
+    std::vector<gl_t> y_virt;              // claimed evals of VIRTUAL columns at rA
     p3bf::EvalProof open_hT, open_cnt;     // at rT
+    // deferred-opening mode (prove_v with a p3bo ledger): claimed evals replace
+    // the per-instance EvalProofs; the caller's batched opening backs them.
+    std::vector<gl_t> yW;                  // committed witness cols at rA
+    gl_t y_hA_c = 0, y_hT_c = 0, y_cnt_c = 0;
 };
 
 static inline gl_t chal(fs::Transcript& tr) {
@@ -99,6 +122,23 @@ static inline void bind_lsb(std::vector<gl_t>& f, gl_t a) {
     f = nf;
 }
 static inline uint32_t ilog2(size_t n) { uint32_t l = 0; while ((1ull << l) < n) l++; return l; }
+
+// out[i] = 1/(A[i]+beta) for all i -- Montgomery batch inversion: one gl_inv
+// plus 3 muls/element instead of N Fermat inversions (~64 sqmuls each).
+static inline std::vector<gl_t> inv_all_add(const std::vector<gl_t>& A, gl_t beta) {
+    size_t N = A.size();
+    std::vector<gl_t> d(N), pre(N);
+    gl_t acc = 1ULL;
+    for (size_t i = 0; i < N; i++) {
+        gl_t di = gl_add(A[i], beta);
+        if (di == 0) throw std::runtime_error("p3lu: zero denom (resample beta)");
+        d[i] = di; pre[i] = acc; acc = gl_mul(acc, di);
+    }
+    gl_t inv = gl_inv(acc);
+    std::vector<gl_t> out(N);
+    for (size_t i = N; i-- > 0;) { out[i] = gl_mul(pre[i], inv); inv = gl_mul(inv, d[i]); }
+    return out;
+}
 
 // gamma-combine c columns row-wise: out[i] = sum_k g^k cols[k][i]
 static inline std::vector<gl_t> combine(const std::vector<const std::vector<gl_t>*>& cols, gl_t g) {
@@ -333,6 +373,265 @@ static inline bool verify(fs::Transcript& tr, const std::vector<p3fri::Hash>& W_
     tr.absorb("lu-ends", &pf.open_cnt.y, sizeof(gl_t));
     if (y_W_out) { y_W_out->clear(); for (auto& op : pf.open_W) y_W_out->push_back(op.y); }
     if (rA_out) *rA_out = rA;
+    if (why) *why = "ok";
+    return true;
+}
+
+// ---------------- virtual-column variant ----------------
+// Some witness columns of a lookup can be VIRTUAL: not committed as their own
+// Basefold column because they are broadcasts/bit-permutations of an already
+// committed base polynomial (e.g. the per-product fp8 code a(p) = X(b,k) is
+// constant in n, so a~(rA) = X~(rearranged rA)).  The prover supplies their
+// value arrays; the proof carries their claimed MLE evaluations y_virt at the
+// lookup point rA; the CALLER is responsible for binding each y_virt to the
+// base commitment (a Basefold opening of the base at the rearranged point).
+// verify_v returns rA and y_virt for exactly that purpose -- a caller that
+// ignores them gets NO soundness for the virtual columns.
+struct LuColSpec { const Col* com; const std::vector<gl_t>* virt; };
+static inline LuColSpec LC(const Col* c) { return {c, nullptr}; }
+static inline LuColSpec LV(const std::vector<gl_t>* v) { return {nullptr, v}; }
+
+static inline LookupProof prove_v(fs::Transcript& tr, const std::vector<LuColSpec>& W,
+                                  const std::vector<uint32_t>& idx, const Table& T,
+                                  uint32_t R, uint32_t Q, const std::string& label,
+                                  bool gpu = true, bool strict = true,
+                                  std::vector<gl_t>* rA_out = nullptr,
+                                  p3bo::PLedger* lg = nullptr, std::deque<Col>* keep = nullptr) {
+    LookupProof pf;
+    const std::vector<gl_t>* wv0 = W[0].com ? &W[0].com->v : W[0].virt;
+    size_t N = wv0->size(), M = T.cols[0].size();
+    pf.n = ilog2(N); pf.m = ilog2(M); pf.c = (uint32_t)W.size();
+    if ((1ull << pf.n) != N || (1ull << pf.m) != M) throw std::runtime_error("p3lu: pow2");
+    if (T.cols.size() != W.size()) throw std::runtime_error("p3lu: col count");
+
+    tr.absorb("lu-tab", T.id.data(), 32);
+    for (auto& w : W) {
+        if (w.com) tr.absorb("lu-W", w.com->root.data(), 32);
+        else       tr.absorb("lu-Wv", "virt", 4);   // binding lives with the caller
+    }
+
+    std::vector<gl_t> cnt(M, 0);
+    for (size_t i = 0; i < N; i++) {
+        if (idx[i] >= M) throw std::runtime_error("p3lu: idx range");
+        cnt[idx[i]] = gl_add(cnt[idx[i]], 1ULL);
+    }
+    Col Ccnt = lg ? commit_col_nc(cnt, R) : commit_col(cnt, R, gpu);
+    pf.root_cnt = Ccnt.root; tr.absorb("lu-cnt", pf.root_cnt.data(), 32);
+
+    gl_t gamma = chal(tr), beta = chal(tr);
+
+    std::vector<const std::vector<gl_t>*> wp, tp;
+    for (auto& w : W) wp.push_back(w.com ? &w.com->v : w.virt);
+    for (auto& t : T.cols) tp.push_back(&t);
+    std::vector<gl_t> A = combine(wp, gamma), Tc = combine(tp, gamma);
+
+    std::vector<gl_t> hA = inv_all_add(A, beta), hT = inv_all_add(Tc, beta);
+    for (size_t j = 0; j < M; j++) hT[j] = gl_mul(cnt[j], hT[j]);
+    Col ChA = lg ? commit_col_nc(hA, R) : commit_col(hA, R, gpu);
+    Col ChT = lg ? commit_col_nc(hT, R) : commit_col(hT, R, gpu);
+    pf.root_hA = ChA.root; pf.root_hT = ChT.root;
+    tr.absorb("lu-hA", pf.root_hA.data(), 32); tr.absorb("lu-hT", pf.root_hT.data(), 32);
+
+    gl_t SA = 0, ST = 0;
+    for (auto x : hA) SA = gl_add(SA, x);
+    for (auto x : hT) ST = gl_add(ST, x);
+    if (strict && SA != ST) throw std::runtime_error("p3lu: witness not in table: " + label);
+    pf.S = SA; tr.absorb("lu-S", &pf.S, sizeof pf.S);
+
+    bool big = gpu && pf.n >= 16;
+    std::vector<gl_t> zA = chal_vec(tr, pf.n); gl_t lamA = chal(tr);
+    std::vector<gl_t> rA;
+    if (big) {   // device-resident cubic sumcheck (identical messages)
+        gl_t *dH, *dV, *dE, *dD, *dz;
+        cudaMallocAsync(&dH, (size_t)N * 8, 0);
+        cudaMemcpy(dH, hA.data(), (size_t)N * 8, cudaMemcpyHostToDevice);
+        cudaMallocAsync(&dV, (size_t)N * 8, 0);
+        cudaMemcpy(dV, A.data(), (size_t)N * 8, cudaMemcpyHostToDevice);
+        cudaMallocAsync(&dz, (size_t)pf.n * 8, 0);
+        cudaMemcpy(dz, zA.data(), (size_t)pf.n * 8, cudaMemcpyHostToDevice);
+        cudaMallocAsync(&dE, (size_t)N * 8, 0);
+        p3bf::p3bf_eq_kernel<<<((uint32_t)N + 255) / 256, 256>>>(dz, dE, pf.n, (uint32_t)N);
+        cudaFreeAsync(dz, 0);
+        cudaMallocAsync(&dD, (size_t)N * 8, 0);
+        p3sg::p3sg_fill_kernel<<<((uint32_t)N + 255) / 256, 256>>>(dD, 1ULL, (uint32_t)N);
+        std::vector<gl_t*> dc = {dH, dV, dE, dD};
+        gl_t par2[2] = {lamA, beta};
+        rA = p3sg::sc_prove_gpu<FLuGpu, Msg4, 4, 4>(tr, "lu-scA", dc, (uint32_t)N,
+                                                    par2, 2, pf.msgsA);
+        for (auto p : dc) cudaFreeAsync(p, 0);
+    } else {
+        rA = sc_prove(hA, A, p3bf::build_eq(zA), std::vector<gl_t>(N, 1ULL),
+                      lamA, beta, tr, "lu-scA", pf.msgsA);
+    }
+    std::vector<gl_t> eqrA;
+    if (!big) eqrA = p3bf::build_eq(rA);
+    auto evA = [&](const std::vector<gl_t>& col) {
+        return big ? p3bf::eval_h_gpu(col, rA) : p3bf::eval_h(col, eqrA);
+    };
+    gl_t y_hA = evA(ChA.v);
+    if (lg) {
+        pf.y_hA_c = y_hA;
+        keep->push_back(std::move(ChA));
+        lg->add(&keep->back().v, pf.root_hA, rA, y_hA);
+    } else {
+        pf.open_hA = p3bf::prove_eval(ChA.v, rA, y_hA, R, Q, ChA.cw, label + "-hA");
+    }
+    for (uint32_t k = 0; k < pf.c; k++) {
+        gl_t y = evA(*wp[k]);
+        if (W[k].com) {
+            if (lg) {
+                pf.yW.push_back(y);
+                tr.absorb("lu-yW", &y, sizeof(gl_t));
+                lg->add(&W[k].com->v, W[k].com->root, rA, y);
+            } else {
+                pf.open_W.push_back(p3bf::prove_eval(W[k].com->v, rA, y, R, Q, W[k].com->cw,
+                                                     label + "-W" + std::to_string(k)));
+            }
+        } else {
+            pf.y_virt.push_back(y);
+            tr.absorb("lu-yv", &y, sizeof(gl_t));
+        }
+    }
+
+    std::vector<gl_t> zT = chal_vec(tr, pf.m); gl_t lamT = chal(tr);
+    std::vector<gl_t> rT = sc_prove(hT, Tc, p3bf::build_eq(zT), cnt,
+                                    lamT, beta, tr, "lu-scT", pf.msgsT);
+    std::vector<gl_t> eqrT = p3bf::build_eq(rT);
+    gl_t y_hT = p3bf::eval_h(ChT.v, eqrT);
+    gl_t y_cnt = p3bf::eval_h(Ccnt.v, eqrT);
+    if (lg) {
+        pf.y_hT_c = y_hT; pf.y_cnt_c = y_cnt;
+        keep->push_back(std::move(ChT));
+        lg->add(&keep->back().v, pf.root_hT, rT, y_hT);
+        keep->push_back(std::move(Ccnt));
+        lg->add(&keep->back().v, pf.root_cnt, rT, y_cnt);
+    } else {
+        pf.open_hT = p3bf::prove_eval(ChT.v, rT, y_hT, R, Q, ChT.cw, label + "-hT");
+        pf.open_cnt = p3bf::prove_eval(Ccnt.v, rT, y_cnt, R, Q, Ccnt.cw, label + "-cnt");
+    }
+
+    tr.absorb("lu-ends", &y_hA, sizeof(gl_t));
+    tr.absorb("lu-ends", &y_hT, sizeof(gl_t));
+    tr.absorb("lu-ends", &y_cnt, sizeof(gl_t));
+    if (rA_out) *rA_out = rA;
+    return pf;
+}
+
+// W_roots: entry k is the commitment of column k, or nullptr if column k is
+// virtual.  On success *rA_out / *y_virt_out give the point and the claimed
+// virtual-column evaluations THE CALLER MUST BIND to the base commitments.
+static inline bool verify_v(fs::Transcript& tr, const std::vector<const p3fri::Hash*>& W_roots,
+                            const Table& T, const LookupProof& pf,
+                            uint32_t Q_pub, uint32_t R_pub, const std::string& label,
+                            const char** why,
+                            std::vector<gl_t>* rA_out, std::vector<gl_t>* y_virt_out,
+                            std::vector<gl_t>* y_W_out = nullptr,
+                            p3bo::VLedger* vlg = nullptr) {
+    auto fail = [&](const char* m) { if (why) *why = m; return false; };
+    size_t M = T.cols[0].size();
+    size_t n_virt = 0; for (auto* r : W_roots) if (!r) n_virt++;
+    if (pf.c != W_roots.size() || pf.c != T.cols.size()) return fail("col count");
+    if ((1ull << pf.m) != M) return fail("table size");
+    if (vlg) { if (!pf.open_W.empty() || pf.yW.size() != pf.c - n_virt) return fail("yW count"); }
+    else if (pf.open_W.size() != pf.c - n_virt) return fail("open_W count");
+    if (pf.y_virt.size() != n_virt) return fail("y_virt count");
+    const uint32_t Q_MIN = 20;
+    if (Q_pub < Q_MIN || R_pub < 1) return fail("insecure params");
+    auto chkpar = [&](const p3bf::EvalProof& e, uint32_t logN_exp) {
+        return e.Q == Q_pub && e.R == R_pub && e.logN == logN_exp;
+    };
+
+    tr.absorb("lu-tab", T.id.data(), 32);
+    for (auto* r : W_roots) {
+        if (r) tr.absorb("lu-W", r->data(), 32);
+        else   tr.absorb("lu-Wv", "virt", 4);
+    }
+    tr.absorb("lu-cnt", pf.root_cnt.data(), 32);
+    gl_t gamma = chal(tr), beta = chal(tr);
+    tr.absorb("lu-hA", pf.root_hA.data(), 32); tr.absorb("lu-hT", pf.root_hT.data(), 32);
+    tr.absorb("lu-S", &pf.S, sizeof pf.S);
+
+    std::vector<gl_t> zA = chal_vec(tr, pf.n); gl_t lamA = chal(tr);
+    std::vector<gl_t> rA; gl_t claimA;
+    if (!sc_verify(pf.msgsA, pf.n, gl_mul(lamA, pf.S), tr, "lu-scA", rA, claimA))
+        return fail("sumcheck claim A");
+    gl_t y_hA;
+    if (vlg) {
+        y_hA = pf.y_hA_c;
+        vlg->add(pf.root_hA, rA, y_hA);
+    } else {
+        if (pf.open_hA.roots.empty() || !(pf.open_hA.roots[0] == pf.root_hA) || pf.open_hA.z != rA)
+            return fail("hA opening bind");
+        if (!chkpar(pf.open_hA, pf.n)) return fail("hA opening params");
+        if (!p3bf::verify_eval(pf.open_hA, label + "-hA", why)) return false;
+        y_hA = pf.open_hA.y;
+    }
+    gl_t A_r = 0, gk = 1ULL;
+    size_t iw = 0, iv = 0;
+    if (y_W_out) y_W_out->clear();
+    for (uint32_t k = 0; k < pf.c; k++) {
+        gl_t yk;
+        if (W_roots[k]) {
+            if (vlg) {
+                yk = pf.yW[iw++];
+                tr.absorb("lu-yW", &yk, sizeof(gl_t));
+                vlg->add(*W_roots[k], rA, yk);
+            } else {
+                const auto& op = pf.open_W[iw++];
+                if (op.roots.empty() || !(op.roots[0] == *W_roots[k]) || op.z != rA)
+                    return fail("W opening bind");
+                if (!chkpar(op, pf.n)) return fail("W opening params");
+                if (!p3bf::verify_eval(op, label + "-W" + std::to_string(k), why)) return false;
+                yk = op.y;
+            }
+        } else {
+            yk = pf.y_virt[iv++];
+            tr.absorb("lu-yv", &yk, sizeof(gl_t));
+        }
+        if (y_W_out) y_W_out->push_back(yk);
+        A_r = gl_add(A_r, gl_mul(gk, yk)); gk = gl_mul(gk, gamma);
+    }
+    gl_t eqA = p3bf::eq_point(rA, zA);
+    gl_t endA = gl_add(gl_mul(lamA, y_hA),
+                       gl_mul(eqA, gl_sub(gl_mul(y_hA, gl_add(A_r, beta)), 1ULL)));
+    if (claimA != endA) return fail("A terminal");
+
+    std::vector<gl_t> zT = chal_vec(tr, pf.m); gl_t lamT = chal(tr);
+    std::vector<gl_t> rT; gl_t claimT;
+    if (!sc_verify(pf.msgsT, pf.m, gl_mul(lamT, pf.S), tr, "lu-scT", rT, claimT))
+        return fail("sumcheck claim T");
+    gl_t y_hT, y_cnt;
+    if (vlg) {
+        y_hT = pf.y_hT_c; y_cnt = pf.y_cnt_c;
+        vlg->add(pf.root_hT, rT, y_hT);
+        vlg->add(pf.root_cnt, rT, y_cnt);
+    } else {
+        if (pf.open_hT.roots.empty() || !(pf.open_hT.roots[0] == pf.root_hT) || pf.open_hT.z != rT)
+            return fail("hT opening bind");
+        if (pf.open_cnt.roots.empty() || !(pf.open_cnt.roots[0] == pf.root_cnt) || pf.open_cnt.z != rT)
+            return fail("cnt opening bind");
+        if (!chkpar(pf.open_hT, pf.m) || !chkpar(pf.open_cnt, pf.m)) return fail("T opening params");
+        if (!p3bf::verify_eval(pf.open_hT, label + "-hT", why)) return false;
+        if (!p3bf::verify_eval(pf.open_cnt, label + "-cnt", why)) return false;
+        y_hT = pf.open_hT.y; y_cnt = pf.open_cnt.y;
+    }
+    std::vector<gl_t> eqT = p3bf::build_eq(rT);
+    gl_t Tc_r = 0; gk = 1ULL;
+    for (auto& col : T.cols) {
+        gl_t v = 0;
+        for (size_t j = 0; j < M; j++) v = gl_add(v, gl_mul(col[j], eqT[j]));
+        Tc_r = gl_add(Tc_r, gl_mul(gk, v)); gk = gl_mul(gk, gamma);
+    }
+    gl_t eqTr = p3bf::eq_point(rT, zT);
+    gl_t endT = gl_add(gl_mul(lamT, y_hT),
+                       gl_mul(eqTr, gl_sub(gl_mul(y_hT, gl_add(Tc_r, beta)), y_cnt)));
+    if (claimT != endT) return fail("T terminal");
+
+    tr.absorb("lu-ends", &y_hA, sizeof(gl_t));
+    tr.absorb("lu-ends", &y_hT, sizeof(gl_t));
+    tr.absorb("lu-ends", &y_cnt, sizeof(gl_t));
+    if (rA_out) *rA_out = rA;
+    if (y_virt_out) *y_virt_out = pf.y_virt;
     if (why) *why = "ok";
     return true;
 }

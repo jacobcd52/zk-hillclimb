@@ -48,8 +48,10 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <deque>
 #include "p3_goldilocks.cuh"
 #include "p3_basefold.cuh"
+#include "p3_batchopen.cuh"
 #include "p3_logup.cuh"
 #include "fs_transcript.hpp"
 
@@ -603,29 +605,28 @@ static inline bool sc5_verify(const std::vector<Msg5>& msgs, uint32_t v, gl_t cl
 static inline std::vector<gl_t> beq(const std::vector<gl_t>& z) {
     return (z.size() >= 16 && p3fri::g_gpu_merkle) ? p3bf::build_eq_gpu(z) : p3bf::build_eq(z);
 }
-// prover-side single-column opening; absorbs y (verifier mirrors in checko)
-static inline p3bf::EvalProof openc(fs::Transcript& tr, const Col& c, const std::vector<gl_t>& z,
-                                    uint32_t R, uint32_t Q, const std::string& label) {
-    gl_t y = p3bf::eval_h(c.v, p3bf::build_eq(z));
-    auto pf = p3bf::prove_eval(c.v, z, y, R, Q, c.cw, label);
+// prover-side opening CLAIM: absorb the evaluation and defer the proof to the
+// end-of-protocol batched opening of the column's size class (p3_batchopen).
+static inline gl_t claimc(fs::Transcript& tr, p3bo::PLedger& lg, const Col& c,
+                          const std::vector<gl_t>& z) {
+    gl_t y = (z.size() >= 16 && p3fri::g_gpu_merkle)
+           ? p3bf::eval_h_gpu(c.v, z) : p3bf::eval_h(c.v, p3bf::build_eq(z));
     tr.absorb("hwl-y", &y, sizeof y);
-    return pf;
+    lg.add(&c.v, c.root, z, y);
+    return y;
 }
-static inline bool checko(fs::Transcript& tr, const p3bf::EvalProof& e, const p3fri::Hash& root,
-                          const std::vector<gl_t>& z, uint32_t Q_pub, uint32_t R_pub,
-                          const std::string& label, gl_t& y_out, const char** why) {
-    auto fail = [&](const char* m) { if (why) *why = m; return false; };
-    if (e.roots.empty() || !(e.roots[0] == root) || e.z != z) return fail("opening bind");
-    if (e.Q != Q_pub || e.R != R_pub || e.logN != (uint32_t)z.size()) return fail("opening params");
-    if (!p3bf::verify_eval(e, label, why)) return false;
-    y_out = e.y;
-    tr.absorb("hwl-y", &y_out, sizeof y_out);
-    return true;
+// verifier-side mirror: absorb the claimed evaluation and register the
+// obligation; the per-class batch proofs at the end back every claim.
+static inline gl_t claimv(fs::Transcript& tr, p3bo::VLedger& lg, const p3fri::Hash& root,
+                          const std::vector<gl_t>& z, gl_t y) {
+    tr.absorb("hwl-y", &y, sizeof y);
+    lg.add(root, z, y);
+    return y;
 }
 
 // ---------------- constraint functions (shared prover terminal / verifier) ----------------
 // Dp zero-check: v = [E, dp cols 0..NDP-1, bgmaxP]; lam[6]
-static inline gl_t F_dp(const gl_t* v, const gl_t* lam) {
+static inline __host__ __device__ gl_t F_dp(const gl_t* v, const gl_t* lam) {
     const gl_t* c = v + 1; gl_t gmax = v[1 + NDP];
     gl_t C1 = gl_sub(gl_add(gl_mul(c[P_Q], c[P_PW]), c[P_R]), c[P_MAG]);
     gl_t C2 = gl_sub(c[P_AL], gl_mul(gl_mul(c[P_PR], c[P_Q]),
@@ -641,7 +642,7 @@ static inline gl_t F_dp(const gl_t* v, const gl_t* lam) {
     return gl_mul(v[0], s);
 }
 // Dg zero-check: v = [E, dg cols 0..NDG-1]; lam[18]
-static inline gl_t F_dg(const gl_t* v, const gl_t* lam) {
+static inline __host__ __device__ gl_t F_dg(const gl_t* v, const gl_t* lam) {
     const gl_t* c = v + 1;
     gl_t one = 1ULL;
     gl_t r[18];
@@ -670,7 +671,7 @@ static inline gl_t F_dg(const gl_t* v, const gl_t* lam) {
     return gl_mul(v[0], s);
 }
 // chain: v = [U, V, U0, asig, bexp, asgn, tz, s14, gmax, wd, tsgn]; lam[6]
-static inline gl_t F_ch(const gl_t* v, const gl_t* lam) {
+static inline __host__ __device__ gl_t F_ch(const gl_t* v, const gl_t* lam) {
     gl_t one = 1ULL, ntz = gl_sub(one, v[6]);
     gl_t inA  = gl_add(gl_add(gl_mul(lam[0], v[3]), gl_mul(lam[1], v[4])), gl_mul(lam[2], v[5]));
     gl_t outS = gl_mul(gl_mul(ntz, v[7]), 1024ULL);
@@ -680,15 +681,15 @@ static inline gl_t F_ch(const gl_t* v, const gl_t* lam) {
     return gl_add(gl_sub(gl_mul(v[0], inA), gl_mul(v[1], outv)), gl_mul(v[2], bnd));
 }
 // group-sum + attainment: v = [EQg, al, sel]; lam[2]
-static inline gl_t F_gs(const gl_t* v, const gl_t* lam) {
+static inline __host__ __device__ gl_t F_gs(const gl_t* v, const gl_t* lam) {
     return gl_mul(v[0], gl_add(gl_mul(lam[0], v[1]), gl_mul(lam[1], v[2])));
 }
 // Y binding: v = [EQy, R, yb]
-static inline gl_t F_y(const gl_t* v, const gl_t*) {
+static inline __host__ __device__ gl_t F_y(const gl_t* v, const gl_t*) {
     return gl_mul(gl_mul(v[0], v[1]), v[2]);
 }
 // Db/Dn zero-check: v = [E, sbits, ss, se, sei, zs, smh, sml]; lam[6]
-static inline gl_t F_ds(const gl_t* v, const gl_t* lam) {
+static inline __host__ __device__ gl_t F_ds(const gl_t* v, const gl_t* lam) {
     gl_t one = 1ULL;
     gl_t sm = gl_add(gl_mul(v[6], 4096ULL), v[7]);
     gl_t r0 = gl_sub(v[1], gl_add(gl_add(gl_mul(v[2], 2147483648ULL), gl_mul(v[3], 8388608ULL)), sm));
@@ -706,7 +707,7 @@ static inline gl_t F_ds(const gl_t* v, const gl_t* lam) {
 // Do zero-check: v = [E, do cols 0..NDO-1, ssx,sex,zsx,smhx,smlx, ssw,sew,zsw,smhw,smlw]
 enum { VX_SS = 0, VX_SE, VX_ZS, VX_SMH, VX_SML, VW_SS, VW_SE, VW_ZS, VW_SMH, VW_SML, NVO };
 static const int N_DO_CONSTR = 49;
-static inline gl_t F_do(const gl_t* v, const gl_t* lam) {
+static inline __host__ __device__ gl_t F_do(const gl_t* v, const gl_t* lam) {
     const gl_t* c = v + 1; const gl_t* vx = v + 1 + NDO;
     gl_t one = 1ULL;
     gl_t nz1 = gl_sub(one, c[O_Z1]), nz2 = gl_sub(one, c[O_Z2]);
@@ -783,6 +784,33 @@ static inline gl_t F_do(const gl_t* v, const gl_t* lam) {
     return gl_mul(v[0], s);
 }
 
+// device functors for the GPU sumcheck port (p3_scgpu)
+struct FFdp { static __device__ gl_t eval(const gl_t* v, const gl_t* p) { return F_dp(v, p); } };
+struct FFdg { static __device__ gl_t eval(const gl_t* v, const gl_t* p) { return F_dg(v, p); } };
+struct FFch { static __device__ gl_t eval(const gl_t* v, const gl_t* p) { return F_ch(v, p); } };
+struct FFgs { static __device__ gl_t eval(const gl_t* v, const gl_t* p) { return F_gs(v, p); } };
+
+// dispatch a quartic zero-check sumcheck: device-resident when the domain is
+// large (identical messages/transcript to the host loop), host otherwise.
+template <typename FF>
+static inline std::vector<gl_t> sc5_run(fs::Transcript& tr, const char* tag,
+        std::vector<std::vector<gl_t>>&& cols, const gl_t* lam, uint32_t nlam,
+        const CFn& Fhost, std::vector<Msg5>& msgs) {
+    size_t N = cols[0].size();
+    if (p3fri::g_gpu_merkle && N >= (1u << 16)) {
+        std::vector<gl_t*> dc(cols.size());
+        for (size_t i = 0; i < cols.size(); i++) {
+            cudaMallocAsync(&dc[i], N * 8, 0);
+            cudaMemcpy(dc[i], cols[i].data(), N * 8, cudaMemcpyHostToDevice);
+        }
+        std::vector<gl_t> r = p3sg::sc_prove_gpu<FF, Msg5, 5, 32>(
+            tr, tag, dc, (uint32_t)N, lam, nlam, msgs);
+        for (auto p : dc) cudaFreeAsync(p, 0);
+        return r;
+    }
+    return sc5_prove(tr, tag, std::move(cols), Fhost, msgs);
+}
+
 // ---------------- lookup instance descriptors ----------------
 struct LuDef { const Table* tab; int dom; std::vector<int> cols; const char* label; };
 // dom: 0=Dp 1=Dg 2=Do 3=Db 4=Dn; col -1 = virtual a, -2 = virtual b
@@ -848,12 +876,13 @@ static inline std::vector<gl_t> zw_point(const Dims& d, const std::vector<gl_t>&
 // ---------------- operand commitments ----------------
 struct Operands { Col X, W, XS, WS; };
 static inline Operands commit_operands(const LayerWit& wt, uint32_t R, bool gpu = true) {
+    (void)gpu;                      // openings are batched: root-only commits
     Operands ops;
     std::vector<gl_t> xv(wt.xcodes.size()), wv(wt.wcodes.size());
     for (size_t i = 0; i < xv.size(); i++) xv[i] = wt.xcodes[i];
     for (size_t i = 0; i < wv.size(); i++) wv[i] = wt.wcodes[i];
-    ops.X = commit_col(xv, R, gpu); ops.W = commit_col(wv, R, gpu);
-    ops.XS = commit_col(wt.xsb, R, gpu); ops.WS = commit_col(wt.wsb, R, gpu);
+    ops.X = p3lu::commit_col_nc(xv, R); ops.W = p3lu::commit_col_nc(wv, R);
+    ops.XS = p3lu::commit_col_nc(wt.xsb, R); ops.WS = p3lu::commit_col_nc(wt.wsb, R);
     return ops;
 }
 
@@ -862,18 +891,20 @@ struct LayerProof {
     uint32_t B = 0, K = 0, N = 0;
     p3fri::Hash rdp[NDP], rdg[NDG], rdo[NDO], rdb[NDS], rdn[NDS];
     p3lu::LookupProof lu[NLU];
-    p3bf::EvalProof oXa, oWb;                             // DM virtual bindings
-    std::vector<Msg5> mDp; std::vector<p3bf::EvalProof> oDp; p3bf::EvalProof oDpG;
-    std::vector<Msg5> mDg; std::vector<p3bf::EvalProof> oDg;
-    std::vector<Msg5> mCh; std::vector<p3bf::EvalProof> oCh;
-    p3bf::EvalProof oGSc, oGSa;
-    std::vector<Msg5> mGS; p3bf::EvalProof oGSal, oGSsel;
-    std::vector<Msg5> mDo; std::vector<p3bf::EvalProof> oDo;
-    std::vector<p3bf::EvalProof> oDbBC, oDnBC;            // ss,se,zs,smh,sml broadcasts
-    std::vector<Msg5> mDb; std::vector<p3bf::EvalProof> oDb; p3bf::EvalProof oXsb;
-    std::vector<Msg5> mDn; std::vector<p3bf::EvalProof> oDn; p3bf::EvalProof oWsb;
-    p3bf::EvalProof oSlA, oSlE, oSlS, oSlF, oSlBE, oSlSG; // acc-state slice bindings
-    std::vector<Msg5> mY; p3bf::EvalProof oY;
+    // all column openings are CLAIMED evaluations backed by the per-size-class
+    // batch proofs at the end (DM virtual a,b bindings ride on lu[LU_DM].y_virt)
+    std::vector<Msg5> mDp; gl_t yDp[NDP] = {}; gl_t yDpG = 0;
+    std::vector<Msg5> mDg; gl_t yDg[NDG] = {};
+    std::vector<Msg5> mCh; gl_t yCh[8] = {};
+    gl_t yGSc = 0, yGSa = 0;
+    std::vector<Msg5> mGS; gl_t yGSal = 0, yGSsel = 0;
+    std::vector<Msg5> mDo; gl_t yDo[NDO] = {};
+    gl_t yDbBC[5] = {}, yDnBC[5] = {};                    // ss,se,zs,smh,sml broadcasts
+    std::vector<Msg5> mDb; gl_t yDb[6] = {}; gl_t yXsb = 0;
+    std::vector<Msg5> mDn; gl_t yDn[6] = {}; gl_t yWsb = 0;
+    gl_t ySlA = 0, ySlE = 0, ySlS = 0, ySlF = 0, ySlBE = 0, ySlSG = 0;
+    std::vector<Msg5> mY; gl_t yY = 0;
+    std::vector<p3bo::BatchProof> batches;                // one per size class
 };
 
 // per-phase prover timing (ms)
@@ -882,6 +913,7 @@ struct Prof {
     double lu_dp = 0, lu_dg = 0, lu_do = 0, lu_sc = 0;
     double zc_dp = 0, zc_dg = 0, chain = 0, gsum = 0, zc_do = 0, zc_ds = 0, slice = 0, ybind = 0;
     double open_dp = 0, open_dg = 0, open_do = 0;
+    double batch = 0;
     double total = 0;
 };
 static inline double now_ms() {
@@ -914,14 +946,19 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
     tr.absorb("hwl-ws", ops.WS.root.data(), 32);
     tr.absorb("hwl-Y", Y.data(), Y.size() * 2);
 
-    // -- witness commitments --
+    // opening obligations: every column evaluation is claimed inline and proven
+    // once per size class by the batched-opening phase at the end
+    p3bo::PLedger lg;
+    std::deque<Col> lucols;                  // logUp helper columns kept for the batch
+
+    // -- witness commitments (root-only: openings are batched, no host codeword) --
     tp = now_ms();
     std::vector<Col> CDp(NDP), CDg(NDG), CDo(NDO), CDb(NDS), CDn(NDS);
-    for (int c = 0; c < NDP; c++) { CDp[c] = commit_col(wt.dp[c], R, gpu); pf.rdp[c] = CDp[c].root; }
-    for (int c = 0; c < NDG; c++) { CDg[c] = commit_col(wt.dg[c], R, gpu); pf.rdg[c] = CDg[c].root; }
-    for (int c = 0; c < NDO; c++) { CDo[c] = commit_col(wt.dob[c], R, gpu); pf.rdo[c] = CDo[c].root; }
-    for (int c = 0; c < NDS; c++) { CDb[c] = commit_col(wt.db[c], R, gpu); pf.rdb[c] = CDb[c].root; }
-    for (int c = 0; c < NDS; c++) { CDn[c] = commit_col(wt.dn[c], R, gpu); pf.rdn[c] = CDn[c].root; }
+    for (int c = 0; c < NDP; c++) { CDp[c] = p3lu::commit_col_nc(wt.dp[c], R); pf.rdp[c] = CDp[c].root; }
+    for (int c = 0; c < NDG; c++) { CDg[c] = p3lu::commit_col_nc(wt.dg[c], R); pf.rdg[c] = CDg[c].root; }
+    for (int c = 0; c < NDO; c++) { CDo[c] = p3lu::commit_col_nc(wt.dob[c], R); pf.rdo[c] = CDo[c].root; }
+    for (int c = 0; c < NDS; c++) { CDb[c] = p3lu::commit_col_nc(wt.db[c], R); pf.rdb[c] = CDb[c].root; }
+    for (int c = 0; c < NDS; c++) { CDn[c] = p3lu::commit_col_nc(wt.dn[c], R); pf.rdn[c] = CDn[c].root; }
     for (int c = 0; c < NDP; c++) tr.absorb("hwl-cp", pf.rdp[c].data(), 32);
     for (int c = 0; c < NDG; c++) tr.absorb("hwl-cg", pf.rdg[c].data(), 32);
     for (int c = 0; c < NDO; c++) tr.absorb("hwl-co", pf.rdo[c].data(), 32);
@@ -942,17 +979,14 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
                                    LD[i].dom == 2 ? &CDo[cid] : LD[i].dom == 3 ? &CDb[cid] : &CDn[cid]));
         }
         pf.lu[i] = p3lu::prove_v(tr, spec, wt.lidx[i], *LD[i].tab, R, Q, LD[i].label,
-                                 gpu, strict, i == LU_DM ? &rA_dm : nullptr);
+                                 gpu, strict, i == LU_DM ? &rA_dm : nullptr, &lg, &lucols);
         double dt = now_ms() - tp;
         if (LD[i].dom == 0) P.lu_dp += dt; else if (LD[i].dom == 1) P.lu_dg += dt;
         else if (LD[i].dom == 2) P.lu_do += dt; else P.lu_sc += dt;
         if (i == LU_DM) {
-            tp = now_ms();
-            pf.oXa = p3bf::prove_eval(ops.X.v, zx_point(d, rA_dm), pf.lu[LU_DM].y_virt[0],
-                                      R, Q, ops.X.cw, "hwl-Xa");
-            pf.oWb = p3bf::prove_eval(ops.W.v, zw_point(d, rA_dm), pf.lu[LU_DM].y_virt[1],
-                                      R, Q, ops.W.cw, "hwl-Wb");
-            P.lu_dp += now_ms() - tp;
+            // bind the virtual (a,b) claims to the X/W commitments in the batch
+            lg.add(&ops.X.v, ops.X.root, zx_point(d, rA_dm), pf.lu[LU_DM].y_virt[0]);
+            lg.add(&ops.W.v, ops.W.root, zw_point(d, rA_dm), pf.lu[LU_DM].y_virt[1]);
         }
     }
 
@@ -969,12 +1003,12 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         for (size_t p = 0; p < d.P; p++) gmaxP[p] = wt.dg[G_MAX][p >> 5];
         cols.push_back(std::move(gmaxP));
         CFn F = [&](const gl_t* v) { return F_dp(v, lamPv); };
-        std::vector<gl_t> rC = sc5_prove(tr, "hwl-scP", std::move(cols), F, pf.mDp);
+        std::vector<gl_t> rC = sc5_run<FFdp>(tr, "hwl-scP", std::move(cols), lamPv, 6, F, pf.mDp);
         P.zc_dp += now_ms() - tp; tp = now_ms();
         for (int c = 0; c < NDP; c++)
-            pf.oDp.push_back(openc(tr, CDp[c], rC, R, Q, "hwl-oP" + std::to_string(c)));
+            pf.yDp[c] = claimc(tr, lg, CDp[c], rC);
         std::vector<gl_t> rCg(rC.begin() + 5, rC.end());
-        pf.oDpG = openc(tr, CDg[G_MAX], rCg, R, Q, "hwl-oPg");
+        pf.yDpG = claimc(tr, lg, CDg[G_MAX], rCg);
         P.open_dp += now_ms() - tp;
     }
 
@@ -988,10 +1022,10 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         cols.push_back(beq(zG));
         for (int c = 0; c < NDG; c++) cols.push_back(wt.dg[c]);
         CFn F = [&](const gl_t* v) { return F_dg(v, lamGv); };
-        std::vector<gl_t> rG = sc5_prove(tr, "hwl-scG", std::move(cols), F, pf.mDg);
+        std::vector<gl_t> rG = sc5_run<FFdg>(tr, "hwl-scG", std::move(cols), lamGv, 18, F, pf.mDg);
         P.zc_dg += now_ms() - tp; tp = now_ms();
         for (int c = 0; c < NDG; c++)
-            pf.oDg.push_back(openc(tr, CDg[c], rG, R, Q, "hwl-oG" + std::to_string(c)));
+            pf.yDg[c] = claimc(tr, lg, CDg[c], rG);
         P.open_dg += now_ms() - tp;
     }
 
@@ -1019,18 +1053,18 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         cols.push_back(wt.dg[G_TZ]); cols.push_back(wt.dg[G_S14]); cols.push_back(wt.dg[G_MAX]);
         cols.push_back(wt.dg[G_WD]); cols.push_back(wt.dg[G_TSGN]);
         CFn F = [&](const gl_t* v) { return F_ch(v, lam6); };
-        std::vector<gl_t> rH = sc5_prove(tr, "hwl-scH", std::move(cols), F, pf.mCh);
+        std::vector<gl_t> rH = sc5_run<FFch>(tr, "hwl-scH", std::move(cols), lam6, 6, F, pf.mCh);
         static const int CH_COLS[8] = {G_ASIG, G_BEXP, G_ASGN, G_TZ, G_S14, G_MAX, G_WD, G_TSGN};
         for (int j = 0; j < 8; j++)
-            pf.oCh.push_back(openc(tr, CDg[CH_COLS[j]], rH, R, Q, "hwl-oH" + std::to_string(j)));
+            pf.yCh[j] = claimc(tr, lg, CDg[CH_COLS[j]], rH);
     }
     P.chain += now_ms() - tp;
 
     // -- group-sum + attainment-sum binding (Dp -> Dg) --
     tp = now_ms();
     std::vector<gl_t> z2 = chal_vec(tr, d.lgi);
-    pf.oGSc = openc(tr, CDg[G_CSUM], z2, R, Q, "hwl-oGSc");
-    pf.oGSa = openc(tr, CDg[G_ASEL], z2, R, Q, "hwl-oGSa");
+    pf.yGSc = claimc(tr, lg, CDg[G_CSUM], z2);
+    pf.yGSa = claimc(tr, lg, CDg[G_ASEL], z2);
     gl_t lamS1 = chal(tr), lamS2 = chal(tr);
     {
         std::vector<gl_t> eqDg = beq(z2);
@@ -1040,9 +1074,9 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         cols.push_back(std::move(EQg)); cols.push_back(wt.dp[P_AL]); cols.push_back(wt.dp[P_SEL]);
         gl_t lam2[2] = {lamS1, lamS2};
         CFn F = [&](const gl_t* v) { return F_gs(v, lam2); };
-        std::vector<gl_t> rS = sc5_prove(tr, "hwl-scS", std::move(cols), F, pf.mGS);
-        pf.oGSal = openc(tr, CDp[P_AL], rS, R, Q, "hwl-oSal");
-        pf.oGSsel = openc(tr, CDp[P_SEL], rS, R, Q, "hwl-oSsel");
+        std::vector<gl_t> rS = sc5_run<FFgs>(tr, "hwl-scS", std::move(cols), lam2, 2, F, pf.mGS);
+        pf.yGSal = claimc(tr, lg, CDp[P_AL], rS);
+        pf.yGSsel = claimc(tr, lg, CDp[P_SEL], rS);
     }
     P.gsum += now_ms() - tp;
 
@@ -1070,12 +1104,12 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         std::vector<gl_t> rO = sc5_prove(tr, "hwl-scO", std::move(cols), F, pf.mDo);
         P.zc_do += now_ms() - tp; tp = now_ms();
         for (int c = 0; c < NDO; c++)
-            pf.oDo.push_back(openc(tr, CDo[c], rO, R, Q, "hwl-oO" + std::to_string(c)));
+            pf.yDo[c] = claimc(tr, lg, CDo[c], rO);
         std::vector<gl_t> pB(rO.begin() + d.ln, rO.end()), pN(rO.begin(), rO.begin() + d.ln);
         for (int j = 0; j < 5; j++)
-            pf.oDbBC.push_back(openc(tr, CDb[BCX[j]], pB, R, Q, "hwl-oBb" + std::to_string(j)));
+            pf.yDbBC[j] = claimc(tr, lg, CDb[BCX[j]], pB);
         for (int j = 0; j < 5; j++)
-            pf.oDnBC.push_back(openc(tr, CDn[BCX[j]], pN, R, Q, "hwl-oBn" + std::to_string(j)));
+            pf.yDnBC[j] = claimc(tr, lg, CDn[BCX[j]], pN);
         P.open_do += now_ms() - tp;
     }
 
@@ -1092,8 +1126,8 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         CFn F = [&](const gl_t* v) { return F_ds(v, lamBv); };
         std::vector<gl_t> rB = sc5_prove(tr, "hwl-scB", std::move(cols), F, pf.mDb);
         for (int j = 0; j < 6; j++)
-            pf.oDb.push_back(openc(tr, CDb[SC[j]], rB, R, Q, "hwl-oB" + std::to_string(j)));
-        pf.oXsb = openc(tr, ops.XS, rB, R, Q, "hwl-oXsb");
+            pf.yDb[j] = claimc(tr, lg, CDb[SC[j]], rB);
+        pf.yXsb = claimc(tr, lg, ops.XS, rB);
     }
     {
         std::vector<gl_t> zN = chal_vec(tr, d.ln);
@@ -1106,8 +1140,8 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         CFn F = [&](const gl_t* v) { return F_ds(v, lamNv); };
         std::vector<gl_t> rN = sc5_prove(tr, "hwl-scN", std::move(cols), F, pf.mDn);
         for (int j = 0; j < 6; j++)
-            pf.oDn.push_back(openc(tr, CDn[SC[j]], rN, R, Q, "hwl-oN" + std::to_string(j)));
-        pf.oWsb = openc(tr, ops.WS, rN, R, Q, "hwl-oWsb");
+            pf.yDn[j] = claimc(tr, lg, CDn[SC[j]], rN);
+        pf.yWsb = claimc(tr, lg, ops.WS, rN);
     }
     P.zc_ds += now_ms() - tp;
 
@@ -1116,12 +1150,12 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
     {
         std::vector<gl_t> zc2 = chal_vec(tr, d.lo), ptg = zc2;
         for (uint32_t i = 0; i < d.lg; i++) ptg.push_back((d.NG >> i) & 1);
-        pf.oSlA = openc(tr, CDg[G_ASIG], ptg, R, Q, "hwl-oSlA");
-        pf.oSlE = openc(tr, CDg[G_BEXP], ptg, R, Q, "hwl-oSlE");
-        pf.oSlS = openc(tr, CDg[G_ASGN], ptg, R, Q, "hwl-oSlS");
-        pf.oSlF = openc(tr, CDo[O_S14F], zc2, R, Q, "hwl-oSlF");
-        pf.oSlBE = openc(tr, CDo[O_BEXP], zc2, R, Q, "hwl-oSlBE");
-        pf.oSlSG = openc(tr, CDo[O_SGN], zc2, R, Q, "hwl-oSlSG");
+        pf.ySlA = claimc(tr, lg, CDg[G_ASIG], ptg);
+        pf.ySlE = claimc(tr, lg, CDg[G_BEXP], ptg);
+        pf.ySlS = claimc(tr, lg, CDg[G_ASGN], ptg);
+        pf.ySlF = claimc(tr, lg, CDo[O_S14F], zc2);
+        pf.ySlBE = claimc(tr, lg, CDo[O_BEXP], zc2);
+        pf.ySlSG = claimc(tr, lg, CDo[O_SGN], zc2);
     }
     P.slice += now_ms() - tp;
 
@@ -1139,9 +1173,16 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         cols.push_back(std::move(Rw)); cols.push_back(wt.dob[O_YB]);
         CFn F = [](const gl_t* v) { return F_y(v, nullptr); };
         std::vector<gl_t> rY = sc5_prove(tr, "hwl-scY", std::move(cols), F, pf.mY);
-        pf.oY = openc(tr, CDo[O_YB], rY, R, Q, "hwl-oY");
+        pf.yY = claimc(tr, lg, CDo[O_YB], rY);
     }
     P.ybind += now_ms() - tp;
+
+    // -- batched openings: one reduction + one RLC opening per size class --
+    tp = now_ms();
+    for (size_t i = 0; i < lg.cls.size(); i++)
+        pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
+                                               "hwl-bo" + std::to_string(i)));
+    P.batch += now_ms() - tp;
     P.total += now_ms() - tall;
     return pf;
 }
@@ -1160,6 +1201,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
     if (pf.B != B || pf.K != K || pf.N != N) return fail("dims mismatch");
     if (Y.size() != (size_t)B * N) return fail("Y size");
     Dims d = make_dims(B, K, N);
+    p3bo::VLedger vlg;                       // deferred opening obligations
 
     uint32_t dims3[3] = {B, K, N};
     tr.absorb("hwl-dims", dims3, sizeof dims3);
@@ -1189,21 +1231,12 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         }
         std::vector<gl_t> rA, yv;
         if (!p3lu::verify_v(tr, roots, *LD[i].tab, pf.lu[i], Q_pub, R_pub, LD[i].label,
-                            why, &rA, &yv)) return false;
+                            why, &rA, &yv, nullptr, &vlg)) return false;
         if (i == LU_DM) {
             // bind the virtual (a,b) evaluations to the X/W commitments
-            std::vector<gl_t> zx = zx_point(d, rA), zw = zw_point(d, rA);
             if (yv.size() != 2) return fail("DM y_virt count");
-            if (pf.oXa.roots.empty() || !(pf.oXa.roots[0] == rX) || pf.oXa.z != zx ||
-                pf.oXa.y != yv[0]) return fail("Xa binding");
-            if (pf.oXa.Q != Q_pub || pf.oXa.R != R_pub || pf.oXa.logN != (uint32_t)zx.size())
-                return fail("Xa params");
-            if (!p3bf::verify_eval(pf.oXa, "hwl-Xa", why)) return false;
-            if (pf.oWb.roots.empty() || !(pf.oWb.roots[0] == rW) || pf.oWb.z != zw ||
-                pf.oWb.y != yv[1]) return fail("Wb binding");
-            if (pf.oWb.Q != Q_pub || pf.oWb.R != R_pub || pf.oWb.logN != (uint32_t)zw.size())
-                return fail("Wb params");
-            if (!p3bf::verify_eval(pf.oWb, "hwl-Wb", why)) return false;
+            vlg.add(rX, zx_point(d, rA), yv[0]);
+            vlg.add(rW, zw_point(d, rA), yv[1]);
         }
     }
 
@@ -1214,14 +1247,11 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
     {
         std::vector<gl_t> rC; gl_t claim;
         if (!sc5_verify(pf.mDp, d.lp, 0, tr, "hwl-scP", rC, claim)) return fail("Dp sumcheck");
-        if (pf.oDp.size() != NDP) return fail("Dp opening count");
         gl_t v[2 + NDP]; v[0] = p3bf::eq_point(rC, zC);
         for (int c = 0; c < NDP; c++)
-            if (!checko(tr, pf.oDp[c], pf.rdp[c], rC, Q_pub, R_pub,
-                        "hwl-oP" + std::to_string(c), v[1 + c], why)) return false;
+            v[1 + c] = claimv(tr, vlg, pf.rdp[c], rC, pf.yDp[c]);
         std::vector<gl_t> rCg(rC.begin() + 5, rC.end());
-        if (!checko(tr, pf.oDpG, pf.rdg[G_MAX], rCg, Q_pub, R_pub, "hwl-oPg", v[1 + NDP], why))
-            return false;
+        v[1 + NDP] = claimv(tr, vlg, pf.rdg[G_MAX], rCg, pf.yDpG);
         if (F_dp(v, lamPv) != claim) return fail("Dp terminal");
     }
 
@@ -1232,11 +1262,9 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
     {
         std::vector<gl_t> rG; gl_t claim;
         if (!sc5_verify(pf.mDg, d.lgi, 0, tr, "hwl-scG", rG, claim)) return fail("Dg sumcheck");
-        if (pf.oDg.size() != NDG) return fail("Dg opening count");
         gl_t v[1 + NDG]; v[0] = p3bf::eq_point(rG, zG);
         for (int c = 0; c < NDG; c++)
-            if (!checko(tr, pf.oDg[c], pf.rdg[c], rG, Q_pub, R_pub,
-                        "hwl-oG" + std::to_string(c), v[1 + c], why)) return false;
+            v[1 + c] = claimv(tr, vlg, pf.rdg[c], rG, pf.yDg[c]);
         if (F_dg(v, lamGv) != claim) return fail("Dg terminal");
     }
 
@@ -1247,12 +1275,10 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
     {
         std::vector<gl_t> rH; gl_t claim;
         if (!sc5_verify(pf.mCh, d.lgi, 0, tr, "hwl-scH", rH, claim)) return fail("chain sumcheck");
-        if (pf.oCh.size() != 8) return fail("chain opening count");
         static const int CH_COLS[8] = {G_ASIG, G_BEXP, G_ASGN, G_TZ, G_S14, G_MAX, G_WD, G_TSGN};
         gl_t v[11];
         for (int j = 0; j < 8; j++)
-            if (!checko(tr, pf.oCh[j], pf.rdg[CH_COLS[j]], rH, Q_pub, R_pub,
-                        "hwl-oH" + std::to_string(j), v[3 + j], why)) return false;
+            v[3 + j] = claimv(tr, vlg, pf.rdg[CH_COLS[j]], rH, pf.yCh[j]);
         std::vector<gl_t> lpow(d.Gpad, 1);
         for (uint32_t g = 1; g < d.Gpad; g++) lpow[g] = gl_mul(lpow[g-1], lch);
         std::vector<gl_t> ug(d.Gpad, 0), vg(d.Gpad, 0);
@@ -1272,16 +1298,14 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
     // -- group-sum + attainment --
     std::vector<gl_t> z2 = chal_vec(tr, d.lgi);
     {
-        gl_t yc, ya;
-        if (!checko(tr, pf.oGSc, pf.rdg[G_CSUM], z2, Q_pub, R_pub, "hwl-oGSc", yc, why)) return false;
-        if (!checko(tr, pf.oGSa, pf.rdg[G_ASEL], z2, Q_pub, R_pub, "hwl-oGSa", ya, why)) return false;
+        gl_t yc = claimv(tr, vlg, pf.rdg[G_CSUM], z2, pf.yGSc);
+        gl_t ya = claimv(tr, vlg, pf.rdg[G_ASEL], z2, pf.yGSa);
         gl_t lamS1 = chal(tr), lamS2 = chal(tr);
         gl_t claim0 = gl_add(gl_mul(lamS1, yc), gl_mul(lamS2, gl_sub(1ULL, ya)));
         std::vector<gl_t> rS; gl_t claim;
         if (!sc5_verify(pf.mGS, d.lp, claim0, tr, "hwl-scS", rS, claim)) return fail("gsum sumcheck");
-        gl_t yal, ysel;
-        if (!checko(tr, pf.oGSal, pf.rdp[P_AL], rS, Q_pub, R_pub, "hwl-oSal", yal, why)) return false;
-        if (!checko(tr, pf.oGSsel, pf.rdp[P_SEL], rS, Q_pub, R_pub, "hwl-oSsel", ysel, why)) return false;
+        gl_t yal = claimv(tr, vlg, pf.rdp[P_AL], rS, pf.yGSal);
+        gl_t ysel = claimv(tr, vlg, pf.rdp[P_SEL], rS, pf.yGSsel);
         std::vector<gl_t> rSg(rS.begin() + 5, rS.end());
         gl_t end = gl_mul(p3bf::eq_point(rSg, z2),
                           gl_add(gl_mul(lamS1, yal), gl_mul(lamS2, ysel)));
@@ -1295,20 +1319,15 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
     {
         std::vector<gl_t> rO; gl_t claim;
         if (!sc5_verify(pf.mDo, d.lo, 0, tr, "hwl-scO", rO, claim)) return fail("Do sumcheck");
-        if (pf.oDo.size() != NDO || pf.oDbBC.size() != 5 || pf.oDnBC.size() != 5)
-            return fail("Do opening count");
         gl_t v[1 + NDO + NVO]; v[0] = p3bf::eq_point(rO, zO);
         for (int c = 0; c < NDO; c++)
-            if (!checko(tr, pf.oDo[c], pf.rdo[c], rO, Q_pub, R_pub,
-                        "hwl-oO" + std::to_string(c), v[1 + c], why)) return false;
+            v[1 + c] = claimv(tr, vlg, pf.rdo[c], rO, pf.yDo[c]);
         std::vector<gl_t> pB(rO.begin() + d.ln, rO.end()), pN(rO.begin(), rO.begin() + d.ln);
         static const int BCX[5] = {S_SS, S_SE, S_ZS, S_SMH, S_SML};
         for (int j = 0; j < 5; j++)
-            if (!checko(tr, pf.oDbBC[j], pf.rdb[BCX[j]], pB, Q_pub, R_pub,
-                        "hwl-oBb" + std::to_string(j), v[1 + NDO + j], why)) return false;
+            v[1 + NDO + j] = claimv(tr, vlg, pf.rdb[BCX[j]], pB, pf.yDbBC[j]);
         for (int j = 0; j < 5; j++)
-            if (!checko(tr, pf.oDnBC[j], pf.rdn[BCX[j]], pN, Q_pub, R_pub,
-                        "hwl-oBn" + std::to_string(j), v[1 + NDO + 5 + j], why)) return false;
+            v[1 + NDO + 5 + j] = claimv(tr, vlg, pf.rdn[BCX[j]], pN, pf.yDnBC[j]);
         if (F_do(v, lamOv) != claim) return fail("Do terminal");
     }
 
@@ -1319,13 +1338,11 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         for (int j = 1; j < 6; j++) lamBv[j] = gl_mul(lamBv[j-1], lamB);
         std::vector<gl_t> rB; gl_t claim;
         if (!sc5_verify(pf.mDb, d.lb, 0, tr, "hwl-scB", rB, claim)) return fail("Db sumcheck");
-        if (pf.oDb.size() != 6) return fail("Db opening count");
         static const int SC[6] = {S_SS, S_SE, S_SEI, S_ZS, S_SMH, S_SML};
         gl_t v[8]; v[0] = p3bf::eq_point(rB, zB);
         for (int j = 0; j < 6; j++)
-            if (!checko(tr, pf.oDb[j], pf.rdb[SC[j]], rB, Q_pub, R_pub,
-                        "hwl-oB" + std::to_string(j), v[2 + j], why)) return false;
-        if (!checko(tr, pf.oXsb, rXS, rB, Q_pub, R_pub, "hwl-oXsb", v[1], why)) return false;
+            v[2 + j] = claimv(tr, vlg, pf.rdb[SC[j]], rB, pf.yDb[j]);
+        v[1] = claimv(tr, vlg, rXS, rB, pf.yXsb);
         if (F_ds(v, lamBv) != claim) return fail("Db terminal");
     }
     {
@@ -1334,13 +1351,11 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         for (int j = 1; j < 6; j++) lamNv[j] = gl_mul(lamNv[j-1], lamN);
         std::vector<gl_t> rN; gl_t claim;
         if (!sc5_verify(pf.mDn, d.ln, 0, tr, "hwl-scN", rN, claim)) return fail("Dn sumcheck");
-        if (pf.oDn.size() != 6) return fail("Dn opening count");
         static const int SC[6] = {S_SS, S_SE, S_SEI, S_ZS, S_SMH, S_SML};
         gl_t v[8]; v[0] = p3bf::eq_point(rN, zN);
         for (int j = 0; j < 6; j++)
-            if (!checko(tr, pf.oDn[j], pf.rdn[SC[j]], rN, Q_pub, R_pub,
-                        "hwl-oN" + std::to_string(j), v[2 + j], why)) return false;
-        if (!checko(tr, pf.oWsb, rWS, rN, Q_pub, R_pub, "hwl-oWsb", v[1], why)) return false;
+            v[2 + j] = claimv(tr, vlg, pf.rdn[SC[j]], rN, pf.yDn[j]);
+        v[1] = claimv(tr, vlg, rWS, rN, pf.yWsb);
         if (F_ds(v, lamNv) != claim) return fail("Dn terminal");
     }
 
@@ -1348,13 +1363,12 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
     {
         std::vector<gl_t> zc2 = chal_vec(tr, d.lo), ptg = zc2;
         for (uint32_t i = 0; i < d.lg; i++) ptg.push_back((d.NG >> i) & 1);
-        gl_t yA, yE, yS, yF, yBE, ySG;
-        if (!checko(tr, pf.oSlA, pf.rdg[G_ASIG], ptg, Q_pub, R_pub, "hwl-oSlA", yA, why)) return false;
-        if (!checko(tr, pf.oSlE, pf.rdg[G_BEXP], ptg, Q_pub, R_pub, "hwl-oSlE", yE, why)) return false;
-        if (!checko(tr, pf.oSlS, pf.rdg[G_ASGN], ptg, Q_pub, R_pub, "hwl-oSlS", yS, why)) return false;
-        if (!checko(tr, pf.oSlF, pf.rdo[O_S14F], zc2, Q_pub, R_pub, "hwl-oSlF", yF, why)) return false;
-        if (!checko(tr, pf.oSlBE, pf.rdo[O_BEXP], zc2, Q_pub, R_pub, "hwl-oSlBE", yBE, why)) return false;
-        if (!checko(tr, pf.oSlSG, pf.rdo[O_SGN], zc2, Q_pub, R_pub, "hwl-oSlSG", ySG, why)) return false;
+        gl_t yA = claimv(tr, vlg, pf.rdg[G_ASIG], ptg, pf.ySlA);
+        gl_t yE = claimv(tr, vlg, pf.rdg[G_BEXP], ptg, pf.ySlE);
+        gl_t yS = claimv(tr, vlg, pf.rdg[G_ASGN], ptg, pf.ySlS);
+        gl_t yF = claimv(tr, vlg, pf.rdo[O_S14F], zc2, pf.ySlF);
+        gl_t yBE = claimv(tr, vlg, pf.rdo[O_BEXP], zc2, pf.ySlBE);
+        gl_t ySG = claimv(tr, vlg, pf.rdo[O_SGN], zc2, pf.ySlSG);
         if (yA != gl_mul(1024ULL, yF)) return fail("slice sig binding");
         if (yE != yBE) return fail("slice exp binding");
         if (yS != ySG) return fail("slice sign binding");
@@ -1371,8 +1385,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
                                                eqY[(size_t)b * d.Npad + n]));
         std::vector<gl_t> rY; gl_t claim;
         if (!sc5_verify(pf.mY, d.lo, claim0, tr, "hwl-scY", rY, claim)) return fail("Y sumcheck");
-        gl_t yyb;
-        if (!checko(tr, pf.oY, pf.rdo[O_YB], rY, Q_pub, R_pub, "hwl-oY", yyb, why)) return false;
+        gl_t yyb = claimv(tr, vlg, pf.rdo[O_YB], rY, pf.yY);
         std::vector<gl_t> rn(rY.begin(), rY.begin() + d.ln), rb(rY.begin() + d.ln, rY.end());
         std::vector<gl_t> eqn = p3bf::build_eq(rn), eqb = p3bf::build_eq(rb);
         gl_t realN = 0, realB = 0;
@@ -1381,6 +1394,12 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         gl_t end = gl_mul(gl_mul(yyb, gl_mul(realB, realN)), p3bf::eq_point(rY, zY));
         if (end != claim) return fail("Y terminal");
     }
+
+    // -- batched openings: every claimed evaluation above gets proven here --
+    if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
+    for (size_t i = 0; i < vlg.cls.size(); i++)
+        if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
+                                "hwl-bo" + std::to_string(i), why)) return false;
 
     if (why) *why = "ok";
     return true;
@@ -1398,29 +1417,18 @@ static inline size_t sz_lu(const p3lu::LookupProof& l) {
     size_t s = 12 + 3 * 32 + 8 + (l.msgsA.size() + l.msgsT.size()) * 32 + l.y_virt.size() * 8;
     s += sz_eval(l.open_hA) + sz_eval(l.open_hT) + sz_eval(l.open_cnt);
     for (auto& o : l.open_W) s += sz_eval(o);
+    s += l.yW.size() * 8 + 24;                         // deferred-mode claims
     return s;
 }
 static inline size_t proof_size(const LayerProof& pf) {
     size_t s = 12 + (NDP + NDG + NDO + 2 * NDS) * 32;
     for (int i = 0; i < NLU; i++) s += sz_lu(pf.lu[i]);
-    s += sz_eval(pf.oXa) + sz_eval(pf.oWb);
     auto msgs = [&](const std::vector<Msg5>& m) { return m.size() * 40; };
     s += msgs(pf.mDp) + msgs(pf.mDg) + msgs(pf.mCh) + msgs(pf.mGS) + msgs(pf.mDo)
        + msgs(pf.mDb) + msgs(pf.mDn) + msgs(pf.mY);
-    for (auto& o : pf.oDp) s += sz_eval(o);
-    s += sz_eval(pf.oDpG);
-    for (auto& o : pf.oDg) s += sz_eval(o);
-    for (auto& o : pf.oCh) s += sz_eval(o);
-    s += sz_eval(pf.oGSc) + sz_eval(pf.oGSa) + sz_eval(pf.oGSal) + sz_eval(pf.oGSsel);
-    for (auto& o : pf.oDo) s += sz_eval(o);
-    for (auto& o : pf.oDbBC) s += sz_eval(o);
-    for (auto& o : pf.oDnBC) s += sz_eval(o);
-    for (auto& o : pf.oDb) s += sz_eval(o);
-    for (auto& o : pf.oDn) s += sz_eval(o);
-    s += sz_eval(pf.oXsb) + sz_eval(pf.oWsb);
-    s += sz_eval(pf.oSlA) + sz_eval(pf.oSlE) + sz_eval(pf.oSlS)
-       + sz_eval(pf.oSlF) + sz_eval(pf.oSlBE) + sz_eval(pf.oSlSG);
-    s += sz_eval(pf.oY);
+    // claimed evaluations
+    s += 8 * (NDP + 1 + NDG + 8 + 4 + NDO + 10 + 6 + 6 + 2 + 6 + 1);
+    for (auto& b : pf.batches) s += p3bo::sz_batch(b);
     return s;
 }
 

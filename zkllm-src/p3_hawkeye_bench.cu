@@ -91,5 +91,6 @@ int main(int argc, char** argv) {
     printf("  scale decomp checks    %8.0f\n", prof.zc_ds);
     printf("  slice bindings         %8.0f\n", prof.slice);
     printf("  Y binding              %8.0f\n", prof.ybind);
+    printf("  batched openings       %8.0f\n", prof.batch);
     return ok ? 0 : 1;
 }
