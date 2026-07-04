@@ -461,24 +461,87 @@ struct TfOps {
     p3swg::Operands sw;
     Col Ymm[NMM];                                 // matmul output columns [n|b]
 };
-static inline Col commit_u8(const std::vector<uint8_t>& v, uint32_t R) {
+static inline Col commit_u8(const std::vector<uint8_t>& v, uint32_t R,
+                            const std::vector<gl_t>* zkmask = nullptr) {
     std::vector<gl_t> g(v.begin(), v.end());
-    return commit_col_nc(std::move(g), R);
+    return commit_col_nc(std::move(g), R, zkmask);
+}
+// zk seam-linkage helpers (design doc section 12) --------------------------
+// producer slice-1 of a committed column
+static inline std::vector<gl_t> psl1(const Col& c) { return p3zkc::slice1(c.v, c.vreal); }
+// restriction consumer mask: X_real(inner<2^ldr, outer) = CODES(inner,outer),
+// 0 on the k-padding -> slice 1 = zero-padded CODES slice 1
+static inline std::vector<gl_t> restr_mask(const Col& codes, uint32_t ldr, uint32_t lk,
+                                           uint32_t lb) {
+    if (!p3zkc::G.on) return {};
+    std::vector<gl_t> c1 = psl1(codes);
+    size_t Nc = (size_t)1 << (lk + lb);
+    std::vector<gl_t> cons1(Nc, 0);
+    for (size_t idx = 0; idx < Nc; idx++) {
+        size_t inner = idx & (((size_t)1 << lk) - 1), outer = idx >> lk;
+        if (inner < ((size_t)1 << ldr))
+            cons1[idx] = c1[inner | (outer << ldr)];
+    }
+    return p3zkc::mk_linked(lk + lb, cons1);
 }
 static inline TfOps commit_all(const TfWit& w, uint32_t R) {
     TfOps o;
+    const bool zk = p3zkc::G.on;
+    const Config& c = w.cfg;
+    const uint32_t lseq = c.lseq(), ld = c.ld(), ldh = c.ldh(), ldff = c.ldff();
+    const uint32_t lkH1 = ilog2(w.mm[MM_WQ].d.Kpad), lkQK = ilog2(w.mm[MM_QK0].d.Kpad),
+                   lkPV = ilog2(w.mm[MM_PV0].d.Kpad), lkSW = ilog2(w.mm[MM_WD].d.Kpad);
+    // slice/transpose/concat consumer-mask builders from a producer Ymm slice 1.
+    // rope-q/k: Q_real(j,b) = Ymm(j, head h, b); Ymm layout [n=h*dh+j | b].
+    auto head_slice_mask = [&](const Col& Ymm, int h) -> std::vector<gl_t> {
+        if (!zk) return {};
+        std::vector<gl_t> y1 = psl1(Ymm);
+        size_t Nc = (size_t)1 << (ldh + lseq);
+        std::vector<gl_t> cons1(Nc, 0);
+        for (uint32_t b = 0; b < c.seq; b++)
+            for (uint32_t j = 0; j < c.dh; j++)
+                cons1[j | ((size_t)b << ldh)] = y1[((size_t)((uint32_t)h * c.dh + j)) | ((size_t)b << ld)];
+        return p3zkc::mk_linked(ldh + lseq, cons1);
+    };
+    // V^T: VT.X(p in seq, j in dh) = Ymm_Wv(n=h*dh+j, p); VT.X layout [p | j].
+    auto vt_mask = [&](const Col& Ymm, int h) -> std::vector<gl_t> {
+        if (!zk) return {};
+        std::vector<gl_t> y1 = psl1(Ymm);
+        size_t Nc = (size_t)1 << (lseq + ldh);
+        std::vector<gl_t> cons1(Nc, 0);
+        for (uint32_t j = 0; j < c.dh; j++)
+            for (uint32_t p = 0; p < c.seq; p++)
+                cons1[p | ((size_t)j << lseq)] = y1[((size_t)((uint32_t)h * c.dh + j)) | ((size_t)p << ld)];
+        return p3zkc::mk_linked(lseq + ldh, cons1);
+    };
+    // concat: AT.X(n=h*dh+j, b) = Ymm_PV[h](j, b); AT.X layout [n | b], Ymm [j | b].
+    auto concat_mask = [&](const Col& Ymm0, const Col& Ymm1) -> std::vector<gl_t> {
+        if (!zk) return {};
+        std::vector<gl_t> y0 = psl1(Ymm0), y1 = psl1(Ymm1);
+        size_t Nc = (size_t)1 << (ld + lseq);
+        std::vector<gl_t> cons1(Nc, 0);
+        for (int h = 0; h < 2; h++) {
+            const std::vector<gl_t>& y = h ? y1 : y0;
+            for (uint32_t b = 0; b < c.seq; b++)
+                for (uint32_t j = 0; j < c.dh; j++)
+                    cons1[(size_t)((uint32_t)h * c.dh + j) | ((size_t)b << ld)] =
+                        y[j | ((size_t)b << ldh)];
+        }
+        return p3zkc::mk_linked(ld + lseq, cons1);
+    };
     // rms1: X = committed layer input, G = g1, Y fresh
     o.rms[0] = p3rms::commit_operands(w.rms[0], R);
     // quant h1 shares rms1.Y as its X
     o.qn[QN_H1].X = o.rms[0].Y;
     o.qn[QN_H1].CODES = commit_col_nc(w.qn[QN_H1].cpat, R);
     o.qn[QN_H1].SCALES = commit_col_nc(w.qn[QN_H1].spat, R);
-    // Wq/Wk/Wv: ONE padded X-code commitment, shared scales
+    // Wq/Wk/Wv: ONE padded X-code commitment (restriction of h1 codes), shared scales
     {
-        Col X1 = commit_u8(w.mm[MM_WQ].xcodes, R);
+        std::vector<gl_t> xm = restr_mask(o.qn[QN_H1].CODES, ld, lkH1, lseq);
+        Col X1 = commit_u8(w.mm[MM_WQ].xcodes, R, (zk&&!p3zkc::G.nolink) ? &xm : nullptr);
         for (int i : {MM_WQ, MM_WK, MM_WV}) {
             o.mm[i].X = X1;
-            o.mm[i].W = commit_u8(w.mm[i].wcodes, R);
+            o.mm[i].W = commit_u8(w.mm[i].wcodes, R);   // static weight (secret leaf, fresh mask)
             o.mm[i].XS = o.qn[QN_H1].SCALES;
             o.mm[i].WS = commit_col_nc(w.mm[i].wsb, R);
         }
@@ -486,16 +549,21 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R) {
     for (int i : {MM_WQ, MM_WK, MM_WV})
         o.Ymm[i] = commit_col_nc(w.mm[i].dob[p3hwl::O_YB], R);
     for (int h = 0; h < 2; h++) {
-        o.rp[2 * h] = p3rope::commit_operands(w.rp[2 * h], R);
-        o.rp[2 * h + 1] = p3rope::commit_operands(w.rp[2 * h + 1], R);
+        // rope q/k operands: Q mask = head-h slice of the Wq/Wk output masks
+        std::vector<gl_t> qmq = head_slice_mask(o.Ymm[MM_WQ], h);
+        std::vector<gl_t> qmk = head_slice_mask(o.Ymm[MM_WK], h);
+        o.rp[2 * h] = p3rope::commit_operands(w.rp[2 * h], R, (zk&&!p3zkc::G.nolink) ? &qmq : nullptr);
+        o.rp[2 * h + 1] = p3rope::commit_operands(w.rp[2 * h + 1], R, (zk&&!p3zkc::G.nolink) ? &qmk : nullptr);
         o.qn[QN_RQ[h]].X = o.rp[2 * h].OUT;
         o.qn[QN_RQ[h]].CODES = commit_col_nc(w.qn[QN_RQ[h]].cpat, R);
         o.qn[QN_RQ[h]].SCALES = commit_col_nc(w.qn[QN_RQ[h]].spat, R);
         o.qn[QN_RK[h]].X = o.rp[2 * h + 1].OUT;
         o.qn[QN_RK[h]].CODES = commit_col_nc(w.qn[QN_RK[h]].cpat, R);
         o.qn[QN_RK[h]].SCALES = commit_col_nc(w.qn[QN_RK[h]].spat, R);
-        o.mm[MM_QK[h]].X = commit_u8(w.mm[MM_QK[h]].xcodes, R);
-        o.mm[MM_QK[h]].W = commit_u8(w.mm[MM_QK[h]].wcodes, R);
+        std::vector<gl_t> qkx = restr_mask(o.qn[QN_RQ[h]].CODES, ldh, lkQK, lseq);
+        std::vector<gl_t> qkw = restr_mask(o.qn[QN_RK[h]].CODES, ldh, lkQK, lseq);
+        o.mm[MM_QK[h]].X = commit_u8(w.mm[MM_QK[h]].xcodes, R, (zk&&!p3zkc::G.nolink) ? &qkx : nullptr);
+        o.mm[MM_QK[h]].W = commit_u8(w.mm[MM_QK[h]].wcodes, R, (zk&&!p3zkc::G.nolink) ? &qkw : nullptr);
         o.mm[MM_QK[h]].XS = o.qn[QN_RQ[h]].SCALES;
         o.mm[MM_QK[h]].WS = o.qn[QN_RK[h]].SCALES;
         o.Ymm[MM_QK[h]] = commit_col_nc(w.mm[MM_QK[h]].dob[p3hwl::O_YB], R);
@@ -504,19 +572,28 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R) {
         o.qn[QN_PB[h]].X = o.sm[h].P;
         o.qn[QN_PB[h]].CODES = commit_col_nc(w.qn[QN_PB[h]].cpat, R);
         o.qn[QN_PB[h]].SCALES = commit_col_nc(w.qn[QN_PB[h]].spat, R);
-        o.qn[QN_VT[h]].X = commit_col_nc(w.qn[QN_VT[h]].xpat, R);
+        std::vector<gl_t> vtm = vt_mask(o.Ymm[MM_WV], h);
+        o.qn[QN_VT[h]].X = commit_col_nc(w.qn[QN_VT[h]].xpat, R, (zk&&!p3zkc::G.nolink) ? &vtm : nullptr);
         o.qn[QN_VT[h]].CODES = commit_col_nc(w.qn[QN_VT[h]].cpat, R);
         o.qn[QN_VT[h]].SCALES = commit_col_nc(w.qn[QN_VT[h]].spat, R);
-        o.mm[MM_PV[h]].X = commit_u8(w.mm[MM_PV[h]].xcodes, R);
-        o.mm[MM_PV[h]].W = commit_u8(w.mm[MM_PV[h]].wcodes, R);
+        std::vector<gl_t> pvx = restr_mask(o.qn[QN_PB[h]].CODES, lseq, lkPV, lseq);
+        std::vector<gl_t> pvw = restr_mask(o.qn[QN_VT[h]].CODES, lseq, lkPV, ldh);
+        o.mm[MM_PV[h]].X = commit_u8(w.mm[MM_PV[h]].xcodes, R, (zk&&!p3zkc::G.nolink) ? &pvx : nullptr);
+        o.mm[MM_PV[h]].W = commit_u8(w.mm[MM_PV[h]].wcodes, R, (zk&&!p3zkc::G.nolink) ? &pvw : nullptr);
         o.mm[MM_PV[h]].XS = o.qn[QN_PB[h]].SCALES;
         o.mm[MM_PV[h]].WS = o.qn[QN_VT[h]].SCALES;
         o.Ymm[MM_PV[h]] = commit_col_nc(w.mm[MM_PV[h]].dob[p3hwl::O_YB], R);
     }
-    o.qn[QN_AT].X = commit_col_nc(w.qn[QN_AT].xpat, R);
+    {   // attn concat: AT.X mask = concat of the two PV output head slices
+        std::vector<gl_t> atm = concat_mask(o.Ymm[MM_PV0], o.Ymm[MM_PV1]);
+        o.qn[QN_AT].X = commit_col_nc(w.qn[QN_AT].xpat, R, (zk&&!p3zkc::G.nolink) ? &atm : nullptr);
+    }
     o.qn[QN_AT].CODES = commit_col_nc(w.qn[QN_AT].cpat, R);
     o.qn[QN_AT].SCALES = commit_col_nc(w.qn[QN_AT].spat, R);
-    o.mm[MM_WO].X = commit_u8(w.mm[MM_WO].xcodes, R);
+    {
+        std::vector<gl_t> xm = restr_mask(o.qn[QN_AT].CODES, ld, lkH1, lseq);
+        o.mm[MM_WO].X = commit_u8(w.mm[MM_WO].xcodes, R, (zk&&!p3zkc::G.nolink) ? &xm : nullptr);
+    }
     o.mm[MM_WO].W = commit_u8(w.mm[MM_WO].wcodes, R);
     o.mm[MM_WO].XS = o.qn[QN_AT].SCALES;
     o.mm[MM_WO].WS = commit_col_nc(w.mm[MM_WO].wsb, R);
@@ -531,7 +608,8 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R) {
     o.qn[QN_H2].CODES = commit_col_nc(w.qn[QN_H2].cpat, R);
     o.qn[QN_H2].SCALES = commit_col_nc(w.qn[QN_H2].spat, R);
     {
-        Col X2 = commit_u8(w.mm[MM_WG].xcodes, R);
+        std::vector<gl_t> xm = restr_mask(o.qn[QN_H2].CODES, ld, lkH1, lseq);
+        Col X2 = commit_u8(w.mm[MM_WG].xcodes, R, (zk&&!p3zkc::G.nolink) ? &xm : nullptr);
         for (int i : {MM_WG, MM_WU}) {
             o.mm[i].X = X2;
             o.mm[i].W = commit_u8(w.mm[i].wcodes, R);
@@ -546,7 +624,10 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R) {
     o.qn[QN_SW].X = o.sw.M;
     o.qn[QN_SW].CODES = commit_col_nc(w.qn[QN_SW].cpat, R);
     o.qn[QN_SW].SCALES = commit_col_nc(w.qn[QN_SW].spat, R);
-    o.mm[MM_WD].X = commit_u8(w.mm[MM_WD].xcodes, R);
+    {
+        std::vector<gl_t> xm = restr_mask(o.qn[QN_SW].CODES, ldff, lkSW, lseq);
+        o.mm[MM_WD].X = commit_u8(w.mm[MM_WD].xcodes, R, (zk&&!p3zkc::G.nolink) ? &xm : nullptr);
+    }
     o.mm[MM_WD].W = commit_u8(w.mm[MM_WD].wcodes, R);
     o.mm[MM_WD].XS = o.qn[QN_SW].SCALES;
     o.mm[MM_WD].WS = commit_col_nc(w.mm[MM_WD].wsb, R);
@@ -635,6 +716,7 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
                             const TfTables& T, const Art& a, uint32_t R, uint32_t Q,
                             bool strict = true, TfProf* prof = nullptr) {
     const Config& c = w.cfg;
+    const bool zk = p3zkc::G.on;
     TfProof pf;
     pf.seq = c.seq; pf.d = c.d; pf.nh = c.nh; pf.dh = c.dh; pf.dff = c.dff;
     TfProf pl; TfProf& P = prof ? *prof : pl;
@@ -656,7 +738,10 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     pf.rRes1 = o.res[0].OUT.root;
     pf.rSwM = o.sw.M.root;
     pf.rOut = o.res[1].OUT.root;
-    for (int i = 0; i < NMM; i++) pf.mmY[i] = w.mmYpub[i];
+    // zk: the per-matmul PUBLIC output vectors ARE the cleartext intermediate
+    // activations -- drop them entirely (outputs are bound through the seams and
+    // the final public-output binding instead)
+    for (int i = 0; i < NMM; i++) pf.mmY[i] = zk ? std::vector<uint16_t>() : w.mmYpub[i];
 
     // -- sub-proofs, fixed order, one transcript, one ledger --
     tp = now_ms();
@@ -666,7 +751,7 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     P.qnt += now_ms() - tp; tp = now_ms();
     for (int i : {MM_WQ, MM_WK, MM_WV})
         pf.mm[i] = p3hwl::prove(tr, w.mm[i], T.hw, o.mm[i], R, Q, true, strict,
-                                nullptr, &w.mmYpub[i], &xc);
+                                nullptr, &w.mmYpub[i], &xc, zk ? &o.Ymm[i] : nullptr);
     P.mm += now_ms() - tp;
     for (int h = 0; h < 2; h++) {
         tp = now_ms();
@@ -677,7 +762,7 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
         pf.qn[QN_RK[h]] = p3qnt::prove(tr, w.qn[QN_RK[h]], T.qnt, o.qn[QN_RK[h]], R, Q, strict, &xc);
         P.qnt += now_ms() - tp; tp = now_ms();
         pf.mm[MM_QK[h]] = p3hwl::prove(tr, w.mm[MM_QK[h]], T.hw, o.mm[MM_QK[h]], R, Q,
-                                       true, strict, nullptr, &w.mmYpub[MM_QK[h]], &xc);
+                                       true, strict, nullptr, &w.mmYpub[MM_QK[h]], &xc, zk ? &o.Ymm[MM_QK[h]] : nullptr);
         P.mm += now_ms() - tp; tp = now_ms();
         pf.sm[h] = p3smx::prove(tr, w.sm[h], T.smx, a, o.sm[h], R, Q, strict, &xc);
         P.smx += now_ms() - tp; tp = now_ms();
@@ -685,14 +770,14 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
         pf.qn[QN_VT[h]] = p3qnt::prove(tr, w.qn[QN_VT[h]], T.qnt, o.qn[QN_VT[h]], R, Q, strict, &xc);
         P.qnt += now_ms() - tp; tp = now_ms();
         pf.mm[MM_PV[h]] = p3hwl::prove(tr, w.mm[MM_PV[h]], T.hw, o.mm[MM_PV[h]], R, Q,
-                                       true, strict, nullptr, &w.mmYpub[MM_PV[h]], &xc);
+                                       true, strict, nullptr, &w.mmYpub[MM_PV[h]], &xc, zk ? &o.Ymm[MM_PV[h]] : nullptr);
         P.mm += now_ms() - tp;
     }
     tp = now_ms();
     pf.qn[QN_AT] = p3qnt::prove(tr, w.qn[QN_AT], T.qnt, o.qn[QN_AT], R, Q, strict, &xc);
     P.qnt += now_ms() - tp; tp = now_ms();
     pf.mm[MM_WO] = p3hwl::prove(tr, w.mm[MM_WO], T.hw, o.mm[MM_WO], R, Q, true, strict,
-                                nullptr, &w.mmYpub[MM_WO], &xc);
+                                nullptr, &w.mmYpub[MM_WO], &xc, zk ? &o.Ymm[MM_WO] : nullptr);
     P.mm += now_ms() - tp; tp = now_ms();
     pf.res[0] = p3bfa::prove(tr, w.res[0], T.bfa, o.res[0], R, Q, strict, &xc);
     P.bfa += now_ms() - tp; tp = now_ms();
@@ -702,28 +787,38 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     P.qnt += now_ms() - tp; tp = now_ms();
     for (int i : {MM_WG, MM_WU})
         pf.mm[i] = p3hwl::prove(tr, w.mm[i], T.hw, o.mm[i], R, Q, true, strict,
-                                nullptr, &w.mmYpub[i], &xc);
+                                nullptr, &w.mmYpub[i], &xc, zk ? &o.Ymm[i] : nullptr);
     P.mm += now_ms() - tp; tp = now_ms();
     pf.sw = p3swg::prove(tr, w.sw, T.swg, o.sw, R, Q, strict, &xc);
     P.swg += now_ms() - tp; tp = now_ms();
     pf.qn[QN_SW] = p3qnt::prove(tr, w.qn[QN_SW], T.qnt, o.qn[QN_SW], R, Q, strict, &xc);
     P.qnt += now_ms() - tp; tp = now_ms();
     pf.mm[MM_WD] = p3hwl::prove(tr, w.mm[MM_WD], T.hw, o.mm[MM_WD], R, Q, true, strict,
-                                nullptr, &w.mmYpub[MM_WD], &xc);
+                                nullptr, &w.mmYpub[MM_WD], &xc, zk ? &o.Ymm[MM_WD] : nullptr);
     P.mm += now_ms() - tp; tp = now_ms();
     pf.res[1] = p3bfa::prove(tr, w.res[1], T.bfa, o.res[1], R, Q, strict, &xc);
     P.bfa += now_ms() - tp;
 
     // -- seam claims (all roots are in the transcript; fresh challenges) --
     tp = now_ms();
-    auto cl = [&](const Col& col, const std::vector<gl_t>& z) {
-        gl_t y = claimc(tr, xc.lg, col, z);
+    // clp: public/real-slice claim (input/output bindings, canonical-zero pads --
+    // all reveal only PUBLIC values).  clx: hiding seam-pair claim at a SHARED ex
+    // coordinate zex (touches real slice + mask slice 1; the two sides' slice-1
+    // masks are seam-linked in commit_all, so the augmented evals agree).
+    auto clp = [&](const Col& col, const std::vector<gl_t>& z) {
+        gl_t y = claimc(tr, xc.lg, col, p3zkc::zpt(z));
+        pf.seam.push_back(y);
+        return y;
+    };
+    auto clx = [&](const Col& col, const std::vector<gl_t>& z, gl_t zex) {
+        gl_t y = claimc(tr, xc.lg, col, p3zkc::xpt(z, zex));
         pf.seam.push_back(y);
         return y;
     };
     auto seam_pair = [&](const Col& A, const std::vector<gl_t>& zA,
                          const Col& B, const std::vector<gl_t>& zB, const char* what) {
-        gl_t y1 = cl(A, zA), y2 = cl(B, zB);
+        gl_t zex = zk ? p3lu::chal(tr) : 0;
+        gl_t y1 = clx(A, zA, zex), y2 = clx(B, zB, zex);
         if (strict && y1 != y2)
             throw std::runtime_error(std::string("tf: seam mismatch: ") + what);
     };
@@ -734,7 +829,7 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
         seam_pair(C, z, X, ins_zeros(z, ldr, lk - ldr), what);
         for (uint32_t t = ldr; t < lk; t++) {
             std::vector<gl_t> zt = chal_vec(tr, t + lb);
-            gl_t y = cl(X, pad_cube_pt(zt, t, lk));
+            gl_t y = clp(X, pad_cube_pt(zt, t, lk));
             if (strict && y != 0)
                 throw std::runtime_error(std::string("tf: padding not zero: ") + what);
         }
@@ -745,7 +840,7 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     // input binding
     {
         std::vector<gl_t> z = chal_vec(tr, ld + lseq);
-        cl(o.rms[0].X, z);
+        clp(o.rms[0].X, z);
     }
     seam_codes(o.qn[QN_H1].CODES, o.mm[MM_WQ].X, ld, lkH1, lseq, "h1 codes");
     for (int h = 0; h < 2; h++) {
@@ -777,7 +872,7 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     // output binding
     {
         std::vector<gl_t> z = chal_vec(tr, ld + lseq);
-        cl(o.res[1].OUT, z);
+        clp(o.res[1].OUT, z);
     }
     P.seam += now_ms() - tp;
 
@@ -811,7 +906,8 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
     if (x0pub.size() != (size_t)c.seq * c.d || outpub.size() != (size_t)c.seq * c.d)
         return fail("public i/o size");
     if (!(pf.rX0 == rX0)) return fail("input root mismatch");
-    for (int i = 0; i < NMM; i++) {
+    const bool zk = p3zkc::G.on;
+    if (!zk) for (int i = 0; i < NMM; i++) {
         uint32_t B = c.seq, N = (i == MM_QK0 || i == MM_QK1) ? c.seq
                               : (i == MM_PV0 || i == MM_PV1) ? c.dh
                               : (i == MM_WG || i == MM_WU) ? c.dff : c.d;
@@ -910,14 +1006,20 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
     // -- seam checks (mirror of the prover's claim sequence) --
     size_t si = 0;
     bool seam_short = false;
-    auto vcl = [&](const Hash& root, const std::vector<gl_t>& z) -> gl_t {
+    auto vclp = [&](const Hash& root, const std::vector<gl_t>& z) -> gl_t {
         if (si >= pf.seam.size()) { seam_short = true; return 0; }
         gl_t y = pf.seam[si++];
-        return claimv(tr, vlg, root, z, y);
+        return claimv(tr, vlg, root, p3zkc::zpt(z), y);
+    };
+    auto vclx = [&](const Hash& root, const std::vector<gl_t>& z, gl_t zex) -> gl_t {
+        if (si >= pf.seam.size()) { seam_short = true; return 0; }
+        gl_t y = pf.seam[si++];
+        return claimv(tr, vlg, root, p3zkc::xpt(z, zex), y);
     };
     auto seam_pair = [&](const Hash& rA, const std::vector<gl_t>& zA,
                          const Hash& rB, const std::vector<gl_t>& zB) {
-        gl_t y1 = vcl(rA, zA), y2 = vcl(rB, zB);
+        gl_t zex = zk ? p3lu::chal(tr) : 0;
+        gl_t y1 = vclx(rA, zA, zex), y2 = vclx(rB, zB, zex);
         return !seam_short && y1 == y2;
     };
     auto seam_codes = [&](const Hash& rC, const Hash& rX, uint32_t ldr, uint32_t lk,
@@ -926,7 +1028,7 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
         if (!seam_pair(rC, z, rX, ins_zeros(z, ldr, lk - ldr))) return false;
         for (uint32_t t = ldr; t < lk; t++) {
             std::vector<gl_t> zt = chal_vec(tr, t + lb);
-            if (vcl(rX, pad_cube_pt(zt, t, lk)) != 0 || seam_short) return false;
+            if (vclp(rX, pad_cube_pt(zt, t, lk)) != 0 || seam_short) return false;
         }
         return true;
     };
@@ -937,7 +1039,7 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
     {   // input binding: committed layer input == the PUBLIC x
         std::vector<gl_t> z = chal_vec(tr, ld + lseq);
         std::vector<gl_t> xp(x0pub.begin(), x0pub.end());
-        if (vcl(rX0, z) != mle_eval(xp, z) || seam_short)
+        if (vclp(rX0, z) != mle_eval(xp, z) || seam_short)
             return fail("public input binding");
     }
     if (!seam_codes(pf.rCodes[QN_H1], pf.rMX[MM_WQ], ld, lkH1, lseq))
@@ -982,7 +1084,7 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
     {   // output binding: committed final residual == the PUBLIC out, bitwise
         std::vector<gl_t> z = chal_vec(tr, ld + lseq);
         std::vector<gl_t> op(outpub.begin(), outpub.end());
-        if (vcl(pf.rOut, z) != mle_eval(op, z) || seam_short)
+        if (vclp(pf.rOut, z) != mle_eval(op, z) || seam_short)
             return fail("public output binding");
     }
     if (si != pf.seam.size()) return fail("seam claim count");
