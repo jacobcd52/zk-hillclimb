@@ -1,0 +1,12 @@
+### TOKENS SWEEP (batch=1, vary seq) ###
+seq=8 batch=1 tokens=8  prove=2.755s fwd=3.1759ms  OVERHEAD=867x  (mm=0.596s smx=0.015s)
+seq=16 batch=1 tokens=16  prove=4.095s fwd=2.9133ms  OVERHEAD=1406x  (mm=1.124s smx=0.023s)
+seq=32 batch=1 tokens=32  prove=6.690s fwd=3.2744ms  OVERHEAD=2043x  (mm=1.946s smx=0.038s)
+seq=64 batch=1 tokens=64  prove=11.217s fwd=3.2472ms  OVERHEAD=3454x  (mm=2.971s smx=0.106s)
+
+### SEQ-vs-BATCH at FIXED tokens=64 ###
+seq=8 batch=8 tokens=64  prove=13.464s fwd=15.0585ms  OVERHEAD=894x  (mm=3.431s smx=0.126s)
+seq=16 batch=4 tokens=64  prove=12.319s fwd=8.0133ms  OVERHEAD=1537x  (mm=3.488s smx=0.092s)
+seq=32 batch=2 tokens=64  prove=11.303s fwd=4.6366ms  OVERHEAD=2438x  (mm=2.914s smx=0.076s)
+seq=64 batch=1 tokens=64  prove=11.301s fwd=2.8484ms  OVERHEAD=3967x  (mm=2.983s smx=0.106s)
+SWEEP_DONE

@@ -19,13 +19,16 @@
 //
 // GPU-resident throughout (requires p3fri::g_gpu_merkle path conventions).
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <vector>
 #include "p3_goldilocks.cuh"
 #include "p3_fri.cuh"
 #include "p3_ntt.cuh"
 #include "p3_basefold.cuh"
+#include "p3_zkc.cuh"
 #include "fs_transcript.hpp"
 
 namespace p3bo {
@@ -39,8 +42,11 @@ static inline gl_t chal(fs::Transcript& tr) {
     return v % GL_P;
 }
 
-// per-query round-0 openings: entry c = the c-th DISTINCT column of the class
-struct BQ0 { std::vector<gl_t> a, b; std::vector<std::vector<Hash>> pa, pb; };
+// round-0 subset opening of ONE distinct column: values (+ zk salts) at the
+// class's sorted-unique query positions, plus the PRUNED Merkle node stream --
+// the 2Q overlapping authentication paths cost each tree node at most once.
+struct BQ0C { std::vector<gl_t> vals; std::vector<p3zkc::Salt> salts;
+              std::vector<Hash> nodes; };
 
 struct BatchProof {
     uint32_t v = 0, R = 0, Q = 0, nc = 0;      // rows=2^v; nc = #distinct columns
@@ -50,24 +56,99 @@ struct BatchProof {
     std::vector<SumMsg> omsgs;                 // v opening-sumcheck messages
     std::vector<gl_t> final_word;              // 2^R
     std::vector<p3fri::QueryProof> queries;    // Q; rounds[i] = opening round i+1
-    std::vector<BQ0> q0;                       // Q round-0 per-column openings
+    std::vector<BQ0C> q0c;                     // nc round-0 subset openings
+    Hash bl_root = {};                         // zk: class blinder column commitment
+    gl_t bl_y = 0;                             // zk: blinder claim at the fresh point
 };
+
+// ---- Merkle subset proof (pruned multi-path) ----
+// Deterministic bottom-up frontier walk over the sorted-unique leaf positions:
+// where BOTH children of a parent are in the frontier the parent is computed;
+// otherwise exactly one sibling hash is consumed from (verify) / emitted to
+// (prove) the canonical node stream.  Same walk on both sides, so the stream
+// order needs no indices.
+// prover side: paths[i] = full auth path of leaf upos[i]; the sibling of a
+// frontier node at level l is path node l of any covered leaf below it (the
+// walk tracks the first covered leaf's slot).
+static inline std::vector<Hash> subset_prove(uint32_t logM, const std::vector<uint32_t>& upos,
+                                             const std::vector<Hash>& leaves,
+                                             const std::vector<std::vector<Hash>>& paths,
+                                             Hash* root_out = nullptr) {
+    std::vector<Hash> nodes;
+    // frontier of (nodeidx, hash, leafslot): leafslot = index into upos/paths
+    std::vector<std::tuple<uint32_t, Hash, uint32_t>> fr(upos.size());
+    for (size_t i = 0; i < upos.size(); i++) fr[i] = {upos[i], leaves[i], (uint32_t)i};
+    for (uint32_t l = 0; l < logM; l++) {
+        std::vector<std::tuple<uint32_t, Hash, uint32_t>> nx;
+        size_t i = 0;
+        while (i < fr.size()) {
+            uint32_t idx = std::get<0>(fr[i]);
+            uint32_t slot = std::get<2>(fr[i]);
+            Hash h;
+            if (!(idx & 1) && i + 1 < fr.size() && std::get<0>(fr[i + 1]) == (idx | 1)) {
+                h = p3fri::node_hash(std::get<1>(fr[i]), std::get<1>(fr[i + 1]));
+                i += 2;
+            } else {
+                Hash sib = paths[slot][l];
+                nodes.push_back(sib);
+                h = (idx & 1) ? p3fri::node_hash(sib, std::get<1>(fr[i]))
+                              : p3fri::node_hash(std::get<1>(fr[i]), sib);
+                i += 1;
+            }
+            nx.push_back({idx >> 1, h, slot});
+        }
+        fr = std::move(nx);
+    }
+    if (root_out) *root_out = std::get<1>(fr[0]);
+    return nodes;
+}
+// verifier-side wrapper: reconstruct the root from leaves + pruned node stream
+static inline bool subset_verify(uint32_t logM, const std::vector<uint32_t>& upos,
+                                 const std::vector<Hash>& leaves,
+                                 const std::vector<Hash>& nodes, const Hash& root) {
+    std::vector<std::pair<uint32_t, Hash>> fr(upos.size());
+    for (size_t i = 0; i < upos.size(); i++) fr[i] = {upos[i], leaves[i]};
+    size_t ni = 0;
+    for (uint32_t l = 0; l < logM; l++) {
+        std::vector<std::pair<uint32_t, Hash>> nx;
+        size_t i = 0;
+        while (i < fr.size()) {
+            uint32_t idx = fr[i].first;
+            Hash h;
+            if (!(idx & 1) && i + 1 < fr.size() && fr[i + 1].first == (idx | 1)) {
+                h = p3fri::node_hash(fr[i].second, fr[i + 1].second);
+                i += 2;
+            } else {
+                if (ni >= nodes.size()) return false;
+                const Hash& sib = nodes[ni++];
+                h = (idx & 1) ? p3fri::node_hash(sib, fr[i].second)
+                              : p3fri::node_hash(fr[i].second, sib);
+                i += 1;
+            }
+            nx.push_back({idx >> 1, h});
+        }
+        fr = std::move(nx);
+    }
+    return ni == nodes.size() && fr.size() == 1 && fr[0].second == root;
+}
 
 // prover ledger: values pointer + commitment root per obligation
 struct PLedger {
-    struct Ent { const std::vector<gl_t>* vals; Hash root; uint32_t zid; gl_t y; };
+    struct Ent { const std::vector<gl_t>* vals; Hash root; uint32_t zid; gl_t y;
+                 uint64_t sseed; };
     struct Cls { uint32_t v; std::vector<std::vector<gl_t>> pts; std::vector<Ent> ents; };
     std::vector<Cls> cls;
-    void add(const std::vector<gl_t>* vals, const Hash& root, const std::vector<gl_t>& z, gl_t y) {
+    void add(const std::vector<gl_t>* vals, const Hash& root, const std::vector<gl_t>& z,
+             gl_t y, uint64_t sseed = 0) {
         uint32_t vv = (uint32_t)z.size();
         for (auto& c : cls) if (c.v == vv) {
             uint32_t zid = 0;
             while (zid < c.pts.size() && c.pts[zid] != z) zid++;
             if (zid == c.pts.size()) c.pts.push_back(z);
-            c.ents.push_back({vals, root, zid, y});
+            c.ents.push_back({vals, root, zid, y, sseed});
             return;
         }
-        cls.push_back({vv, {z}, {{vals, root, 0, y}}});
+        cls.push_back({vv, {z}, {{vals, root, 0, y, sseed}}});
     }
 };
 // verifier ledger: roots only
@@ -121,21 +202,45 @@ static inline SumMsg bo_scmsg(const gl_t* d_c, const gl_t* d_w, uint32_t half,
 }
 
 // ==================== prover ====================
-static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C,
+static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_in,
                                      uint32_t R, uint32_t Q, const std::string& label) {
-    const uint32_t v = C.v, N = 1u << v, T = (uint32_t)C.pts.size();
+    const uint32_t v = C_in.v, N = 1u << v, T0 = (uint32_t)C_in.pts.size();
     const uint32_t logM0 = v + R, M0 = 1u << logM0;
-    const size_t k = C.ents.size();
     BatchProof pf; pf.v = v; pf.R = R; pf.Q = Q;
+
+    // zk: append the class BLINDER -- one fresh full-domain uniform committed
+    // column with one claim at a fresh point.  It enters the mu-combination and
+    // the rho-RLC like a real column, one-time-padding the combined word U (the
+    // opening messages, fold openings and final word become uniform) and
+    // blinding the reduction messages through its own term.
+    PLedger::Cls C = C_in;
+    std::vector<gl_t> blv;
+    if (p3zkc::G.on) {
+        blv.resize(N);
+        { uint64_t s = p3zkc::next_seed();
+          if (p3zkc::G.blind_on) for (auto& x : blv) x = p3zkc::zprng(s); }
+        uint64_t blseed = p3zkc::next_seed();
+        pf.bl_root = p3zkc::salted_commit_root(blv, R, blseed);
+        tr.absorb("bo-blr", pf.bl_root.data(), 32);
+        std::vector<gl_t> zD(v); for (auto& x : zD) x = chal(tr);
+        pf.bl_y = p3bf::eval_h(blv, p3bf::build_eq(zD));
+        tr.absorb("bo-bly", &pf.bl_y, 8);
+        C.pts.push_back(zD);
+        C.ents.push_back({&blv, pf.bl_root, T0, pf.bl_y, blseed});
+    }
+    const uint32_t T = (uint32_t)C.pts.size();
+    const size_t k = C.ents.size();
 
     // distinct columns by root (first appearance), entry -> column map
     std::vector<const std::vector<gl_t>*> hcols;
     std::vector<Hash> droots;
+    std::vector<uint64_t> dsseed;
     std::vector<uint32_t> colidx(k);
     for (size_t j = 0; j < k; j++) {
         uint32_t c = 0;
         while (c < droots.size() && !(droots[c] == C.ents[j].root)) c++;
-        if (c == droots.size()) { droots.push_back(C.ents[j].root); hcols.push_back(C.ents[j].vals); }
+        if (c == droots.size()) { droots.push_back(C.ents[j].root); hcols.push_back(C.ents[j].vals);
+                                  dsseed.push_back(C.ents[j].sseed); }
         colidx[j] = c;
     }
     const uint32_t nc = (uint32_t)hcols.size();
@@ -224,7 +329,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C,
     }
 
     // ---- Basefold opening of U at r* (round 0 uncommitted) ----
-    P3Ntt ntt(logM0);
+    const P3Ntt& ntt = p3bf::ntt_plan(logM0);
     std::vector<gl_t*> d_cw(v + 1, nullptr);
     d_cw[0] = bo_encode_dev(dU, N, logM0, ntt);
     fs::Transcript ot(label);
@@ -285,30 +390,43 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C,
             ro.pa = paths[2 * q]; ro.pb = paths[2 * q + 1];
         }
     }
-    // round-0 per-column openings against the ORIGINAL commitments
+    // round-0 per-column SUBSET openings against the ORIGINAL commitments:
+    // sorted-unique positions, one pruned Merkle node stream per column
     {
-        std::vector<uint32_t> idxs0(2 * Q);
-        for (uint32_t q = 0; q < Q; q++) { idxs0[2 * q] = ccq[q][0]; idxs0[2 * q + 1] = ccq[q][0] + M0 / 2; }
-        uint32_t* d_idx; cudaMallocAsync(&d_idx, (size_t)2 * Q * 4, 0);
-        cudaMemcpy(d_idx, idxs0.data(), (size_t)2 * Q * 4, cudaMemcpyHostToDevice);
-        gl_t* d_val; cudaMallocAsync(&d_val, (size_t)2 * Q * 8, 0);
-        pf.q0.assign(Q, {});
-        for (uint32_t q = 0; q < Q; q++) {
-            pf.q0[q].a.resize(nc); pf.q0[q].b.resize(nc);
-            pf.q0[q].pa.resize(nc); pf.q0[q].pb.resize(nc);
-        }
-        std::vector<gl_t> vals(2 * Q);
+        std::vector<uint32_t> upos;
+        for (uint32_t q = 0; q < Q; q++) { upos.push_back(ccq[q][0]); upos.push_back(ccq[q][0] + M0 / 2); }
+        std::sort(upos.begin(), upos.end());
+        upos.erase(std::unique(upos.begin(), upos.end()), upos.end());
+        const uint32_t nu = (uint32_t)upos.size();
+        uint32_t* d_idx; cudaMallocAsync(&d_idx, (size_t)nu * 4, 0);
+        cudaMemcpy(d_idx, upos.data(), (size_t)nu * 4, cudaMemcpyHostToDevice);
+        gl_t* d_val; cudaMallocAsync(&d_val, (size_t)nu * 8, 0);
+        pf.q0c.assign(nc, {});
+        const bool zk_salted = p3zkc::G.on && p3zkc::G.salt_on;
         for (uint32_t c = 0; c < nc; c++) {
             gl_t* d_cwc = bo_encode_dev(dcol[c], N, logM0, ntt);
-            p3fri::DeviceMerkle mk; mk.build_dev(d_cwc, M0); cudaDeviceSynchronize();
-            p3bf::p3bf_gather_kernel<<<(2 * Q + 255) / 256, 256>>>(d_cwc, d_idx, d_val, 2 * Q);
-            cudaMemcpy(vals.data(), d_val, (size_t)2 * Q * 8, cudaMemcpyDeviceToHost);
-            auto paths = mk.paths_batch(idxs0);
-            for (uint32_t q = 0; q < Q; q++) {
-                pf.q0[q].a[c] = vals[2 * q]; pf.q0[q].b[c] = vals[2 * q + 1];
-                pf.q0[q].pa[c] = paths[2 * q]; pf.q0[q].pb[c] = paths[2 * q + 1];
+            std::vector<std::vector<Hash>> paths;
+            BQ0C& oc = pf.q0c[c];
+            oc.vals.resize(nu);
+            if (zk_salted) {
+                p3zkc::SaltedDevMerkle mk; mk.build_dev(d_cwc, M0, dsseed[c]); cudaDeviceSynchronize();
+                paths = mk.paths_batch(upos);
+                mk.free_();
+                oc.salts.resize(nu);
+                for (uint32_t i = 0; i < nu; i++) oc.salts[i] = p3zkc::salt_of(dsseed[c], upos[i]);
+            } else {
+                p3fri::DeviceMerkle mk; mk.build_dev(d_cwc, M0); cudaDeviceSynchronize();
+                paths = mk.paths_batch(upos);
+                mk.free_();
             }
-            mk.free_(); cudaFreeAsync(d_cwc, 0);
+            p3bf::p3bf_gather_kernel<<<(nu + 255) / 256, 256>>>(d_cwc, d_idx, d_val, nu);
+            cudaMemcpy(oc.vals.data(), d_val, (size_t)nu * 8, cudaMemcpyDeviceToHost);
+            std::vector<Hash> leaves(nu);
+            for (uint32_t i = 0; i < nu; i++)
+                leaves[i] = zk_salted ? p3zkc::salted_leaf(oc.vals[i], oc.salts[i])
+                                      : p3fri::leaf_hash(oc.vals[i]);
+            oc.nodes = subset_prove(logM0, upos, leaves, paths);
+            cudaFreeAsync(d_cwc, 0);
         }
         cudaFreeAsync(d_idx, 0); cudaFreeAsync(d_val, 0);
     }
@@ -321,14 +439,26 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C,
 }
 
 // ==================== verifier ====================
-static inline bool verify_class(fs::Transcript& tr, const VLedger::Cls& C, const BatchProof& pf,
+static inline bool verify_class(fs::Transcript& tr, const VLedger::Cls& C_in, const BatchProof& pf,
                                 uint32_t Q_pub, uint32_t R_pub, const std::string& label,
                                 const char** why) {
     auto fail = [&](const char* m) { if (why) *why = m; return false; };
-    const uint32_t v = C.v, T = (uint32_t)C.pts.size();
+    const uint32_t v = C_in.v;
     const uint32_t logM0 = v + R_pub, M0 = 1u << logM0;
-    const size_t k = C.ents.size();
     if (pf.v != v || pf.R != R_pub || pf.Q != Q_pub) return fail("batch params");
+
+    // zk: mirror the class blinder (root/claim from the proof, fresh point)
+    VLedger::Cls C = C_in;
+    if (p3zkc::G.on) {
+        tr.absorb("bo-blr", pf.bl_root.data(), 32);
+        std::vector<gl_t> zD(v); for (auto& x : zD) x = chal(tr);
+        gl_t by = pf.bl_y;
+        tr.absorb("bo-bly", &by, 8);
+        C.ents.push_back({pf.bl_root, (uint32_t)C.pts.size(), by});
+        C.pts.push_back(zD);
+    }
+    const uint32_t T = (uint32_t)C.pts.size();
+    const size_t k = C.ents.size();
 
     // distinct columns by root, first appearance (must match prover)
     std::vector<Hash> droots;
@@ -344,7 +474,7 @@ static inline bool verify_class(fs::Transcript& tr, const VLedger::Cls& C, const
     if (pf.rmsgs.size() != v || pf.omsgs.size() != v) return fail("batch msg count");
     if (pf.roots.size() != (v > 0 ? v - 1 : 0)) return fail("batch root count");
     if (pf.final_word.size() != (1u << R_pub)) return fail("batch final size");
-    if (pf.queries.size() != Q_pub || pf.q0.size() != Q_pub) return fail("batch query count");
+    if (pf.queries.size() != Q_pub || pf.q0c.size() != nc) return fail("batch query count");
 
     gl_t mu = chal(tr);
     gl_t claim = 0, wj = 1ULL;
@@ -398,25 +528,44 @@ static inline bool verify_class(fs::Transcript& tr, const VLedger::Cls& C, const
     if (oclaim != gl_mul(pf.final_word[0], p3bf::eq_point(alphas, rstar)))
         return fail("batch eval tie");
 
-    // queries
+    // query round-0 positions (transcript draw order unchanged), deduped
+    std::vector<uint32_t> c0q(Q_pub);
+    for (uint32_t q = 0; q < Q_pub; q++) c0q[q] = (uint32_t)p3fri::idx_from(ot, M0 / 2);
+    std::vector<uint32_t> upos;
+    for (uint32_t q = 0; q < Q_pub; q++) { upos.push_back(c0q[q]); upos.push_back(c0q[q] + M0 / 2); }
+    std::sort(upos.begin(), upos.end());
+    upos.erase(std::unique(upos.begin(), upos.end()), upos.end());
+    const uint32_t nu = (uint32_t)upos.size();
+    auto slot_of = [&](uint32_t pos) {
+        return (uint32_t)(std::lower_bound(upos.begin(), upos.end(), pos) - upos.begin());
+    };
+    // authenticate every distinct column's subset opening against its root
+    {
+        const bool zk_salted = p3zkc::G.on && p3zkc::G.salt_on;
+        for (uint32_t cc = 0; cc < nc; cc++) {
+            const BQ0C& oc = pf.q0c[cc];
+            if (oc.vals.size() != nu) return fail("batch q0 size");
+            if (zk_salted && oc.salts.size() != nu) return fail("batch q0 salt count");
+            std::vector<Hash> leaves(nu);
+            for (uint32_t i = 0; i < nu; i++)
+                leaves[i] = zk_salted ? p3zkc::salted_leaf(oc.vals[i], oc.salts[i])
+                                      : p3fri::leaf_hash(oc.vals[i]);
+            if (!subset_verify(logM0, upos, leaves, oc.nodes, droots[cc]))
+                return fail("batch q0 merkle");
+        }
+    }
     for (uint32_t q = 0; q < Q_pub; q++) {
-        uint32_t c0 = (uint32_t)p3fri::idx_from(ot, M0 / 2);
-        const BQ0& z0 = pf.q0[q];
-        if (z0.a.size() != nc || z0.b.size() != nc || z0.pa.size() != nc || z0.pb.size() != nc)
-            return fail("batch q0 size");
+        uint32_t c0 = c0q[q];
         uint32_t p = c0;
         for (uint32_t r = 0; r < v; r++) {
             uint32_t half = (M0 >> r) / 2, c = p % half;
             gl_t a, b;
             if (r == 0) {
                 a = 0; b = 0;
+                uint32_t sa = slot_of(c), sb = slot_of(c + half);
                 for (uint32_t cc = 0; cc < nc; cc++) {
-                    if (!p3fri::verify_path(p3fri::leaf_hash(z0.a[cc]), c, z0.pa[cc], droots[cc]))
-                        return fail("batch q0 merkle a");
-                    if (!p3fri::verify_path(p3fri::leaf_hash(z0.b[cc]), c + half, z0.pb[cc], droots[cc]))
-                        return fail("batch q0 merkle b");
-                    a = gl_add(a, gl_mul(rhop[cc], z0.a[cc]));
-                    b = gl_add(b, gl_mul(rhop[cc], z0.b[cc]));
+                    a = gl_add(a, gl_mul(rhop[cc], pf.q0c[cc].vals[sa]));
+                    b = gl_add(b, gl_mul(rhop[cc], pf.q0c[cc].vals[sb]));
                 }
             } else {
                 const p3fri::RoundOpen& ro = pf.queries[q].rounds[r - 1];
@@ -450,11 +599,9 @@ static inline size_t sz_batch(const BatchProof& pf) {
              + pf.roots.size() * 32 + pf.final_word.size() * 8;
     for (auto& q : pf.queries)
         for (auto& r : q.rounds) s += 16 + (r.pa.size() + r.pb.size()) * 32;
-    for (auto& z : pf.q0) {
-        s += (z.a.size() + z.b.size()) * 8;
-        for (auto& p : z.pa) s += p.size() * 32;
-        for (auto& p : z.pb) s += p.size() * 32;
-    }
+    for (auto& z : pf.q0c)
+        s += z.vals.size() * 8 + z.salts.size() * 32 + z.nodes.size() * 32;
+    if (p3zkc::G.on) s += 40;                               // blinder root + claim
     return s;
 }
 
