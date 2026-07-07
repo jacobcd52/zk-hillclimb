@@ -192,7 +192,7 @@ int main() {
         { auto p2 = pf; p2.yDeMX = gl_add(p2.yDeMX, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered max-pattern broadcast claim rejects", rj, why); }
-        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].gk.P = gl_add(p2.lug[0].sub[0].gk.P, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered EXP lookup sum rejects", rj, why); }
         { auto p2 = pf; p2.yBS = gl_add(p2.yBS, 1ULL);

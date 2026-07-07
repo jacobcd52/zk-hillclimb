@@ -180,7 +180,7 @@ int main() {
           for (auto& g : p2.lug) { for (auto& sb : g.sub) for (auto& m : sb.mem) if (!m.extra.empty()) { m.extra[0] = gl_add(m.extra[0], 1ULL); goto ropedone; } } ropedone:;
           bool rj = !vfy(p2, Q);
           ck("tampered MUL7 key binding rejects", rj, why); }
-        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].gk.P = gl_add(p2.lug[0].sub[0].gk.P, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered combine RNE lookup sum rejects", rj, why); }
     }

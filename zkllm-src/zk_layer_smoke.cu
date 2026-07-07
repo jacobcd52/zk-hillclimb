@@ -42,7 +42,7 @@ int main(){
     Config CFG = WW.cfg;
     const vector<uint16_t>* xin = trace_get(TR, "input");
     vector<uint16_t> X0PUB = *xin;
-    TfTables T = build_tables(A);
+    TfTables T = p3tf::build_tables(A);
 
     p3zkc::G.on=true; p3zkc::G.Q=Q;
 

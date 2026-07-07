@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);
           ck("tampered claimed Y evaluation rejects", !ok, why); }
-        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].gk.P = gl_add(p2.lug[0].sub[0].gk.P, 1ULL);
           fs::Transcript tv("rms");
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);

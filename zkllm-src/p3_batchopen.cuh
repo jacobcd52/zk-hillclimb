@@ -277,6 +277,19 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         return &genscratch;
     };
 
+    // env-gated ledger validation (debug): every claimed y must equal the
+    // column's MLE at its point -- prints the first mismatch per class
+    if (getenv("P3_LUDBG")) {
+        for (size_t j = 0; j < k; j++) {
+            const std::vector<gl_t>* cv = col_host(colidx[j]);
+            gl_t yy = p3bf::eval_h(*cv, p3bf::build_eq(C.pts[C.ents[j].zid]));
+            if (yy != C.ents[j].y)
+                fprintf(stderr, "# LUDBG class v=%u ent %zu/%zu zid=%u root=%02x%02x.. y=%llu evals-to %llu\n",
+                        v, j, k, C.ents[j].zid, C.ents[j].root[0], C.ents[j].root[1],
+                        (unsigned long long)C.ents[j].y, (unsigned long long)yy);
+        }
+    }
+
     gl_t mu = chal(tr);
 
     // ---- memory modes (transcript-identical; only WHERE arrays live differs) --

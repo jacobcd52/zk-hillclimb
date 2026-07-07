@@ -169,7 +169,7 @@ int main() {
           bool ok = verify(tv, T, p2, ops0.GATE.root, ops0.UP.root, ops0.M.root,
                            L0.n, Q, R, &why);
           ck("tampered claimed M evaluation rejects", !ok, why); }
-        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].gk.P = gl_add(p2.lug[0].sub[0].gk.P, 1ULL);
           fs::Transcript tv("swg");
           bool ok = verify(tv, T, p2, ops0.GATE.root, ops0.UP.root, ops0.M.root,
                            L0.n, Q, R, &why);

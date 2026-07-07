@@ -39,6 +39,7 @@
 #include "p3_zkc.cuh"
 #include "p3_batchopen.cuh"
 #include "p3_scgpu.cuh"
+#include "p3_gkr.cuh"
 #include "fs_transcript.hpp"
 
 namespace p3lu {
@@ -228,40 +229,43 @@ struct LookupProof {
     gl_t y_hA_c = 0, y_hT_c = 0, y_cnt_c = 0;
 };
 
-// one MERGED lookup instance.  v2 (TABLE-level merge): a GroupProof is now one
+// one MERGED lookup instance.  v3 (GKR fractional-sum): a GroupProof is one
 // SUPERGROUP = all obligations of one table, bundled as per-(log-rows) A-side
-// subgroups (each with its own stacked domain, hA, blinds and A-chain) that
-// SHARE one cnt / hT / T-side chain over the table domain -- the table-side
-// work (Tc combine+inversion, hT+cnt commits, 3 T-blinds, the T sumcheck and
-// its evals) is paid once per TABLE per flush instead of once per (table, n)
-// group.  Soundness: the logUp multiset identity over the UNION of the
-// subgroups' rows -- sum_s S_A,s == S_T with cnt the summed multiplicities;
-// each subgroup's A-chain binds its own S_s, the T-chain starts from
-// lamT * sum_s S_s.
+// subgroups that share ONE T side.  v3 replaces the v2 committed helper
+// columns (hA per subgroup, hT) and their per-chain Libra blind columns with
+// COMMIT-FREE GKR fraction trees (p3_gkr.cuh): each subgroup publishes its
+// tree root (P_s, Q_s) with P_s/Q_s = sum of the subgroup's leaf fractions
+// and a GKR layer chain reducing it to leaf claims; ONE T-side tree per
+// table does the same for sum_j cnt_j/(Tc_j+beta).  Only cnt is committed
+// (as in v2), plus in zk mode two uniform mask-leaf stream columns per tree
+// (sibling-interleaved so every height-1 node is uniform -- the whole chain
+// above the leaves becomes simulatable; the leaf claims land on the
+// mechanism-1-blinded member/cnt augmented evals and on the mask MLEs).
+// The multiset identity is checked on the published roots:
+//   sum_s P_s/Q_s == P_T/Q_T
+// with all mask fraction sums fixed BEFORE gamma/beta are drawn (the logUp
+// Schwartz-Zippel argument needs the mask junk fixed pre-beta; the honest
+// fixup makes it cancel exactly: SmT = sum_s SmA_s - Sm_cnt).
 struct LuMember { std::vector<gl_t> yW, y_virt, extra; };
 struct LuSubA {
     uint32_t n = 0, k = 0;                 // member log-rows, #members
-    p3fri::Hash root_hA;
-    gl_t S = 0;                            // subgroup rational sum (zk: blinded S')
-    p3zkc::Blind blA;
-    std::vector<Msg4> msgsA;
+    p3fri::Hash rt_pm = {}, rt_qm = {};    // zk: mask leaf stream commitments
+    p3gkr::Proof gk;                       // root (P,Q) + layer chain
     std::vector<LuMember> mem;             // size k, member (registration) order
-    gl_t y_hA_c = 0;
 };
 struct GroupProof {
     uint32_t m = 0, c = 0;                 // table log-rows, #cols
-    p3fri::Hash root_cnt, root_hT;
-    p3zkc::Blind blT;
-    std::vector<Msg4> msgsT;
+    p3fri::Hash root_cnt;
+    p3fri::Hash rt_pmT = {}, rt_qmT = {};  // zk: T-side mask leaf commitments
+    p3gkr::Proof gkT;
     std::vector<LuSubA> sub;               // per-(log-rows) subgroups, flush order
-    gl_t y_hT_c = 0, y_cnt_c = 0;
 };
 static inline size_t sz_group(const GroupProof& pf) {
-    size_t s = 8 + 2 * 32 + pf.msgsT.size() * 32 + 16;
-    if (p3zkc::G.on) s += 3 * 32 + 8 + 3 * 8;
+    size_t s = 8 + 32 + p3gkr::sz_proof(pf.gkT);
+    if (p3zkc::G.on) s += 2 * 32;
     for (auto& sb : pf.sub) {
-        s += 8 + 32 + 8 + sb.msgsA.size() * 32 + 8;
-        if (p3zkc::G.on) s += 3 * 32 + 8 + 3 * 8;
+        s += 8 + p3gkr::sz_proof(sb.gk);
+        if (p3zkc::G.on) s += 2 * 32;
         for (auto& m : sb.mem)
             s += (m.yW.size() + m.y_virt.size() + m.extra.size()) * 8;
     }
@@ -994,15 +998,28 @@ static inline gl_t eq_bits(const std::vector<gl_t>& r, uint32_t off, uint32_t g,
     return e;
 }
 
-// ---- per-TABLE supergroup prover (v2 merge: shared T-side) ----
+// ---- per-TABLE supergroup prover (v3 GKR: commit-free fraction chains) ----
 // smi/sns: subgroup member-index lists and their member log-rows; all
-// obligations share ONE table.  Each subgroup runs its own A-side (stacked
-// domain, hA, blinds, cubic chain, member claims at its pm) exactly as the
-// v1 per-(table,n) group did; cnt (summed multiplicities), hT and the entire
-// T-side chain run ONCE for the table.  zk: each subgroup's S is blinded by
-// its own hA mask-tail sum; the hT mask is fixed up so the augmented T-side
-// sum equals sum_s S'_s, preserving the S_A == S_T forgery check on blinded
-// values (same mechanism as v1, applied to the sum).
+// obligations share ONE table.  Each subgroup's A side and the shared T side
+// are proven by GKR fractional-sum trees (p3_gkr.cuh) instead of committed
+// helper columns + batched cubic sumchecks: no hA/hT commits, no Libra blind
+// columns, no helper openings.  Only cnt is committed (augmented, mechanism
+// 1), plus in zk mode two uniform mask-leaf stream columns per tree,
+// interleaved as the odd sibling of every real leaf:
+//   A side, x = i|(j<<n)|(ex<<(n+g)) over 2^(n+g+E):
+//     leaf(2x) = ( ex==0 ? 1 : 0 ,  Am(x)+beta )   real / witness-mask rows
+//     leaf(2x+1) = ( pmA(x), qmA(x) )              committed uniform masks
+//   T side, x = j|(ex<<m) over 2^(m+e2):
+//     leaf(2x) = ( cnt_aug(x), ex==0 ? Tc_j+beta : 1 ),  leaf(2x+1) = (pmT,qmT)
+// Witness-mask rows contribute ZERO to the A sum (p=0); cnt's mask tail rides
+// as beta-INDEPENDENT additive junk Sm_cnt; pmT's last entry is fixed so the
+// total mask junk cancels (SmT = sum_s SmA_s - Sm_cnt).  All mask columns are
+// committed BEFORE gamma/beta (the logUp Schwartz-Zippel argument needs the
+// junk fixed pre-beta).  The multiset identity is checked on the published
+// roots: sum_s P_s/Q_s == P_T/Q_T.  ZK: every height-1 tree node is uniform
+// (each real leaf has a fresh uniform sibling), so the whole chain above the
+// leaves is simulatable; the leaf claims land on chi[ex=0]~ (public), the
+// mechanism-1-blinded member/cnt augmented evals, and the mask MLEs.
 static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
                                      const std::vector<std::vector<size_t>>& smi,
                                      const std::vector<uint32_t>& sns,
@@ -1069,23 +1086,79 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         }
     if (p3zp::on()) { p3zp::g.lug_cnt.ms += p3zp::nowms() - zt_cnt0; p3zp::g.lug_cnt.n++; }
 
+    // ---- zk: commit ALL mask-leaf stream columns BEFORE gamma/beta ----
+    // (their fraction sums are the blinding junk; committing them pre-beta is
+    // what keeps the mask-cancelled logUp identity sound under Schwartz-Zippel)
+    struct AMask { uint64_t pseed = 0, qseed = 0; Col PM, QM; gl_t Sm = 0; };
+    std::vector<AMask> am(ns);
+    Col PMT, QMT;
+    if (zk) {
+        double t_mk = lu_now_ms();
+        const bool mo = p3zkc::G.mask_on;
+        gl_t SmA = 0;
+        for (uint32_t s = 0; s < ns; s++) {
+            const uint32_t n = sns[s], k = (uint32_t)smi[s].size();
+            uint32_t g = 0; while ((1u << g) < k) g++;
+            const uint32_t E = p3zkc::e_of(n);
+            const size_t NM = (size_t)1 << (n + g + E);
+            AMask& a = am[s];
+            // multiplicative masks: pm = sm*qm with independent uniform streams
+            // sm, qm -- pm/qm = sm, so the mask fraction sum is a PLAIN SUM of
+            // the sm stream (no inversions), and (pm,qm) stays a uniform pair
+            a.pseed = p3zkc::next_seed(); a.qseed = p3zkc::next_seed();
+            a.PM.v.resize(NM); a.QM.v.resize(NM);
+            gl_t sm = 0;
+            for (size_t i = 0; i < NM; i++) {
+                gl_t smv = mo ? p3zkc::zprng_at(a.pseed, i) : 0ULL;
+                a.QM.v[i] = mo ? p3zkc::zprng_at(a.qseed, i) : 1ULL;
+                a.PM.v[i] = gl_mul(smv, a.QM.v[i]);
+                sm = gl_add(sm, smv);
+            }
+            a.PM.vreal = n + g + E; a.PM.sseed = p3zkc::next_seed();
+            a.PM.root = p3zkc::salted_commit_root(a.PM.v, R, a.PM.sseed);
+            a.QM.vreal = n + g + E; a.QM.sseed = p3zkc::next_seed();
+            a.QM.root = p3zkc::salted_commit_root(a.QM.v, R, a.QM.sseed);
+            pf.sub[s].rt_pm = a.PM.root; pf.sub[s].rt_qm = a.QM.root;
+            tr.absorb("lug-pm", a.PM.root.data(), 32);
+            tr.absorb("lug-qm", a.QM.root.data(), 32);
+            a.Sm = sm; SmA = gl_add(SmA, sm);
+        }
+        // T side: qmT stream; pmT stream with the LAST entry fixed so the total
+        // mask junk cancels: SmT = sum_s SmA_s - Sm_cnt
+        const uint32_t e2 = p3zkc::e_of(m);
+        const size_t MT = (size_t)1 << (m + e2);
+        uint64_t pseedT = p3zkc::next_seed(), qseedT = p3zkc::next_seed();
+        PMT.v.resize(MT); QMT.v.resize(MT);
+        gl_t Smcnt = 0;
+        for (size_t i = M; i < Ccnt.v.size(); i++) Smcnt = gl_add(Smcnt, Ccnt.v[i]);
+        gl_t part = 0;
+        for (size_t i = 0; i < MT; i++) {
+            gl_t smt = mo ? p3zkc::zprng_at(pseedT, i) : 0ULL;
+            QMT.v[i] = mo ? p3zkc::zprng_at(qseedT, i) : 1ULL;
+            if (i + 1 < MT) { PMT.v[i] = gl_mul(smt, QMT.v[i]); part = gl_add(part, smt); }
+        }
+        // last mask fraction fixed so the junk cancels: smT_last = target - part
+        PMT.v[MT - 1] = gl_mul(gl_sub(gl_sub(SmA, Smcnt), part), QMT.v[MT - 1]);
+        PMT.vreal = m + e2; PMT.sseed = p3zkc::next_seed();
+        PMT.root = p3zkc::salted_commit_root(PMT.v, R, PMT.sseed);
+        QMT.vreal = m + e2; QMT.sseed = p3zkc::next_seed();
+        QMT.root = p3zkc::salted_commit_root(QMT.v, R, QMT.sseed);
+        pf.rt_pmT = PMT.root; pf.rt_qmT = QMT.root;
+        tr.absorb("lug-pmT", PMT.root.data(), 32);
+        tr.absorb("lug-qmT", QMT.root.data(), 32);
+        if (p3zp::on()) { p3zp::g.lug_hcom.ms += lu_now_ms() - t_mk; p3zp::g.lug_hcom.n++; }
+    }
+
     gl_t gamma = chal(tr), beta = chal(tr);
     std::vector<gl_t> gp(c); { gl_t w = 1ULL; for (uint32_t t = 0; t < c; t++) { gp[t] = w; w = gl_mul(w, gamma); } }
     gl_t a0 = 0; for (uint32_t t = 0; t < c; t++) a0 = gl_add(a0, gl_mul(gp[t], T.cols[t][0]));
 
-    // T-side combined table + helper inverses -- ONCE per table
-    double t_invT = lu_now_ms();
+    // T-side combined table -- ONCE per table (no helper inverses in v3)
     std::vector<const std::vector<gl_t>*> tp;
     for (auto& t : T.cols) tp.push_back(&t);
     std::vector<gl_t> Tc = combine(tp, gamma);
-    std::vector<gl_t> hT = inv_all_add(Tc, beta);
-    for (size_t j = 0; j < M; j++) hT[j] = gl_mul(cnt[j], hT[j]);
-    gl_t ST = 0;
-    for (auto x : hT) ST = gl_add(ST, x);
-    g_lustats.inv_ms += lu_now_ms() - t_invT;
-    if (p3zp::on()) { p3zp::g.lug_inv.ms += lu_now_ms() - t_invT; p3zp::g.lug_inv.n++; }
 
-    gl_t SAsum = 0, Spsum = 0;
+    gl_t accP = 0, accQ = 1ULL;            // exact running fraction sum_s P_s/Q_s
 
     // ---- per-subgroup A-sides (each fully proven, then its working set drops) --
     for (uint32_t s = 0; s < ns; s++) {
@@ -1130,174 +1203,32 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             }
         double t_inv = lu_now_ms();
         const double am_ms = t_inv - t_am;
-        std::vector<gl_t> Areal(Am.begin(), Am.begin() + NR);
-        std::vector<gl_t> hA = inv_all_add(Areal, beta);
-        g_lustats.inv_ms += lu_now_ms() - t_inv;
-        if (p3zp::on()) {
-            p3zp::g.lug_am.ms += am_ms; p3zp::g.lug_am.n++;
-            p3zp::g.lug_inv.ms += lu_now_ms() - t_inv;
-        }
-        gl_t SA = 0;
-        for (auto x : hA) SA = gl_add(SA, x);
-        SAsum = gl_add(SAsum, SA);
+        if (p3zp::on()) { p3zp::g.lug_am.ms += am_ms; p3zp::g.lug_am.n++; }
 
-        Col ChA;
-        gl_t Sp = SA;
-        uint64_t hAtailseed = 0;
-        double zt_hcom0 = p3zp::nowms();
-        if (zk) {
-            // merged hA: real prefix NR computed, mask tail (E member-policy
-            // slices) fresh uniform -- committed manually (the canonical
-            // e_of(n+g) policy would give a different width than the member
-            // ex coordinates)
-            hA.resize(NM, 0);
-            if (p3zkc::G.mask_on) {
-                hAtailseed = p3zkc::next_seed();
-                uint64_t sd = hAtailseed;
-                for (size_t i = NR; i < NM; i++) hA[i] = p3zkc::zprng(sd);
-            }
-            ChA.v = std::move(hA); ChA.vreal = n + g;
-            ChA.sseed = p3zkc::next_seed();
-            ChA.root = p3zkc::salted_commit_root(ChA.v, R, ChA.sseed);
-            Sp = 0; for (auto x : ChA.v) Sp = gl_add(Sp, x);
-        } else {
-            ChA = commit_col_nc(hA, R);
-        }
-        Spsum = gl_add(Spsum, Sp);
-        sp.root_hA = ChA.root;
-        if (p3zp::on()) { p3zp::g.lug_hcom.ms += p3zp::nowms() - zt_hcom0; p3zp::g.lug_hcom.n++; }
-        tr.absorb("lug-hA", sp.root_hA.data(), 32);
-        sp.S = Sp; tr.absorb("lug-S", &sp.S, sizeof sp.S);
-
-        // zk Libra blinds, A side over the merged full domain; big zk groups
-        // generate/commit them on the DEVICE (zprng_at; ledger regenerates)
-        const bool bigzk = zk && gpu && (n + g) >= 16;
-        std::vector<Col> BA(3);
-        gl_t* d_ba[3] = {nullptr, nullptr, nullptr};
-        uint64_t baseed[3] = {0, 0, 0};
-        gl_t rhoA = 0;
-        if (zk) {
-            double zt_bl0 = p3zp::nowms();
-            for (int j = 0; j < 3; j++) {
-                if (p3zkc::G.blind_on) baseed[j] = p3zkc::next_seed();
-                if (bigzk) {
-                    d_ba[j] = p3bf::dmalloc(NM, "lug:dblind");
-                    if (p3zkc::G.blind_on)
-                        p3zkc::p3zkc_fill_at_kernel<<<((uint32_t)((NM + 255) / 256)), 256>>>(
-                            d_ba[j], baseed[j], NM);
-                    else cudaMemsetAsync(d_ba[j], 0, (size_t)NM * 8, 0);
-                    BA[j].vreal = n + g;
-                    BA[j].sseed = p3zkc::next_seed();
-                    BA[j].root = p3zkc::salted_commit_root_dev(d_ba[j], NM, R, BA[j].sseed);
-                } else {
-                    std::vector<gl_t> b(NM, 0);
-                    if (p3zkc::G.blind_on) {
-                        uint64_t bs = baseed[j];
-                        #pragma omp parallel for schedule(static) if (NM >= 65536) num_threads(p3bf::nthr(NM))
-                        for (size_t i = 0; i < NM; i++) b[i] = p3zkc::zprng_at(bs, i);
-                    }
-                    BA[j].v = std::move(b); BA[j].vreal = n + g;
-                    BA[j].sseed = p3zkc::next_seed();
-                    BA[j].root = p3zkc::salted_commit_root(BA[j].v, R, BA[j].sseed);
-                }
-                sp.blA.rt[j] = BA[j].root; tr.absorb("lug-bA", BA[j].root.data(), 32);
-            }
-            sp.blA.nb = 3;
-            if (p3zp::on()) { p3zp::g.lug_blA.ms += p3zp::nowms() - zt_bl0; p3zp::g.lug_blA.n++; }
-        }
-
-        // ---- A-side sumcheck over the merged domain ----
-        std::vector<gl_t> zA = chal_vec(tr, n + g); gl_t lamA = chal(tr);
-        std::vector<gl_t> zAf = zA; zAf.resize(n + g + E, 0);
-        // zk: the blinded host chain pays a std::function call per row per
-        // t-point; the device chain (byte-identical messages) wins from ~2^14
-        const bool big = gpu && ((n + g) >= 16 || (zk && (n + g + E) >= 14));
-        gl_t* dE_pre = nullptr;                // big: device eq, reused by the sc
-        if (zk) {
-            p3zp::T zt(p3zp::g.lug_blH);
-            gl_t HA = 0;
-            if (big) {
-                gl_t* dz = p3bf::dmalloc(zAf.size(), "lug:z");
-                cudaMemcpy(dz, zAf.data(), zAf.size() * 8, cudaMemcpyHostToDevice);
-                dE_pre = p3bf::dmalloc(NM, "lug:scA-E");
-                p3bf::p3bf_eq_kernel<<<((uint32_t)NM + 255) / 256, 256>>>(
-                    dz, dE_pre, (uint32_t)zAf.size(), (uint32_t)NM);
-                cudaFreeAsync(dz, 0);
-                if (!bigzk) for (int j = 0; j < 3; j++) {   // blinds up now, reused by the sc
-                    d_ba[j] = p3bf::dmalloc(NM, "lug:scA-B");
-                    cudaMemcpy(d_ba[j], BA[j].v.data(), (size_t)NM * 8, cudaMemcpyHostToDevice);
-                }
-                const uint32_t NBH = 256;
-                gl_t* dout = p3bf::dmalloc(NBH, "lug:hsum");
-                p3lu_blindsum_kernel<<<NBH, 256>>>(d_ba[0], d_ba[1], d_ba[2], dE_pre, dout, NM);
-                std::vector<gl_t> hh(NBH);
-                cudaMemcpy(hh.data(), dout, (size_t)NBH * 8, cudaMemcpyDeviceToHost);
-                cudaFreeAsync(dout, 0);
-                for (auto x : hh) HA = gl_add(HA, x);
-            } else {
-                std::vector<gl_t> Ez = p3bf::build_eq(zAf);
-                const int P = NM >= 65536 ? 128 : 1;
-                std::vector<gl_t> part(P, 0);
-                #pragma omp parallel for schedule(static) if (P > 1) num_threads(p3bf::nthr(NM))
-                for (int p = 0; p < P; p++) {
-                    size_t lo = NM * p / P, hi = NM * (p + 1) / P;
-                    gl_t acc = 0;
-                    for (size_t b = lo; b < hi; b++)
-                        acc = gl_add(acc, gl_add(BA[0].v[b],
-                                 gl_mul(Ez[b], gl_add(BA[1].v[b], gl_mul(Ez[b], BA[2].v[b])))));
-                    part[p] = acc;
-                }
-                for (int p = 0; p < P; p++) HA = gl_add(HA, part[p]);
-            }
-            sp.blA.H = HA;
-            tr.absorb("lug-HA", &sp.blA.H, sizeof(gl_t));
-            rhoA = chal(tr);
-        }
+        // ---- GKR leaves: even = real/witness-mask rows, odd = zk mask siblings
         double t_sc = lu_now_ms();
-        std::vector<gl_t> rA;
-        std::vector<gl_t*> dc_fin;             // bigzk: bound (length-1) device columns
-        if (big) {
-            gl_t *dH, *dV, *dE, *dD, *dz;
-            dH = p3bf::dmalloc(NM, "lug:scA-H");
-            cudaMemcpy(dH, ChA.v.data(), (size_t)NM * 8, cudaMemcpyHostToDevice);
-            if (bigzk) { std::vector<gl_t>().swap(ChA.v); }   // regen closure registered below
-            dV = p3bf::dmalloc(NM, "lug:scA-V");
-            cudaMemcpy(dV, Am.data(), (size_t)NM * 8, cudaMemcpyHostToDevice);
-            if (bigzk) { std::vector<gl_t>().swap(Am); }
-            if (zk) dE = dE_pre;               // built for the blind-sum above
-            else {
-                uint32_t nz = n + g;
-                const gl_t* zsrc = zA.data();
-                cudaMallocAsync(&dz, (size_t)nz * 8, 0);
-                cudaMemcpy(dz, zsrc, (size_t)nz * 8, cudaMemcpyHostToDevice);
-                dE = p3bf::dmalloc(NM, "lug:scA-E");
-                p3bf::p3bf_eq_kernel<<<((uint32_t)NM + 255) / 256, 256>>>(dz, dE, nz, (uint32_t)NM);
-                cudaFreeAsync(dz, 0);
+        std::vector<gl_t> LP, LQ;
+        if (zk) {
+            AMask& a = am[s];
+            LP.resize(2 * NM); LQ.resize(2 * NM);
+            #pragma omp parallel for schedule(static) if (NM >= 65536) num_threads(p3bf::nthr(NM))
+            for (size_t x = 0; x < NM; x++) {
+                LP[2*x]   = x < NR ? 1ULL : 0ULL;
+                LQ[2*x]   = gl_add(Am[x], beta);
+                LP[2*x+1] = a.PM.v[x];
+                LQ[2*x+1] = a.QM.v[x];
             }
-            dD = p3bf::dmalloc(NM, "lug:scA-D");
-            p3sg::p3sg_fill_kernel<<<((uint32_t)NM + 255) / 256, 256>>>(dD, 1ULL, (uint32_t)NM);
-            if (zk) {
-                std::vector<gl_t*> dc = {dH, dV, dE, dD, d_ba[0], d_ba[1], d_ba[2]};
-                gl_t par3[3] = {lamA, beta, rhoA};
-                rA = p3sg::sc_prove_gpu<FLuGpuZk, Msg4, 4, 7>(tr, "lug-scA", dc, (uint32_t)NM,
-                                                              par3, 3, sp.msgsA);
-                if (bigzk) dc_fin = dc;        // terminals read below, then freed
-                else for (auto p : dc) cudaFreeAsync(p, 0);
-            } else {
-                std::vector<gl_t*> dc = {dH, dV, dE, dD};
-                gl_t par2[2] = {lamA, beta};
-                rA = p3sg::sc_prove_gpu<FLuGpu, Msg4, 4, 4>(tr, "lug-scA", dc, (uint32_t)NM,
-                                                            par2, 2, sp.msgsA);
-                for (auto p : dc) cudaFreeAsync(p, 0);
-            }
-        } else if (zk) {
-            std::vector<gl_t> Bcols[3] = {BA[0].v, BA[1].v, BA[2].v};
-            rA = sc_prove(ChA.v, Am, p3bf::build_eq(zAf), std::vector<gl_t>(NM, 1ULL),
-                          lamA, beta, tr, "lug-scA", sp.msgsA, Bcols, rhoA);
         } else {
-            rA = sc_prove(ChA.v, Am, p3bf::build_eq(zA), std::vector<gl_t>(NM, 1ULL),
-                          lamA, beta, tr, "lug-scA", sp.msgsA);
+            LP.assign(NR, 1ULL); LQ.resize(NR);
+            #pragma omp parallel for schedule(static) if (NR >= 65536) num_threads(p3bf::nthr(NR))
+            for (size_t x = 0; x < NR; x++) LQ[x] = gl_add(Am[x], beta);
         }
+        std::vector<gl_t>().swap(Am);
+        std::vector<gl_t> rA; gl_t cpA = 0, cqA = 0;
+        sp.gk = p3gkr::prove(tr, "lug-gA", std::move(LP), std::move(LQ), !zk,
+                             rA, &cpA, &cqA, gpu);
+        accP = gl_add(gl_mul(accP, sp.gk.Q), gl_mul(sp.gk.P, accQ));
+        accQ = gl_mul(accQ, sp.gk.Q);
         const double sc_ms = lu_now_ms() - t_sc;
         g_lustats.sc_ms += sc_ms;
         if (p3zp::on()) { p3zp::g.lug_scA.ms += sc_ms; p3zp::g.lug_scA.n++; }
@@ -1306,90 +1237,40 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         // shared member point pm = (rA[0..n) || rA[n+g..))
         std::vector<gl_t> pm(rA.begin(), rA.begin() + n);
         pm.insert(pm.end(), rA.begin() + n + g, rA.end());
-        std::vector<gl_t> eqrA, eqpm;
-        if (!big) eqrA = p3bf::build_eq(rA);
-        eqpm = p3bf::build_eq(pm);
-        auto evA = [&](const std::vector<gl_t>& col) {
-            return big ? p3bf::eval_h_gpu(col, rA) : p3bf::eval_h(col, eqrA);
-        };
-        // bigzk: the v-round binds reduced each device column to its value at rA
-        gl_t y_hA;
-        if (bigzk) cudaMemcpy(&y_hA, dc_fin[0], 8, cudaMemcpyDeviceToHost);
-        else y_hA = evA(ChA.v);
-        sp.y_hA_c = y_hA;
-        {
-            // hA is recomputable from the member witness columns (which the
-            // shared context keeps alive until the batched opening): register
-            // a rebuild closure and DROP the values
-            std::vector<std::vector<const std::vector<gl_t>*>> wsrc(k);
-            for (uint32_t j = 0; j < k; j++) {
-                auto& W = xc.luq[mi[j]].W;
-                for (uint32_t t = 0; t < c; t++)
-                    wsrc[j].push_back(W[t].com ? &W[t].com->v : W[t].virt);
+        std::vector<gl_t> eqpm = p3bf::build_eq(pm);
+
+        // zk: ledger-open the two mask columns at rA (claims = the published
+        // last-layer terminals); pure zprng streams -> drop + regenerate
+        if (zk) {
+            AMask& a = am[s];
+            const p3gkr::Lay& lyA = sp.gk.lay.back();
+            {
+                uint64_t ss = a.PM.sseed;
+                size_t NM3 = NM; uint64_t sd = a.pseed; bool mo2 = p3zkc::G.mask_on;
+                xc.keep.push_back(std::move(a.PM));
+                uint64_t sq = a.qseed;
+                xc.lg.add(&xc.keep.back().v, sp.rt_pm, rA, lyA.p1, ss, [NM3, sd, sq, mo2] {
+                    std::vector<gl_t> b(NM3);
+                    #pragma omp parallel for schedule(static) if (NM3 >= 65536) num_threads(p3bf::nthr(NM3))
+                    for (size_t i = 0; i < NM3; i++)
+                        b[i] = mo2 ? gl_mul(p3zkc::zprng_at(sd, i), p3zkc::zprng_at(sq, i)) : 0ULL;
+                    return b;
+                });
+                if (NM >= ((size_t)1 << 20)) { xc.keep.back().v.clear(); xc.keep.back().v.shrink_to_fit(); }
             }
-            std::vector<gl_t> gpc = gp;
-            uint32_t nn = n, kk2 = k, kp2 = kp, cc = c;
-            size_t NN = N, NR2 = NR, NM2 = NM;
-            gl_t beta2 = beta, a02 = a0;
-            bool zk2 = zk, mask2 = p3zkc::G.mask_on;
-            uint64_t tail2 = hAtailseed;
-            auto rebuild_hA = [wsrc, gpc, nn, kk2, kp2, cc, NN, NR2, NM2, beta2, a02,
-                               zk2, mask2, tail2]() {
-                std::vector<gl_t> Am2(NR2);
-                for (uint32_t j = 0; j < kp2; j++) {
-                    gl_t* dst = Am2.data() + ((size_t)j << nn);
-                    if (j >= kk2) {
-                        #pragma omp parallel for schedule(static) if (NN >= 65536) num_threads(p3bf::nthr(NN))
-                        for (size_t i = 0; i < NN; i++) dst[i] = a02;
-                        continue;
-                    }
-                    #pragma omp parallel for schedule(static) if (NN >= 65536) num_threads(p3bf::nthr(NN))
-                    for (size_t i = 0; i < NN; i++) {
-                        gl_t sacc = 0;
-                        for (uint32_t t = 0; t < cc; t++)
-                            sacc = gl_add(sacc, gl_mul(gpc[t], (*wsrc[j][t])[i]));
-                        dst[i] = sacc;
-                    }
-                }
-                std::vector<gl_t> h = inv_all_add(Am2, beta2);
-                if (zk2) {
-                    h.resize(NM2, 0);
-                    if (mask2) { uint64_t sd = tail2;
-                                 for (size_t i = NR2; i < NM2; i++) h[i] = p3zkc::zprng(sd); }
-                }
-                return h;
-            };
-            uint64_t ss = ChA.sseed;
-            xc.keep.push_back(std::move(ChA));
-            xc.lg.add(&xc.keep.back().v, sp.root_hA, rA, y_hA, ss, rebuild_hA);
-            // drop-and-regenerate only where it buys real memory: at small
-            // dims the batch opener would pay the full Am+inversion rebuild
-            if (NM >= ((size_t)1 << 20)) {
-                xc.keep.back().v.clear(); xc.keep.back().v.shrink_to_fit();
+            {
+                uint64_t ss = a.QM.sseed;
+                size_t NM3 = NM; uint64_t sd = a.qseed; bool mo2 = p3zkc::G.mask_on;
+                xc.keep.push_back(std::move(a.QM));
+                xc.lg.add(&xc.keep.back().v, sp.rt_qm, rA, lyA.q1, ss, [NM3, sd, mo2] {
+                    std::vector<gl_t> b(NM3);
+                    #pragma omp parallel for schedule(static) if (NM3 >= 65536) num_threads(p3bf::nthr(NM3))
+                    for (size_t i = 0; i < NM3; i++) b[i] = mo2 ? p3zkc::zprng_at(sd, i) : 1ULL;
+                    return b;
+                });
+                if (NM >= ((size_t)1 << 20)) { xc.keep.back().v.clear(); xc.keep.back().v.shrink_to_fit(); }
             }
         }
-        if (zk) for (int j = 0; j < 3; j++) {
-            if (bigzk) cudaMemcpy(&sp.blA.yB[j], dc_fin[4 + j], 8, cudaMemcpyDeviceToHost);
-            else sp.blA.yB[j] = evA(BA[j].v);
-            tr.absorb("lug-ybA", &sp.blA.yB[j], sizeof(gl_t));
-            uint64_t s2 = BA[j].sseed;
-            xc.keep.push_back(std::move(BA[j]));
-            size_t NM3 = NM; uint64_t bs = baseed[j]; bool bo = p3zkc::G.blind_on;
-            xc.lg.add(&xc.keep.back().v, sp.blA.rt[j], rA, sp.blA.yB[j], s2,
-                      [NM3, bs, bo] {
-                          std::vector<gl_t> b(NM3, 0);
-                          if (bo) {
-                              #pragma omp parallel for schedule(static) if (NM3 >= 65536) num_threads(p3bf::nthr(NM3))
-                              for (size_t i = 0; i < NM3; i++) b[i] = p3zkc::zprng_at(bs, i);
-                          }
-                          return b;
-                      });
-            if (NM >= ((size_t)1 << 20)) {
-                xc.keep.back().v.clear(); xc.keep.back().v.shrink_to_fit();
-            }
-        }
-        if (!dc_fin.empty()) { for (auto p : dc_fin) cudaFreeAsync(p, 0); dc_fin.clear(); }
-        p3bf::ckcuda("lug:A-side");
         // per-member witness claims at pm (+ the member's bind callback).
         // values first (independent exact dot products -- identical field
         // elements in any order and on either device), absorbed in order
@@ -1442,129 +1323,57 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             if (xc.luq[mi[j]].bind)
                 sp.mem[j].extra = xc.luq[mi[j]].bind(tr, xc, pm, sp.mem[j].y_virt);
         }
-        tr.absorb("lug-ends", &y_hA, sizeof(gl_t));
         const double cl_ms = lu_now_ms() - t_cl;
         if (p3zp::on()) { p3zp::g.lug_claims.ms += cl_ms; p3zp::g.lug_claims.n++; }
         if (p3bf::memlog() && NM >= ((size_t)1 << 22))
-            fprintf(stderr, "# lu group %s timing: am=%.0f inv+commit=%.0f scA=%.0f claims=%.0f ms\n",
-                    xc.luq[mi[0]].label.c_str(), am_ms, t_sc - t_inv, sc_ms, cl_ms);
+            fprintf(stderr, "# lu group %s timing: am=%.0f gkr=%.0f claims=%.0f ms\n",
+                    xc.luq[mi[0]].label.c_str(), am_ms, sc_ms, cl_ms);
         if (NM >= ((size_t)1 << 24)) p3bf::trim_heap();
     }
 
-    if (strict && SAsum != ST)
-        throw std::runtime_error("p3lu: witness not in table: " + xc.luq[smi[0][0]].label);
-
     // ---- ONE T-side per table ----
     double t_scT = lu_now_ms();
-    Col ChT;
-    double zt_hcom1 = p3zp::nowms();
+    const size_t MTf = zk ? Ccnt.v.size() : M;   // zk: augmented cnt domain 2^(m+e2)
+    std::vector<gl_t> LPT, LQT;
     if (zk) {
-        // hT mask fixed up so the augmented T-side sum equals sum_s S'_s
-        gl_t mval = gl_sub(Spsum, ST);
-        std::vector<gl_t> mT = p3zkc::fresh_mask(m);
-        gl_t ms2 = 0; for (auto x : mT) ms2 = gl_add(ms2, x);
-        mT.back() = gl_add(mT.back(), gl_sub(mval, ms2));
-        ChT = commit_col_nc(hT, R, &mT);
-    } else {
-        ChT = commit_col_nc(hT, R);
-    }
-    pf.root_hT = ChT.root;
-    if (p3zp::on()) { p3zp::g.lug_hcom.ms += p3zp::nowms() - zt_hcom1; }
-    tr.absorb("lug-hT", pf.root_hT.data(), 32);
-    std::vector<Col> BT(3);
-    gl_t rhoT = 0;
-    if (zk) {
-        double zt_bl1 = p3zp::nowms();
-        for (int j = 0; j < 3; j++) {
-            std::vector<gl_t> mk;
-            BT[j] = commit_col_nc(p3zkc::blind_col(m, mk), R, &mk);
-            pf.blT.rt[j] = BT[j].root; tr.absorb("lug-bT", BT[j].root.data(), 32);
+        LPT.resize(2 * MTf); LQT.resize(2 * MTf);
+        for (size_t x = 0; x < MTf; x++) {
+            LPT[2*x]   = Ccnt.v[x];
+            LQT[2*x]   = x < M ? gl_add(Tc[x], beta) : 1ULL;
+            LPT[2*x+1] = PMT.v[x];
+            LQT[2*x+1] = QMT.v[x];
         }
-        pf.blT.nb = 3;
-        if (p3zp::on()) { p3zp::g.lug_blT.ms += p3zp::nowms() - zt_bl1; p3zp::g.lug_blT.n++; }
-    }
-    std::vector<gl_t> zT = chal_vec(tr, m); gl_t lamT = chal(tr);
-    std::vector<gl_t> zTf = p3zkc::zpt(zT);
-    std::vector<gl_t> rT;
-    if (zk) {
-        std::vector<gl_t> Ez = p3bf::build_eq(zTf);
-        gl_t HT = 0;
-        size_t Maug = ChT.v.size();
-        for (size_t b = 0; b < Maug; b++)
-            HT = gl_add(HT, gl_add(BT[0].v[b],
-                     gl_mul(Ez[b], gl_add(BT[1].v[b], gl_mul(Ez[b], BT[2].v[b])))));
-        pf.blT.H = HT;
-        tr.absorb("lug-HT", &pf.blT.H, sizeof(gl_t));
-        rhoT = chal(tr);
-        std::vector<gl_t> TcA = Tc; TcA.resize(Maug, 0);
-        if (gpu && Maug >= ((size_t)1 << 14)) {
-            // device-resident blinded T-side chain (byte-identical messages to
-            // the host loop -- same FLuGpuZk functor as the A side)
-            const std::vector<gl_t>* src[7] = {&ChT.v, &TcA, &Ez, &Ccnt.v,
-                                               &BT[0].v, &BT[1].v, &BT[2].v};
-            std::vector<gl_t*> dc(7);
-            for (int j = 0; j < 7; j++) {
-                dc[j] = p3bf::dmalloc(Maug, "lug:scT");
-                cudaMemcpy(dc[j], src[j]->data(), Maug * 8, cudaMemcpyHostToDevice);
-            }
-            gl_t par3[3] = {lamT, beta, rhoT};
-            rT = p3sg::sc_prove_gpu<FLuGpuZk, Msg4, 4, 7>(tr, "lug-scT", dc, (uint32_t)Maug,
-                                                          par3, 3, pf.msgsT);
-            for (auto p : dc) cudaFreeAsync(p, 0);
-            p3bf::ckcuda("lug:T-side-zk");
-        } else {
-            std::vector<gl_t> Bcols[3] = {BT[0].v, BT[1].v, BT[2].v};
-            rT = sc_prove(ChT.v, TcA, Ez, Ccnt.v, lamT, beta, tr, "lug-scT", pf.msgsT,
-                          Bcols, rhoT);
-        }
-    } else if (gpu && m >= 14) {
-        // device-resident T-side sumcheck for the big tables (byte-identical
-        // messages to the host loop, as the A-side big path)
-        gl_t *dH, *dV, *dE, *dD, *dz;
-        cudaMallocAsync(&dH, (size_t)M * 8, 0);
-        cudaMemcpy(dH, hT.data(), (size_t)M * 8, cudaMemcpyHostToDevice);
-        cudaMallocAsync(&dV, (size_t)M * 8, 0);
-        cudaMemcpy(dV, Tc.data(), (size_t)M * 8, cudaMemcpyHostToDevice);
-        cudaMallocAsync(&dz, (size_t)m * 8, 0);
-        cudaMemcpy(dz, zT.data(), (size_t)m * 8, cudaMemcpyHostToDevice);
-        cudaMallocAsync(&dE, (size_t)M * 8, 0);
-        p3bf::p3bf_eq_kernel<<<((uint32_t)M + 255) / 256, 256>>>(dz, dE, m, (uint32_t)M);
-        cudaFreeAsync(dz, 0);
-        cudaMallocAsync(&dD, (size_t)M * 8, 0);
-        cudaMemcpy(dD, cnt.data(), (size_t)M * 8, cudaMemcpyHostToDevice);
-        std::vector<gl_t*> dc = {dH, dV, dE, dD};
-        gl_t par2[2] = {lamT, beta};
-        rT = p3sg::sc_prove_gpu<FLuGpu, Msg4, 4, 4>(tr, "lug-scT", dc, (uint32_t)M,
-                                                    par2, 2, pf.msgsT);
-        for (auto p : dc) cudaFreeAsync(p, 0);
     } else {
-        rT = sc_prove(hT, Tc, p3bf::build_eq(zT), cnt,
-                      lamT, beta, tr, "lug-scT", pf.msgsT);
+        LPT = cnt; LQT.resize(M);
+        for (size_t j = 0; j < M; j++) LQT[j] = gl_add(Tc[j], beta);
     }
+    std::vector<gl_t> rT; gl_t cpT = 0, cqT = 0;
+    pf.gkT = p3gkr::prove(tr, "lug-gT", std::move(LPT), std::move(LQT), !zk,
+                          rT, &cpT, &cqT, gpu);
     g_lustats.scg_ms += lu_now_ms() - t_scT;
     if (p3zp::on()) { p3zp::g.lug_scT.ms += lu_now_ms() - t_scT; p3zp::g.lug_scT.n++; }
+
+    // multiset identity on the exact tree roots (masks cancel by construction)
+    if (strict && gl_mul(accP, pf.gkT.Q) != gl_mul(pf.gkT.P, accQ))
+        throw std::runtime_error("p3lu: witness not in table: " + xc.luq[smi[0][0]].label);
+
     double zt_tev0 = p3zp::nowms();
-    std::vector<gl_t> eqrT = p3bf::build_eq(rT);
-    gl_t y_hT = p3bf::eval_h(ChT.v, eqrT);
-    gl_t y_cnt = p3bf::eval_h(Ccnt.v, eqrT);
-    pf.y_hT_c = y_hT; pf.y_cnt_c = y_cnt;
+    // cnt claim: zk = the even-leaf terminal at rT; non-zk = the combined p claim
+    gl_t y_cnt = zk ? pf.gkT.lay.back().p0 : cpT;
     {
-        uint64_t ssT = ChT.sseed, ssC = Ccnt.sseed;
-        xc.keep.push_back(std::move(ChT));
-        xc.lg.add(&xc.keep.back().v, pf.root_hT, rT, y_hT, ssT);
+        uint64_t ssC = Ccnt.sseed;
         xc.keep.push_back(std::move(Ccnt));
         xc.lg.add(&xc.keep.back().v, pf.root_cnt, rT, y_cnt, ssC);
     }
-    if (zk) for (int j = 0; j < 3; j++) {
-        pf.blT.yB[j] = p3bf::eval_h(BT[j].v, eqrT);
-        tr.absorb("lug-ybT", &pf.blT.yB[j], sizeof(gl_t));
-        uint64_t s2 = BT[j].sseed;
-        xc.keep.push_back(std::move(BT[j]));
-        xc.lg.add(&xc.keep.back().v, pf.blT.rt[j], rT, pf.blT.yB[j], s2);
+    if (zk) {
+        const p3gkr::Lay& lyT = pf.gkT.lay.back();
+        uint64_t ssP = PMT.sseed, ssQ = QMT.sseed;
+        xc.keep.push_back(std::move(PMT));
+        xc.lg.add(&xc.keep.back().v, pf.rt_pmT, rT, lyT.p1, ssP);
+        xc.keep.push_back(std::move(QMT));
+        xc.lg.add(&xc.keep.back().v, pf.rt_qmT, rT, lyT.q1, ssQ);
     }
     if (p3zp::on()) { p3zp::g.lug_tev.ms += p3zp::nowms() - zt_tev0; p3zp::g.lug_tev.n++; }
-    tr.absorb("lug-ends", &y_hT, sizeof(gl_t));
-    tr.absorb("lug-ends", &y_cnt, sizeof(gl_t));
     return pf;
 }
 
@@ -1672,11 +1481,19 @@ static inline bool verify_super(fs::Transcript& tr, VCtx& V,
         }
     }
     tr.absorb("lug-cnt", pf.root_cnt.data(), 32);
+    if (zk) {
+        for (uint32_t s = 0; s < ns; s++) {
+            tr.absorb("lug-pm", pf.sub[s].rt_pm.data(), 32);
+            tr.absorb("lug-qm", pf.sub[s].rt_qm.data(), 32);
+        }
+        tr.absorb("lug-pmT", pf.rt_pmT.data(), 32);
+        tr.absorb("lug-qmT", pf.rt_qmT.data(), 32);
+    }
     gl_t gamma = chal(tr), beta = chal(tr);
     std::vector<gl_t> gp(c); { gl_t w = 1ULL; for (uint32_t t = 0; t < c; t++) { gp[t] = w; w = gl_mul(w, gamma); } }
     gl_t a0 = 0; for (uint32_t t = 0; t < c; t++) a0 = gl_add(a0, gl_mul(gp[t], T.cols[t][0]));
 
-    gl_t Ssum = 0;
+    gl_t accP = 0, accQ = 1ULL;
     for (uint32_t s = 0; s < ns; s++) {
         const std::vector<size_t>& mi = smi[s];
         const LuSubA& sb = pf.sub[s];
@@ -1685,28 +1502,17 @@ static inline bool verify_super(fs::Transcript& tr, VCtx& V,
         const uint32_t kp = 1u << g;
         const uint32_t E = zk ? p3zkc::e_of(n) : 0;
 
-        tr.absorb("lug-hA", sb.root_hA.data(), 32);
-        tr.absorb("lug-S", &sb.S, sizeof sb.S);
-        Ssum = gl_add(Ssum, sb.S);
-        if (zk) {
-            if (sb.blA.nb != 3) return fail("zk blind count");
-            for (int j = 0; j < 3; j++) tr.absorb("lug-bA", sb.blA.rt[j].data(), 32);
+        // GKR fraction chain: root (P,Q) -> leaf claims at rA
+        const uint32_t L = n + g + E + (zk ? 1 : 0);
+        std::vector<gl_t> rA; gl_t o4[4];
+        if (!p3gkr::verify(tr, "lug-gA", L, sb.gk, !zk, rA, o4, why)) return false;
+        accP = gl_add(gl_mul(accP, sb.gk.Q), gl_mul(sb.gk.P, accQ));
+        accQ = gl_mul(accQ, sb.gk.Q);
+        if (zk) {                       // ledger order matches the prover: masks
+            V.vlg.add(sb.rt_pm, rA, o4[1]);   // first, then the member claims
+            V.vlg.add(sb.rt_qm, rA, o4[3]);
         }
-        std::vector<gl_t> zA = chal_vec(tr, n + g); gl_t lamA = chal(tr);
-        std::vector<gl_t> zAf = zA; zAf.resize(n + g + E, 0);
-        gl_t rhoA = 0;
-        if (zk) { gl_t H = sb.blA.H; tr.absorb("lug-HA", &H, sizeof(gl_t)); rhoA = chal(tr); }
-        std::vector<gl_t> rA; gl_t claimA;
-        gl_t claimA0 = gl_add(gl_mul(lamA, sb.S), gl_mul(rhoA, sb.blA.H));
-        if (!sc_verify(sb.msgsA, n + g + E, claimA0, tr, "lug-scA", rA, claimA))
-            return fail("group sumcheck A");
-        gl_t y_hA = sb.y_hA_c;
-        V.vlg.add(sb.root_hA, rA, y_hA);
-        if (zk) for (int j = 0; j < 3; j++) {
-            gl_t yb = sb.blA.yB[j];
-            tr.absorb("lug-ybA", &yb, sizeof(gl_t));
-            V.vlg.add(sb.blA.rt[j], rA, yb);
-        }
+
         std::vector<gl_t> pm(rA.begin(), rA.begin() + n);
         pm.insert(pm.end(), rA.begin() + n + g, rA.end());
         gl_t A_r = 0;
@@ -1737,55 +1543,49 @@ static inline bool verify_super(fs::Transcript& tr, VCtx& V,
         }
         for (uint32_t j = k; j < kp; j++)
             A_r = gl_add(A_r, gl_mul(eq_bits(rA, n, g, j), a0));
-        gl_t eqA = p3bf::eq_point(rA, zAf);
-        gl_t endA = gl_add(gl_mul(lamA, y_hA),
-                           gl_mul(eqA, gl_sub(gl_mul(y_hA, gl_add(A_r, beta)), 1ULL)));
-        if (zk) endA = gl_add(endA, gl_mul(rhoA,
-                         gl_add(sb.blA.yB[0], gl_mul(eqA, gl_add(sb.blA.yB[1],
-                                gl_mul(eqA, sb.blA.yB[2]))))));
-        if (claimA != endA) return fail("group A terminal");
-        tr.absorb("lug-ends", &y_hA, sizeof(gl_t));
+        // leaf-claim binding: even-p = chi[ex=0]~ (public), even-q = Am~ + beta
+        // (the gamma-combined member claims), odd = the committed mask MLEs
+        if (zk) {
+            gl_t eq0 = 1ULL;
+            for (uint32_t t = n + g; t < n + g + E; t++)
+                eq0 = gl_mul(eq0, gl_sub(1ULL, rA[t]));
+            if (o4[0] != eq0) return fail("group A p-claim");
+            if (o4[2] != gl_add(A_r, beta)) return fail("group A terminal");
+        } else {
+            if (o4[0] != 1ULL) return fail("group A p-claim");
+            if (o4[2] != gl_add(A_r, beta)) return fail("group A terminal");
+        }
     }
 
     // ---- ONE T-side per table ----
-    tr.absorb("lug-hT", pf.root_hT.data(), 32);
-    if (zk) {
-        if (pf.blT.nb != 3) return fail("zk blind count");
-        for (int j = 0; j < 3; j++) tr.absorb("lug-bT", pf.blT.rt[j].data(), 32);
-    }
-    std::vector<gl_t> zT = chal_vec(tr, m); gl_t lamT = chal(tr);
-    std::vector<gl_t> zTf = p3zkc::zpt(zT);
-    gl_t rhoT = 0;
-    if (zk) { gl_t H = pf.blT.H; tr.absorb("lug-HT", &H, sizeof(gl_t)); rhoT = chal(tr); }
-    std::vector<gl_t> rT; gl_t claimT;
-    gl_t claimT0 = gl_add(gl_mul(lamT, Ssum), gl_mul(rhoT, pf.blT.H));
-    if (!sc_verify(pf.msgsT, zk ? p3zkc::vfull(m) : m, claimT0, tr, "lug-scT", rT, claimT))
-        return fail("group sumcheck T");
-    gl_t y_hT = pf.y_hT_c, y_cnt = pf.y_cnt_c;
-    V.vlg.add(pf.root_hT, rT, y_hT);
-    V.vlg.add(pf.root_cnt, rT, y_cnt);
-    if (zk) for (int j = 0; j < 3; j++) {
-        gl_t yb = pf.blT.yB[j];
-        tr.absorb("lug-ybT", &yb, sizeof(gl_t));
-        V.vlg.add(pf.blT.rt[j], rT, yb);
-    }
-    std::vector<gl_t> eqT = p3bf::build_eq(rT);
+    const uint32_t e2 = zk ? p3zkc::e_of(m) : 0;
+    const uint32_t LT = m + e2 + (zk ? 1 : 0);
+    std::vector<gl_t> rT; gl_t t4[4];
+    if (!p3gkr::verify(tr, "lug-gT", LT, pf.gkT, !zk, rT, t4, why)) return false;
+    // public combined-table eval at the first m coordinates
+    std::vector<gl_t> rTm(rT.begin(), rT.begin() + m);
+    std::vector<gl_t> eqT = p3bf::build_eq(rTm);
     gl_t Tc_r = 0;
     for (uint32_t t = 0; t < c; t++) {
         gl_t v = 0;
         for (size_t j = 0; j < M; j++) v = gl_add(v, gl_mul(T.cols[t][j], eqT[j]));
         Tc_r = gl_add(Tc_r, gl_mul(gp[t], v));
     }
-    gl_t eqTr = p3bf::eq_point(rT, zk ? zTf : zT);
-    gl_t endT = gl_add(gl_mul(lamT, y_hT),
-                       gl_mul(eqTr, gl_sub(gl_mul(y_hT, gl_add(Tc_r, beta)), y_cnt)));
-    if (zk) endT = gl_add(endT, gl_mul(rhoT,
-                     gl_add(pf.blT.yB[0], gl_mul(eqTr, gl_add(pf.blT.yB[1],
-                            gl_mul(eqTr, pf.blT.yB[2]))))));
-    if (claimT != endT) return fail("group T terminal");
+    if (zk) {
+        gl_t eq0 = 1ULL;
+        for (uint32_t t = m; t < m + e2; t++) eq0 = gl_mul(eq0, gl_sub(1ULL, rT[t]));
+        gl_t expect = gl_add(gl_mul(eq0, gl_add(Tc_r, beta)), gl_sub(1ULL, eq0));
+        if (t4[2] != expect) return fail("group T terminal");
+        V.vlg.add(pf.root_cnt, rT, t4[0]);      // cnt_aug~(rT), mechanism-1 blinded
+        V.vlg.add(pf.rt_pmT, rT, t4[1]);
+        V.vlg.add(pf.rt_qmT, rT, t4[3]);
+    } else {
+        if (t4[2] != gl_add(Tc_r, beta)) return fail("group T terminal");
+        V.vlg.add(pf.root_cnt, rT, t4[0]);
+    }
 
-    tr.absorb("lug-ends", &y_hT, sizeof(gl_t));
-    tr.absorb("lug-ends", &y_cnt, sizeof(gl_t));
+    // multiset identity on the published tree roots
+    if (gl_mul(accP, pf.gkT.Q) != gl_mul(pf.gkT.P, accQ)) return fail("group multiset");
     return true;
 }
 

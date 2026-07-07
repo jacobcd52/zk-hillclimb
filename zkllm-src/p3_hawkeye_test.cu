@@ -314,7 +314,7 @@ int main() {
           bool ok = verify(tv, T, p2, ops0.X.root, ops0.W.root, ops0.XS.root, ops0.WS.root,
                            L0.y, L0.B, L0.K, L0.N, Q, R, &why);
           ck("tampered opened Y-column value rejects", !ok, why); }
-        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].gk.P = gl_add(p2.lug[0].sub[0].gk.P, 1ULL);
           fs::Transcript tv("hwl");
           bool ok = verify(tv, T, p2, ops0.X.root, ops0.W.root, ops0.XS.root, ops0.WS.root,
                            L0.y, L0.B, L0.K, L0.N, Q, R, &why);

@@ -308,6 +308,66 @@ int main() {
            p3zko::verify(osim, z, zex, rho, r, qpos, &why));
     }
 
+    // ---------------- 7. GKR-logUp mask siblings (v3 lookup argument) ----------------
+    // The v3 lookup argument (p3_logup + p3_gkr) replaced the committed helper
+    // columns AND their Libra blinds with a fraction tree whose ZK comes from
+    // one committed uniform mask sibling per real leaf: every height-1 node is
+    // then a uniform (p,q) pair and the whole chain above the leaves is
+    // simulatable.  Tested on REAL leaf denominators (Wq weight codes + beta):
+    // the published root (P,Q), a mid-layer round message and the terminal
+    // mask claims are uniform over mask draws; TEETH: with the masks off the
+    // root Q is a deterministic witness functional (collapses across draws,
+    // distinguishes witnesses); with them on the posterior is flat.
+    printf("-- (7) GKR fraction-tree mask siblings: transcript uniform, with teeth --\n");
+    {
+        const uint32_t vg = 6, Ng = 1u << vg;
+        vector<gl_t> vals = cols[3].vals; vals.resize(Ng);
+        vector<gl_t> valsB = vals; for (auto& x : valsB) x = gl_add(x, 77ULL);
+        gl_t beta = rc();
+        auto run = [&](uint64_t seed, bool mask, const vector<gl_t>& vv,
+                       vector<gl_t>& bP, vector<gl_t>& bQ, vector<gl_t>& bmsg,
+                       vector<gl_t>& bp1, vector<gl_t>& bq1) {
+            vector<gl_t> LP(2 * Ng), LQ(2 * Ng);
+            uint64_t s1 = seed * 2 + 1, s2 = seed * 2 + 2;
+            for (uint32_t x = 0; x < Ng; x++) {
+                LP[2*x] = 1ULL; LQ[2*x] = gl_add(vv[x], beta);
+                gl_t sm = mask ? p3zko::prng(s1) : 0ULL;
+                gl_t qm = mask ? p3zko::prng(s2) : 1ULL;
+                LP[2*x+1] = gl_mul(sm, qm); LQ[2*x+1] = qm;
+            }
+            fs::Transcript tp("gkr-hide");
+            vector<gl_t> rf;
+            p3gkr::Proof pf = p3gkr::prove(tp, "g", LP, LQ, false, rf,
+                                           nullptr, nullptr, false);
+            bP.push_back(pf.P); bQ.push_back(pf.Q);
+            bmsg.push_back(pf.lay[3].msgs[0].s0);
+            bp1.push_back(pf.lay.back().p1); bq1.push_back(pf.lay.back().q1);
+        };
+        vector<gl_t> oP, oQ, om, op1, oq1;                 // masks on, witness A
+        vector<gl_t> bP, bQ, bm, bp1, bq1;                 // masks on, witness B
+        vector<gl_t> fP, fQ, fm, fp1, fq1;                 // masks OFF (control)
+        vector<gl_t> gP, gQ, gm, gp1, gq1;                 // masks OFF, witness B
+        for (int i = 0; i < M; i++) {
+            run(600000ULL + i, true,  vals,  oP, oQ, om, op1, oq1);
+            run(600000ULL + i, true,  valsB, bP, bQ, bm, bp1, bq1);
+            run(600000ULL + i, false, vals,  fP, fQ, fm, fp1, fq1);
+            run(600000ULL + i, false, valsB, gP, gQ, gm, gp1, gq1);
+        }
+        printf("    masks on: chisq P=%.0f Q=%.0f midmsg=%.0f termp1=%.0f termq1=%.0f\n",
+               chisq(oP), chisq(oQ), chisq(om), chisq(op1), chisq(oq1));
+        ck("gkr root/messages/terminal mask claims uniform over mask draws",
+           chisq(oP) < UNIF_HI && chisq(oQ) < UNIF_HI && chisq(om) < UNIF_HI &&
+           chisq(op1) < UNIF_HI && chisq(oq1) < UNIF_HI);
+        auto ndis = [](vector<gl_t> x){ std::sort(x.begin(),x.end()); size_t d=x.empty()?0:1;
+                                        for(size_t i=1;i<x.size();i++) if(x[i]!=x[i-1]) d++; return d; };
+        printf("    teeth: masks-off root Q distinct=%zu/%d (A) and witness A!=B roots: %s\n",
+               ndis(fQ), M, fQ[0] != gQ[0] ? "distinguishable" : "SAME");
+        ck("teeth: masks off -> root collapses to a witness functional (leaks)",
+           ndis(fQ) < 8 && fQ[0] != gQ[0]);
+        ck("posterior flat: masks on -> both witnesses' roots uniform",
+           chisq(oQ) < UNIF_HI && chisq(bQ) < UNIF_HI && chisq(bP) < UNIF_HI);
+    }
+
     printf("\nFULL-LAYER-ZK-HIDING: %d passed, %d failed -> %s\n", np_, nf_, nf_ == 0 ? "ALL PASS" : "FAIL");
     return nf_ == 0 ? 0 : 1;
 }

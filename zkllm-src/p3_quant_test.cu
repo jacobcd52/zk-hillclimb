@@ -170,7 +170,7 @@ int main() {
         { auto p2 = pf; p2.yDbS = gl_add(p2.yDbS, 1ULL);
           bool rj = !vfy(p2, L0.B, w0.dm.ld, Q);
           ck("tampered claimed SCALES evaluation rejects", rj, why); }
-        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].gk.P = gl_add(p2.lug[0].sub[0].gk.P, 1ULL);
           bool rj = !vfy(p2, L0.B, w0.dm.ld, Q);
           ck("tampered QEXT lookup sum rejects", rj, why); }
         { auto p2 = pf; p2.yBF = gl_add(p2.yBF, 1ULL);
