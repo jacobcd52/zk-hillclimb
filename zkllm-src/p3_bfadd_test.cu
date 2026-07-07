@@ -203,7 +203,7 @@ int main() {
         { auto p2 = pf; p2.yOUT = gl_add(p2.yOUT, 1ULL);
           bool rj = !vfy(p2, L0.n, Q);
           ck("tampered claimed OUT evaluation rejects", rj, why); }
-        { auto p2 = pf; p2.lu[BLU_RMH].S = gl_add(p2.lu[BLU_RMH].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].S = gl_add(p2.lug[0].S, 1ULL);
           bool rj = !vfy(p2, L0.n, Q);
           ck("tampered RNE-half lookup sum rejects", rj, why); }
         { auto p2 = pf; p2.yE[BA_RUP] = gl_add(p2.yE[BA_RUP], 1ULL);

@@ -160,8 +160,9 @@ def eps_decompose():
 
 def epsa_table(ld):
     """EPSA[E] = floor(eps * 2^(268 + ld - E)) for E in [EMIN, 512); 0 below.
-    EMIN = smallest E with EPSA(E) < 2^18 (so S' = S + EPSA stays < 2^23 for
-    d <= 2^6 and eps keeps >= 17 bits of relative precision at the floor)."""
+    EMIN = smallest E with EPSA(E) < 2^18 (so S' = S + EPSA stays < 2^(17+ld)
+    -- S < 2^(ld+16) arithmetically and EPSA < 2^18 <= 2^(ld+16) for ld >= 2 --
+    and eps keeps >= 17 bits of relative precision at the floor)."""
     em, et = eps_decompose()
     def epsa(E):
         sh = et + 268 + ld - E
@@ -385,7 +386,7 @@ class RMSNormSpec:
                 lanes.append((m * m, 2 * e))          # sq in [2^14, 2^16)
         S, E = blockfloat_sum(lanes, self.EMIN)
         Sp = S + int(self.EPSA[E])
-        assert 1 <= Sp < (1 << 23), "S' out of the canonical 23-bit window"
+        assert 1 <= Sp < (1 << (17 + self.ld)), "S' out of the canonical window"
         u16, wd = normalize_top(Sp)
         Xexp = E + wd - (284 + self.ld)               # value ~ u16 * 2^Xexp
         qp = Xexp >> 1                                # floor division
@@ -882,6 +883,324 @@ def dump_goldens_swiglu(path):
     print(f"wrote {len(cases)} SwiGLU goldens to {path}")
 
 
+def dump_goldens_quant(path):
+    """Quantize golden cases: (X bf16 patterns, codes, fp32 scale bits) per the
+    canonical quant_rows_e4m3.  Cases = the ACTUAL layer call-site inputs (all
+    7 matmul feeds from the golden tiny-layer trace) + random + edge rows."""
+    rng = np.random.default_rng(20260703)
+    layer = TinyLayer(np.random.default_rng(20260703))
+    Xin = np.array([[bf_from_f64(v) for v in row]
+                    for row in rng.normal(0, 1.0, (4, 64))], np.uint16)
+    tr = {}
+    layer.forward(Xin, tr)
+    cases = []
+    def add(name, X):
+        codes, scales = quant_rows_e4m3(X)
+        cases.append((name, X, codes, scales))
+    add("layer rms1 -> Wq/Wk/Wv", tr['rms1'])
+    for h in range(layer.nh):
+        add(f"layer ropeq{h}", tr[f'ropeq{h}'])
+        add(f"layer ropek{h}", tr[f'ropek{h}'])
+        add(f"layer probs{h} -> .V", tr[f'probs{h}'])
+        sl = slice(h * layer.dh, (h + 1) * layer.dh)
+        add(f"layer V^T head {h}", tr['v'][:, sl].T.copy())
+    add("layer rms2 -> Wg/Wu", tr['rms2'])
+    add("layer swiglu -> Wd", tr['swiglu'])
+    X = np.array([[bf_from_f64(v) for v in row]
+                  for row in rng.normal(0, 2.0, (6, 64))], np.uint16)
+    add("random 6x64", X)
+    E = np.zeros((8, 16), np.uint16)
+    E[1, 3] = bf_from_f64(5.0)                # one-hot
+    E[2, :] = bf_from_f64(1e30)               # huge exponents
+    E[3, :] = bf_from_f64(1e-38)              # emax <= 9: scale clamps to 2^-126
+    E[4, ::2] = 0x8000                        # -0 patterns
+    E[4, 1::2] = bf_from_f64(-3.0)
+    E[5, 0] = bf_from_f64(1.0)                # max lane ...
+    E[5, 1] = bf_from_f64(2 ** -25)           # ... plus deep-underflow lanes
+    E[5, 2] = 0x0040                          # subnormal input (canonical FTZ)
+    # saturation edge: mb of the row max in [105,127] -> value/scale in
+    # (464, 510] RNEs to magnitude code 0x7F (above the 448 grid point)
+    E[6, 0] = (134 << 7) | 120
+    E[6, 1] = bf_from_f64(1.0)
+    E[7, 0] = (134 << 7) | 104                # just below: rounds to 448=0x7E
+    E[7, 1] = bf_from_f64(-1.0)
+    add("edge 8x16 (zeros/onehot/huge/tiny/-0/underflow/saturation)", E)
+    with open(path, 'wb') as f:
+        np.array([0x514E5447, len(cases)], np.int64).tofile(f)      # 'QNTG'
+        for (name, X, codes, scales) in cases:
+            np.array([X.shape[0], X.shape[1]], np.int64).tofile(f)
+            X.astype(np.uint16).tofile(f)
+            codes.astype(np.uint8).tofile(f)
+            scales.astype(np.uint32).tofile(f)
+            print(f"  golden '{name}': B={X.shape[0]} d={X.shape[1]}")
+    print(f"wrote {len(cases)} quantize goldens to {path}")
+
+
+def dump_goldens_bfadd(path):
+    """bf16-add golden cases: flat pow2-length pairs (a, b, out) with
+    out_j = bf_add(a_j, b_j).  Cases = the layer's ACTUAL add call sites
+    (residuals from the golden trace, softmax subtracts, rope combines) +
+    random + targeted RNE-tie / cancellation / alignment-boundary pairs.
+    flags: 0 = in gadget-v1 domain; 1 = contains rows whose result flushes or
+    saturates (reference is total; gadget v1 must REJECT such rows)."""
+    rng = np.random.default_rng(20260703)
+    layer = TinyLayer(np.random.default_rng(20260703))
+    Xin = np.array([[bf_from_f64(v) for v in row]
+                    for row in rng.normal(0, 1.0, (4, 64))], np.uint16)
+    tr = {}
+    layer.forward(Xin, tr)
+    cases = []
+    def add(name, A, B, flags=0, expect=None):
+        A = np.asarray(A, np.uint16).ravel()
+        B = np.asarray(B, np.uint16).ravel()
+        n = 1
+        while n < len(A):
+            n *= 2
+        A = np.concatenate([A, np.zeros(n - len(A), np.uint16)])
+        B = np.concatenate([B, np.zeros(n - len(B), np.uint16)])
+        O = np.array([bf_add(int(x), int(y)) for x, y in zip(A, B)], np.uint16)
+        if expect is not None:
+            E = np.asarray(expect, np.uint16).ravel()
+            assert (O[:len(E)] == E).all(), f"bfadd golden '{name}' != layer trace"
+        cases.append((name, A, B, O, flags))
+    # -- the two residual sites, validated against the layer trace itself --
+    add("residual1 (x + oproj = resid1, layer trace)",
+        Xin, tr['oproj'], expect=tr['resid1'])
+    add("residual2 (resid1 + down = out, layer trace)",
+        tr['resid1'], tr['down'], expect=tr['out'])
+    # -- softmax subtract pairs from the layer's real score rows --
+    sa, sb = [], []
+    for h in range(layer.nh):
+        S = tr[f'scores{h}']
+        for i in range(layer.seq):
+            key = []
+            for j in range(i + 1):
+                p = int(S[i, j]); s, e, mb = bf_dec(p)
+                key.append((32767 - (e << 7) - mb) if s else (32768 + (e << 7) + mb))
+            mxp = int(S[i, int(np.argmax(key))])
+            for j in range(i + 1):
+                sa.append(int(S[i, j])); sb.append(bf_neg(mxp))
+    add("softmax subtract (layer scores, x - rowmax)", sa, sb)
+    # -- rope combine pairs (the products feeding each combine add) --
+    ra, rb, ro = [], [], []
+    for h in range(layer.nh):
+        sl = slice(h * layer.dh, (h + 1) * layer.dh)
+        for nm in ('q', 'k'):
+            Qh = (tr['q'] if nm == 'q' else tr['k'])[:, sl]
+            R = tr[f'rope{nm}{h}']
+            half = layer.dh // 2
+            for p in range(layer.seq):
+                for j in range(half):
+                    a, b = int(Qh[p, j]), int(Qh[p, j + half])
+                    c, s = int(layer.cos[p, j]), int(layer.sin[p, j])
+                    ra.append(bf_mul(a, c)); rb.append(bf_neg(bf_mul(b, s)))
+                    ro.append(int(R[p, j]))
+                    ra.append(bf_mul(b, c)); rb.append(bf_mul(a, s))
+                    ro.append(int(R[p, j + half]))
+    add("rope combines (layer q/k, both halves)", ra, rb, expect=ro)
+    # -- random with wildly mixed magnitudes --
+    n = 1024
+    va = rng.normal(0, 1, n) * np.exp(rng.normal(0, 4, n))
+    vb = rng.normal(0, 1, n) * np.exp(rng.normal(0, 4, n))
+    add("random 1024 mixed magnitudes",
+        [bf_from_f64(v) for v in va], [bf_from_f64(v) for v in vb])
+    # -- targeted RNE ties: aligned remainder exactly half, q even and odd --
+    ta, tb = [], []
+    got_even = got_odd = 0
+    for same in (True, False):
+        for d in range(1, 10):
+            for mh in range(128, 256):
+                for ml in range(128, 256):
+                    A = mh * (1 << d) + (ml if same else -ml)
+                    if A <= 0:
+                        continue
+                    w = A.bit_length()
+                    sh = w - 8
+                    if sh < 1 or (A & ((1 << sh) - 1)) != (1 << (sh - 1)):
+                        continue
+                    q = A >> sh
+                    if (q & 1) == 0 and got_even >= 16:
+                        continue
+                    if (q & 1) == 1 and got_odd >= 16:
+                        continue
+                    el = 120
+                    ta.append((el + d) << 7 | (mh - 128))
+                    tb.append((0x8000 if not same else 0) | (el << 7) | (ml - 128))
+                    if q & 1:
+                        got_odd += 1
+                    else:
+                        got_even += 1
+                if got_even >= 16 and got_odd >= 16:
+                    break
+    assert got_even >= 16 and got_odd >= 16
+    add("RNE exact-tie pairs (round-to-even both parities)", ta, tb)
+    # -- cancellation / zeros / boundaries --
+    ea, eb_ = [], []
+    def pair(p, q):
+        ea.append(p); eb_.append(q)
+    for v in (1.0, -3.25, 1e20, 1e-20):
+        p = bf_from_f64(v); pair(p, bf_neg(p))          # exact cancel -> +0
+    pair(0x0000, 0x0000); pair(0x0000, 0x8000)          # signed-zero pairs
+    pair(0x8000, 0x0000); pair(0x8000, 0x8000)          # -0 + -0 = -0
+    pair(0x0000, bf_from_f64(2.5)); pair(bf_from_f64(-2.5), 0x8000)
+    pair(0x0040, bf_from_f64(1.0))                      # subnormal (FTZ) operand
+    pair(bf_from_f64(1.0), 0x8040)
+    pair((134 << 7) | 0, 0x8000 | (125 << 7) | 5)       # d=9 from a pow2: crosses binade down
+    pair((134 << 7) | 0, 0x8000 | (125 << 7) | 0)       # d=9 tie at the binade edge
+    pair((134 << 7) | 0, 0x8000 | (124 << 7) | 99)      # d=10: far, out = hi exactly
+    pair((134 << 7) | 77, 0x8000 | (124 << 7) | 99)     # d=10 far, mh>128
+    pair((200 << 7) | 3, (110 << 7) | 9)                # d=90 far add
+    pair((254 << 7) | 3, 0x8000 | (240 << 7) | 9)       # binade-254 hi, far: out = hi
+    for mb in (1, 64, 127):
+        pair((130 << 7) | mb, 0x8000 | (130 << 7) | (mb - 1))  # d=0 near-cancel
+    pair((130 << 7) | 5, (130 << 7) | 5)                # d=0 same-sign (exact double)
+    pair((130 << 7) | 5, 0x8000 | (130 << 7) | 5)       # d=0 exact cancel
+    add("edges: cancel/zeros/subnormal/binade-crossing/far-boundary", ea, eb_)
+    # -- OUT-OF-DOMAIN rows (reference flushes/saturates; gadget v1 rejects) --
+    oa = [(1 << 7) | 1, (254 << 7) | 100, (255 << 7) | 3, 0]
+    ob = [0x8000 | (1 << 7) | 0, (254 << 7) | 100,
+          0x8000 | (240 << 7) | 9, 0]
+    # flush; near saturate; far hi in binade 255 (reference saturates the
+    # recombined value to 0x7F7F even though it is exactly representable)
+    add("OUT-OF-DOMAIN: flush + saturate rows", oa, ob, flags=1)
+    with open(path, 'wb') as f:
+        np.array([0x42464147, len(cases)], np.int64).tofile(f)      # 'BFAG'
+        for (name, A, B, O, flags) in cases:
+            np.array([len(A), flags], np.int64).tofile(f)
+            A.tofile(f); B.tofile(f); O.tofile(f)
+            print(f"  golden '{name}': n={len(A)} flags={flags}")
+    print(f"wrote {len(cases)} bf16-add goldens to {path}")
+
+
+def dump_goldens_rope(path):
+    """RoPE golden cases: (cos, sin, Q, OUT) with OUT = rope_apply(Q, cos, sin)
+    (llama rotate_half, one RNE per product, one bf_add per combine).  Cases =
+    the layer's ACTUAL rope inputs (q/k per head from the golden trace) +
+    random + edge rows.  flags: 1 = out of gadget-v1 domain (a product or
+    combine exponent leaves [1,254])."""
+    rng = np.random.default_rng(20260703)
+    layer = TinyLayer(np.random.default_rng(20260703))
+    Xin = np.array([[bf_from_f64(v) for v in row]
+                    for row in rng.normal(0, 1.0, (4, 64))], np.uint16)
+    tr = {}
+    layer.forward(Xin, tr)
+    cos, sin = layer.cos, layer.sin
+    cases = []
+    def add(name, Q, flags=0, expect=None):
+        O = rope_apply(Q, cos, sin)
+        if expect is not None:
+            assert (O == expect).all(), f"rope golden '{name}' != layer trace"
+        cases.append((name, Q, O, flags))
+    for h in range(layer.nh):
+        sl = slice(h * layer.dh, (h + 1) * layer.dh)
+        add(f"layer q head {h}", tr['q'][:, sl].copy(), expect=tr[f'ropeq{h}'])
+        add(f"layer k head {h}", tr['k'][:, sl].copy(), expect=tr[f'ropek{h}'])
+    Qr = np.array([[bf_from_f64(v) for v in row]
+                   for row in rng.normal(0, 2.0, (layer.seq, layer.dh))], np.uint16)
+    add("random 4x32", Qr)
+    E = np.zeros((layer.seq, layer.dh), np.uint16)
+    E[1, 3] = bf_from_f64(2.0)
+    E[1, 3 + 16] = bf_from_f64(-1.5)          # one rotated pair
+    E[2, ::2] = 0x8000                        # -0s
+    E[2, 1::2] = bf_from_f64(0.75)
+    E[3, 5] = 0x0040                          # subnormal (FTZ)
+    E[3, 21] = bf_from_f64(3.0)
+    add("edge 4x32 (zeros/-0/subnormal/single pairs)", E)
+    T = np.array([[bf_from_f64(v) for v in row]
+                  for row in rng.normal(0, 1.0, (layer.seq, layer.dh)) * 1e-37],
+                 np.uint16)
+    add("OUT-OF-DOMAIN: tiny Q (product exponent underflows)", T, flags=1)
+    with open(path, 'wb') as f:
+        np.array([0x524F5047, len(cases), layer.seq, layer.dh], np.int64).tofile(f)
+        cos.astype(np.uint16).tofile(f)
+        sin.astype(np.uint16).tofile(f)
+        for (name, Q, O, flags) in cases:
+            np.array([flags], np.int64).tofile(f)
+            Q.astype(np.uint16).tofile(f)
+            O.astype(np.uint16).tofile(f)
+            print(f"  golden '{name}': seq={layer.seq} dh={layer.dh} flags={flags}")
+    print(f"wrote {len(cases)} rope goldens to {path}")
+
+
+def dump_goldens_softmax(path):
+    """Softmax golden cases: (S score patterns, MSK mask bytes, P prob patterns)
+    per canonical softmax_rows with a PUBLIC structural mask.  Cases = the
+    layer's ACTUAL per-head score rows (causal mask, validated against the
+    trace) + random full/causal + edge rows (ties, all-equal, empty mask,
+    deep-negative outliers, masked lane above the participating max)."""
+    rng = np.random.default_rng(20260703)
+    layer = TinyLayer(np.random.default_rng(20260703))
+    Xin = np.array([[bf_from_f64(v) for v in row]
+                    for row in rng.normal(0, 1.0, (4, 64))], np.uint16)
+    tr = {}
+    layer.forward(Xin, tr)
+    cases = []
+    def add(name, S, M, expect=None):
+        B, n = S.shape
+        P = np.zeros((B, n), np.uint16)
+        for i in range(B):
+            P[i] = softmax_rows(S[i], list(M[i].astype(bool)))
+        if expect is not None:
+            assert (P == expect).all(), f"softmax golden '{name}' != layer trace"
+        cases.append((name, S, M.astype(np.uint8), P))
+    causal4 = np.tril(np.ones((4, 4), np.uint8))
+    for h in range(layer.nh):
+        add(f"layer scores head {h} (causal)", tr[f'scores{h}'].copy(), causal4,
+            expect=tr[f'probs{h}'])
+    S = np.array([[bf_from_f64(v) for v in row]
+                  for row in rng.normal(0, 3.0, (8, 16))], np.uint16)
+    add("random 8x16 full mask", S, np.ones((8, 16), np.uint8))
+    S = np.array([[bf_from_f64(v) for v in row]
+                  for row in rng.normal(0, 2.0, (8, 8))], np.uint16)
+    add("random 8x8 causal", S, np.tril(np.ones((8, 8), np.uint8)))
+    E = np.zeros((8, 8), np.uint16)
+    M = np.ones((8, 8), np.uint8)
+    E[0, :] = bf_from_f64(1.5)                 # all-equal row (ties everywhere)
+    E[1, 2] = bf_from_f64(4.0); E[1, 5] = bf_from_f64(4.0)   # tied max
+    E[2, :] = [bf_from_f64(v) for v in
+               (0.0, -0.0, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5)]  # signed zeros
+    M[3, :] = 0                                # EMPTY mask row -> all +0
+    E[4, 0] = bf_from_f64(1.0)
+    E[4, 1:] = bf_from_f64(-90.0)              # exp underflows to +0 lanes
+    E[5, 0] = bf_from_f64(100.0); M[5, 0] = 0  # masked lane ABOVE the real max
+    E[5, 1] = bf_from_f64(1.0); E[5, 2] = bf_from_f64(0.5)
+    M[5, 3:] = 0
+    E[6, :] = [bf_from_f64(-v) for v in range(1, 9)]          # strictly falling
+    E[7, 3] = 0x0040                            # subnormal score (FTZ key)
+    add("edge 8x8 (ties/equal/-0/empty/underflow/masked-max/subnormal)", E, M)
+    with open(path, 'wb') as f:
+        np.array([0x534D5847, len(cases)], np.int64).tofile(f)      # 'SMXG'
+        for (name, S, M_, P) in cases:
+            np.array([S.shape[0], S.shape[1]], np.int64).tofile(f)
+            S.astype(np.uint16).tofile(f)
+            M_.tofile(f)
+            P.astype(np.uint16).tofile(f)
+            print(f"  golden '{name}': B={S.shape[0]} n={S.shape[1]}")
+    print(f"wrote {len(cases)} softmax goldens to {path}")
+
+
+def dump_weights(path):
+    """Weights of the canonical tiny layer (same rng seed as --dump-layer):
+    the 7 Hawkeye weight matrices (fp8 codes + fp32 per-row scale bits, 1/sqrt(dh)
+    already folded into Wq), the two RMSNorm gains, and the pinned RoPE cos/sin
+    tables.  Format 'TFWT': per matrix int64 N,K then codes uint8 N*K then
+    scales uint32 N; then g1,g2 uint16 d; then cos,sin uint16 seq*dh/2."""
+    layer = TinyLayer(np.random.default_rng(20260703))
+    mats = [layer.Wq, layer.Wk, layer.Wv, layer.Wo, layer.Wg, layer.Wu, layer.Wd]
+    with open(path, 'wb') as f:
+        np.array([0x54465754, len(mats), layer.seq, layer.d, layer.nh,
+                  layer.dh, layer.dff], np.int64).tofile(f)
+        for codes, sc in mats:
+            np.array(list(codes.shape), np.int64).tofile(f)
+            codes.astype(np.uint8).tofile(f)
+            sc.view(np.uint32).tofile(f)
+        layer.g1.astype(np.uint16).tofile(f)
+        layer.g2.astype(np.uint16).tofile(f)
+        layer.cos.astype(np.uint16).tofile(f)
+        layer.sin.astype(np.uint16).tofile(f)
+    print(f"wrote tiny-layer weights ({len(mats)} matrices + gains + rope tables) to {path}")
+
+
 def dump_layer(path):
     rng = np.random.default_rng(20260703)
     layer = TinyLayer(np.random.default_rng(20260703))
@@ -915,11 +1234,25 @@ QE4M3 = q_e4m3_mag_table()
 
 if __name__ == '__main__':
     if '--dump-tables' in sys.argv:
-        dump_tables(sys.argv[sys.argv.index('--dump-tables') + 1])
+        _i = sys.argv.index('--dump-tables')
+        _ld = int(sys.argv[_i + 2]) if len(sys.argv) > _i + 2 else 6
+        dump_tables(sys.argv[_i + 1], _ld)
+    elif '--dump-goldens-softmax' in sys.argv:
+        dump_goldens_softmax(sys.argv[sys.argv.index('--dump-goldens-softmax') + 1])
+    elif '--dump-goldens-rope' in sys.argv:
+        dump_goldens_rope(sys.argv[sys.argv.index('--dump-goldens-rope') + 1])
+    elif '--dump-goldens-bfadd' in sys.argv:
+        dump_goldens_bfadd(sys.argv[sys.argv.index('--dump-goldens-bfadd') + 1])
+    elif '--dump-goldens-quant' in sys.argv:
+        dump_goldens_quant(sys.argv[sys.argv.index('--dump-goldens-quant') + 1])
     elif '--dump-goldens-swiglu' in sys.argv:
         dump_goldens_swiglu(sys.argv[sys.argv.index('--dump-goldens-swiglu') + 1])
     elif '--dump-goldens' in sys.argv:
-        dump_goldens(sys.argv[sys.argv.index('--dump-goldens') + 1])
+        _i = sys.argv.index('--dump-goldens')
+        _ld = int(sys.argv[_i + 2]) if len(sys.argv) > _i + 2 else 6
+        dump_goldens(sys.argv[_i + 1], _ld)
+    elif '--dump-weights' in sys.argv:
+        dump_weights(sys.argv[sys.argv.index('--dump-weights') + 1])
     elif '--dump-layer' in sys.argv:
         dump_layer(sys.argv[sys.argv.index('--dump-layer') + 1])
     else:

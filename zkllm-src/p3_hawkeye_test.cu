@@ -309,12 +309,12 @@ int main() {
           bool ok = verify(tv, T, p2, ops0.X.root, ops0.W.root, ops0.XS.root, ops0.WS.root,
                            L0.y, L0.B, L0.K, L0.N, Q, R, &why);
           ck("tampered constraint sumcheck message rejects", !ok, why); }
-        { auto p2 = pf; p2.oY.y = gl_add(p2.oY.y, 1ULL);
+        { auto p2 = pf; p2.yY = gl_add(p2.yY, 1ULL);
           fs::Transcript tv("hwl");
           bool ok = verify(tv, T, p2, ops0.X.root, ops0.W.root, ops0.XS.root, ops0.WS.root,
                            L0.y, L0.B, L0.K, L0.N, Q, R, &why);
           ck("tampered opened Y-column value rejects", !ok, why); }
-        { auto p2 = pf; p2.lu[LU_DM].S = gl_add(p2.lu[LU_DM].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].S = gl_add(p2.lug[0].S, 1ULL);
           fs::Transcript tv("hwl");
           bool ok = verify(tv, T, p2, ops0.X.root, ops0.W.root, ops0.XS.root, ops0.WS.root,
                            L0.y, L0.B, L0.K, L0.N, Q, R, &why);
@@ -324,7 +324,7 @@ int main() {
           bool ok = verify(tv, T, p2, ops0.X.root, ops0.W.root, ops0.XS.root, ops0.WS.root,
                            L0.y, L0.B, L0.K, L0.N, Q, R, &why);
           ck("swapped witness column root rejects", !ok, why); }
-        { auto p2 = pf; p2.lu[LU_DM].y_virt[0] = gl_add(p2.lu[LU_DM].y_virt[0], 1ULL);
+        { auto p2 = pf; p2.lug[0].mem[0].y_virt[0] = gl_add(p2.lug[0].mem[0].y_virt[0], 1ULL);
           fs::Transcript tv("hwl");
           bool ok = verify(tv, T, p2, ops0.X.root, ops0.W.root, ops0.XS.root, ops0.WS.root,
                            L0.y, L0.B, L0.K, L0.N, Q, R, &why);

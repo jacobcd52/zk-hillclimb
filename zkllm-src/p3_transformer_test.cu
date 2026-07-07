@@ -175,10 +175,10 @@ int main() {
         printf("  timings: witness %.2f s, commits %.2f s, prove %.2f s, verify %.2f s\n",
                (t1 - t0) / 1e3, (t2 - t1) / 1e3, (t3 - t2) / 1e3, (t4 - t3) / 1e3);
         printf("  prove breakdown: rms %.2f  qnt %.2f  matmul %.2f  rope %.2f  smx %.2f"
-               "  bfa %.2f  swg %.2f  seams %.2f  batch %.2f s\n",
+               "  bfa %.2f  swg %.2f  lookups %.2f  seams %.2f  batch %.2f s\n",
                prof.rms / 1e3, prof.qnt / 1e3, prof.mm / 1e3, prof.rope / 1e3,
-               prof.smx / 1e3, prof.bfa / 1e3, prof.swg / 1e3, prof.seam / 1e3,
-               prof.batch / 1e3);
+               prof.smx / 1e3, prof.bfa / 1e3, prof.swg / 1e3, prof.lug / 1e3,
+               prof.seam / 1e3, prof.batch / 1e3);
         printf("  proof %.2f MB (%zu seam claims, %zu batch classes), peak RSS %.2f GB\n",
                psz / 1048576.0, hpf.seam.size(), hpf.batches.size(),
                peak_rss_kb() / 1048576.0);

@@ -206,9 +206,10 @@ static inline gl_t F_sw(const gl_t* v, const gl_t* lam) {
 struct SwgProof {
     uint32_t n = 0;
     p3fri::Hash rws[NDS];
-    p3lu::LookupProof lu[NLUS];
-    gl_t yMsgmb = 0, yMumb = 0;                // virtual-key bindings
+    std::vector<p3lu::GroupProof> lug;         // standalone merged lookup groups
+    // virtual-key binding claims ride the MUL member's `extra` slots
     std::vector<Msg5> mE; gl_t yE[NDS] = {}; gl_t yUP = 0, yM = 0;
+    p3zkc::Blind zbl[1];                       // zk: element zero-check blind
     std::vector<p3bo::BatchProof> batches;
 };
 
@@ -230,7 +231,7 @@ static inline std::vector<LuDef> lu_defs(const Tables& T) {
 // ==================== prover ====================
 static inline SwgProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
                              const Operands& ops, uint32_t R, uint32_t Q,
-                             bool strict = true) {
+                             bool strict = true, p3lu::XCtx* xc = nullptr) {
     SwgProof pf; pf.n = wt.n;
     uint32_t hdr[1] = {wt.n};
     tr.absorb("swg-dims", hdr, sizeof hdr);
@@ -240,29 +241,44 @@ static inline SwgProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     tr.absorb("swg-U", ops.UP.root.data(), 32);
     tr.absorb("swg-M", ops.M.root.data(), 32);
 
-    p3bo::PLedger lg;
-    std::deque<Col> lucols;
+    p3lu::XCtx xc_loc;
+    p3lu::XCtx& XC = xc ? *xc : xc_loc;
+    p3bo::PLedger& lg = XC.lg;
+    std::deque<Col>& lucols = XC.keep;
 
-    std::vector<Col> C(NDS);
+    std::vector<Col>& C = XC.vec(NDS);
     for (int c = 0; c < NDS; c++) { C[c] = commit_col_nc(wt.ws[c], R); pf.rws[c] = C[c].root; }
     for (int c = 0; c < NDS; c++) tr.absorb("swg-cw", pf.rws[c].data(), 32);
 
+    // zk: virtual MUL7 keys are AFFINE in the committed mantissa columns, so
+    // their augmented arrays are 128 + aug(SGMB/UMB) -- the affine binding
+    // yv == 128 + y then holds at every (augmented) point exactly
+    const std::vector<gl_t> *psg = &wt.sgmf, *pum = &wt.umf;
+    if (p3zkc::G.on) {
+        std::vector<gl_t> sgmf_z = C[S_SGMB].v; for (auto& x : sgmf_z) x = gl_add(x, 128ULL);
+        std::vector<gl_t> umf_z = C[S_UMB].v;   for (auto& x : umf_z) x = gl_add(x, 128ULL);
+        psg = &XC.varr(std::move(sgmf_z)); pum = &XC.varr(std::move(umf_z));
+    }
     auto LD = lu_defs(T);
     for (int i = 0; i < NLUS; i++) {
         std::vector<LuColSpec> spec;
         for (int cid : LD[i].cols) {
-            if (cid == -1) spec.push_back(LV(&wt.sgmf));
-            else if (cid == -2) spec.push_back(LV(&wt.umf));
+            if (cid == -1) spec.push_back(LV(psg));
+            else if (cid == -2) spec.push_back(LV(pum));
             else if (cid == -3) spec.push_back(LC(&ops.GATE));
             else spec.push_back(LC(&C[cid]));
         }
-        std::vector<gl_t> rA;
-        pf.lu[i] = p3lu::prove_v(tr, spec, wt.lidx[i], *LD[i].tab, R, Q, LD[i].label,
-                                 true, strict, i == LUS_MUL ? &rA : nullptr, &lg, &lucols);
+        p3lu::PBind bind;
         if (i == LUS_MUL) {
-            pf.yMsgmb = claimc(tr, lg, C[S_SGMB], rA);
-            pf.yMumb = claimc(tr, lg, C[S_UMB], rA);
+            const Col *sg = &C[S_SGMB], *um = &C[S_UMB];
+            bind = [sg, um](fs::Transcript& trb, p3lu::XCtx& xcb,
+                            const std::vector<gl_t>& pm, const std::vector<gl_t>&) {
+                gl_t y1 = claimc(trb, xcb.lg, *sg, pm);
+                gl_t y2 = claimc(trb, xcb.lg, *um, pm);
+                return std::vector<gl_t>{y1, y2};
+            };
         }
+        p3lu::defer_v(XC, std::move(spec), wt.lidx[i], *LD[i].tab, LD[i].label, std::move(bind));
     }
 
     std::vector<gl_t> zE = chal_vec(tr, wt.ln);
@@ -270,19 +286,23 @@ static inline SwgProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     for (int j = 1; j < N_SW_C; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
         std::vector<std::vector<gl_t>> cols; cols.reserve(3 + NDS);
-        cols.push_back(beq(zE));
-        cols.push_back(wt.upat); cols.push_back(wt.mpat);
-        for (int c = 0; c < NDS; c++) cols.push_back(wt.ws[c]);
+        cols.push_back(beq(p3zkc::zpt(zE)));
+        cols.push_back(ops.UP.v); cols.push_back(ops.M.v);
+        for (int c = 0; c < NDS; c++) cols.push_back(C[c].v);
         CFn F = [&](const gl_t* v) { return F_sw(v, lamEv); };
-        std::vector<gl_t> rE = sc5_prove(tr, "swg-scE", std::move(cols), F, pf.mE);
+        std::vector<gl_t> rE = p3hwl::sc5z(tr, "swg-scE", wt.ln, std::move(cols), F, pf.mE,
+                                           0, R, lg, lucols, pf.zbl[0]);
         pf.yUP = claimc(tr, lg, ops.UP, rE);
         pf.yM = claimc(tr, lg, ops.M, rE);
         for (int c = 0; c < NDS; c++) pf.yE[c] = claimc(tr, lg, C[c], rE);
     }
 
-    for (size_t i = 0; i < lg.cls.size(); i++)
-        pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
-                                               "swg-bo" + std::to_string(i)));
+    if (!xc) {
+        pf.lug = p3lu::lu_flush(tr, XC, R, Q, strict);
+        for (size_t i = 0; i < lg.cls.size(); i++)
+            pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
+                                                   "swg-bo" + std::to_string(i)));
+    }
     return pf;
 }
 
@@ -290,13 +310,16 @@ static inline SwgProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
 static inline bool verify(fs::Transcript& tr, const Tables& T, const SwgProof& pf,
                           const p3fri::Hash& rGATE, const p3fri::Hash& rUP,
                           const p3fri::Hash& rM, uint32_t n,
-                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr) {
+                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr,
+                          p3lu::VCtx* xv = nullptr) {
     auto fail = [&](const char* m) { if (why) *why = m; return false; };
     if (Q_pub < 20 || R_pub < 1) return fail("insecure params");
     if (pf.n != n) return fail("dims mismatch");
     uint32_t ln = ilog2(n);
     if ((1u << ln) != n) return fail("n must be pow2");
-    p3bo::VLedger vlg;
+    p3lu::VCtx vc_loc;
+    p3lu::VCtx& VC = xv ? *xv : vc_loc;
+    p3bo::VLedger& vlg = VC.vlg;
 
     uint32_t hdr[1] = {n};
     tr.absorb("swg-dims", hdr, sizeof hdr);
@@ -309,42 +332,55 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const SwgProof& p
 
     auto LD = lu_defs(T);
     for (int i = 0; i < NLUS; i++) {
-        if (pf.lu[i].n != ln) return fail("lookup domain");
         std::vector<const p3fri::Hash*> roots;
         for (int cid : LD[i].cols) {
             if (cid == -1 || cid == -2) roots.push_back(nullptr);
             else if (cid == -3) roots.push_back(&rGATE);
             else roots.push_back(&pf.rws[cid]);
         }
-        std::vector<gl_t> rA, yv;
-        if (!p3lu::verify_v(tr, roots, *LD[i].tab, pf.lu[i], Q_pub, R_pub, LD[i].label,
-                            why, &rA, &yv, nullptr, &vlg)) return false;
+        p3lu::VBind bind;
         if (i == LUS_MUL) {
-            if (yv.size() != 2) return fail("MUL y_virt count");
-            gl_t ysgmb = claimv(tr, vlg, pf.rws[S_SGMB], rA, pf.yMsgmb);
-            gl_t yumb = claimv(tr, vlg, pf.rws[S_UMB], rA, pf.yMumb);
-            if (yv[0] != gl_add(128ULL, ysgmb)) return fail("MUL sgmf binding");
-            if (yv[1] != gl_add(128ULL, yumb)) return fail("MUL umf binding");
+            p3fri::Hash hs = pf.rws[S_SGMB], hu = pf.rws[S_UMB];
+            bind = [hs, hu](fs::Transcript& trb, p3lu::VCtx& vc,
+                            const std::vector<gl_t>& pm, const std::vector<gl_t>& yv,
+                            const std::vector<gl_t>& ex, const char** wy) {
+                auto f = [&](const char* m) { if (wy) *wy = m; return false; };
+                if (yv.size() != 2) return f("MUL y_virt count");
+                if (ex.size() != 2) return f("MUL extra count");
+                gl_t ysgmb = claimv(trb, vc.vlg, hs, pm, ex[0]);
+                gl_t yumb = claimv(trb, vc.vlg, hu, pm, ex[1]);
+                if (yv[0] != gl_add(128ULL, ysgmb)) return f("MUL sgmf binding");
+                if (yv[1] != gl_add(128ULL, yumb)) return f("MUL umf binding");
+                return true;
+            };
         }
+        p3lu::vdefer_v(VC, std::move(roots), *LD[i].tab, ln, LD[i].label, std::move(bind));
     }
 
     std::vector<gl_t> zE = chal_vec(tr, ln);
     gl_t lamE = chal(tr), lamEv[N_SW_C]; lamEv[0] = 1;
     for (int j = 1; j < N_SW_C; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[0]);
         std::vector<gl_t> rE; gl_t claim;
-        if (!sc5_verify(pf.mE, ln, 0, tr, "swg-scE", rE, claim)) return fail("De sumcheck");
-        gl_t v[3 + NDS]; v[0] = p3bf::eq_point(rE, zE);
+        if (!sc5_verify(pf.mE, p3zkc::vfull(ln), gl_mul(rho, pf.zbl[0].H),
+                        tr, "swg-scE", rE, claim)) return fail("De sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
+        gl_t v[3 + NDS]; v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
         v[1] = claimv(tr, vlg, rUP, rE, pf.yUP);
         v[2] = claimv(tr, vlg, rM, rE, pf.yM);
         for (int c = 0; c < NDS; c++) v[3 + c] = claimv(tr, vlg, pf.rws[c], rE, pf.yE[c]);
-        if (F_sw(v, lamEv) != claim) return fail("De terminal");
+        gl_t end = gl_add(F_sw(v, lamEv), p3hwl::sc5_blindterm(pf.zbl[0], rho, v[0]));
+        if (end != claim) return fail("De terminal");
     }
 
-    if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
-    for (size_t i = 0; i < vlg.cls.size(); i++)
-        if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
-                                "swg-bo" + std::to_string(i), why)) return false;
+    if (!xv) {
+        if (!p3lu::lu_verify_flush(tr, VC, pf.lug, Q_pub, R_pub, why)) return false;
+        if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
+        for (size_t i = 0; i < vlg.cls.size(); i++)
+            if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
+                                    "swg-bo" + std::to_string(i), why)) return false;
+    } else if (!pf.batches.empty() || !pf.lug.empty()) return fail("unexpected batches");
 
     if (why) *why = "ok";
     return true;
@@ -352,7 +388,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const SwgProof& p
 
 static inline size_t proof_size(const SwgProof& pf) {
     size_t s = 4 + NDS * 32;
-    for (int i = 0; i < NLUS; i++) s += p3hwl::sz_lu(pf.lu[i]);
+    for (auto& g : pf.lug) s += p3lu::sz_group(g);
     s += pf.mE.size() * 40;
     s += 8 * (NDS + 4);
     for (auto& b : pf.batches) s += p3bo::sz_batch(b);

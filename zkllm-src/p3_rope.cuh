@@ -238,9 +238,12 @@ static inline Wit gen_witness(const GoldenSet& gs, const GoldenSet::Case& L,
 }
 
 struct Operands { Col Q, OUT; };
-static inline Operands commit_operands(const Wit& wt, uint32_t R) {
+// zk: qmask (composed layer) links Q's mask slice 1 to the producer matmul
+// output's head slice, so the rope-q/k slice seam agrees on the augmented eval
+static inline Operands commit_operands(const Wit& wt, uint32_t R,
+                                       const std::vector<gl_t>* qmask = nullptr) {
     Operands ops;
-    ops.Q = commit_col_nc(wt.qpat, R);
+    ops.Q = commit_col_nc(wt.qpat, R, qmask);
     ops.OUT = commit_col_nc(wt.opat, R);
     return ops;
 }
@@ -330,17 +333,18 @@ static inline std::vector<LuDef> lu_defs() {
 struct RopeProof {
     uint32_t lp = 0, lh = 0;
     p3fri::Hash rws[NDR];
-    p3lu::LookupProof lu[NLRP];
-    gl_t yMK[4] = {};                                // AMB/BMB bindings at rA
+    std::vector<p3lu::GroupProof> lug;               // standalone merged lookup groups
+    // AMB/BMB bindings ride the MUL members' `extra` slots
     std::vector<Msg5> mE; std::vector<gl_t> yE;
     gl_t yQA = 0, yQB = 0, yOA = 0, yOB = 0;
+    p3zkc::Blind zbl[1];                             // zk: element zero-check blind
     std::vector<p3bo::BatchProof> batches;
 };
 
 // ==================== prover ====================
 static inline RopeProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
                               const Operands& ops, uint32_t R, uint32_t Q,
-                              bool strict = true) {
+                              bool strict = true, p3lu::XCtx* xc = nullptr) {
     RopeProof pf; pf.lp = wt.lp; pf.lh = wt.lh;
     uint32_t hdr[2] = {wt.lp, wt.lh};
     tr.absorb("rop-dims", hdr, sizeof hdr);
@@ -353,33 +357,52 @@ static inline RopeProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T
     tr.absorb("rop-Q", ops.Q.root.data(), 32);
     tr.absorb("rop-O", ops.OUT.root.data(), 32);
 
-    p3bo::PLedger lg;
-    std::deque<Col> lucols;
+    p3lu::XCtx xc_loc;
+    p3lu::XCtx& XC = xc ? *xc : xc_loc;
+    p3bo::PLedger& lg = XC.lg;
+    std::deque<Col>& lucols = XC.keep;
 
-    std::vector<Col> C(NDR);
+    std::vector<Col>& C = XC.vec(NDR);
     for (int c = 0; c < NDR; c++) { C[c] = commit_col_nc(wt.ws[c], R); pf.rws[c] = C[c].root; }
     for (int c = 0; c < NDR; c++) tr.absorb("rop-cw", pf.rws[c].data(), 32);
 
+    // zk virtual lookup keys: amf/bmf are AFFINE in committed columns
+    // (aug = 128 + aug column); cmf/smf are PUBLIC (zero-extended)
+
+    const std::vector<gl_t> *pam = &wt.amf, *pbm = &wt.bmf,
+                            *pcm = &wt.cmf, *psm = &wt.smf;
+    if (p3zkc::G.on) {
+        std::vector<gl_t> amf_z = C[RP_AMB].v; for (auto& x : amf_z) x = gl_add(x, 128ULL);
+        std::vector<gl_t> bmf_z = C[RP_BMB].v; for (auto& x : bmf_z) x = gl_add(x, 128ULL);
+        size_t NeA = (size_t)wt.Ne << p3zkc::e_of(wt.ln);
+        std::vector<gl_t> cmf_z = wt.cmf; cmf_z.resize(NeA, 0);
+        std::vector<gl_t> smf_z = wt.smf; smf_z.resize(NeA, 0);
+        pam = &XC.varr(std::move(amf_z)); pbm = &XC.varr(std::move(bmf_z));
+        pcm = &XC.varr(std::move(cmf_z)); psm = &XC.varr(std::move(smf_z));
+    }
     auto LD = lu_defs();
     for (int i = 0; i < NLRP; i++) {
         std::vector<LuColSpec> spec;
         for (int cid : LD[i].cols) {
-            if (cid == -1) spec.push_back(LV(&wt.amf));
-            else if (cid == -2) spec.push_back(LV(&wt.bmf));
-            else if (cid == -3) spec.push_back(LV(&wt.cmf));
-            else if (cid == -4) spec.push_back(LV(&wt.smf));
+            if (cid == -1) spec.push_back(LV(pam));
+            else if (cid == -2) spec.push_back(LV(pbm));
+            else if (cid == -3) spec.push_back(LV(pcm));
+            else if (cid == -4) spec.push_back(LV(psm));
             else spec.push_back(LC(&C[cid]));
         }
         const Table& tab = LD[i].tab < 0 ? T.MUL7 : T.BT.t[LD[i].tab];
         bool ismul = i >= LRP_MAC && i <= LRP_MSA;
-        std::vector<gl_t> rA;
-        pf.lu[i] = p3lu::prove_v(tr, spec, wt.lidx[i], tab, R, Q,
-                                 "ropLU" + std::to_string(i), true, strict,
-                                 ismul ? &rA : nullptr, &lg, &lucols);
+        p3lu::PBind bind;
         if (ismul) {
             int wcol = (i == LRP_MAC || i == LRP_MSA) ? RP_AMB : RP_BMB;
-            pf.yMK[i - LRP_MAC] = claimc(tr, lg, C[wcol], rA);
+            const Col* pc = &C[wcol];
+            bind = [pc](fs::Transcript& trb, p3lu::XCtx& xcb,
+                        const std::vector<gl_t>& pm, const std::vector<gl_t>&) {
+                return std::vector<gl_t>{claimc(trb, xcb.lg, *pc, pm)};
+            };
         }
+        p3lu::defer_v(XC, std::move(spec), wt.lidx[i], tab,
+                      "ropLU" + std::to_string(i), std::move(bind));
     }
 
     std::vector<gl_t> zE = chal_vec(tr, wt.ln);
@@ -388,25 +411,49 @@ static inline RopeProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T
     for (int j = 1; j < N_RP_C; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
         std::vector<std::vector<gl_t>> cols; cols.reserve(13 + NDR);
-        cols.push_back(beq(zE));
-        cols.push_back(wt.qa); cols.push_back(wt.qb);
-        cols.push_back(wt.oa); cols.push_back(wt.ob);
-        for (int k = 0; k < 4; k++) cols.push_back(wt.cf[k]);
-        for (int k = 0; k < 4; k++) cols.push_back(wt.sf[k]);
-        for (int c = 0; c < NDR; c++) cols.push_back(wt.ws[c]);
+        cols.push_back(beq(p3zkc::zpt(zE)));
+        const bool zk = p3zkc::G.on;
+        uint32_t lq = wt.ln + 1;
+        auto insmap = [&](gl_t bit) {
+            return [this_lh = wt.lh, bit](size_t i) {
+                size_t lo = i & (((size_t)1 << this_lh) - 1);
+                return lo | ((size_t)bit << this_lh) | ((i >> this_lh) << (this_lh + 1));
+            };
+        };
+        if (zk) {
+            cols.push_back(p3zkc::bc_aug(ops.Q.v, lq, wt.ln, wt.Ne, insmap(0)));
+            cols.push_back(p3zkc::bc_aug(ops.Q.v, lq, wt.ln, wt.Ne, insmap(1)));
+            cols.push_back(p3zkc::bc_aug(ops.OUT.v, lq, wt.ln, wt.Ne, insmap(0)));
+            cols.push_back(p3zkc::bc_aug(ops.OUT.v, lq, wt.ln, wt.Ne, insmap(1)));
+            size_t NeA = (size_t)wt.Ne << p3zkc::e_of(wt.ln);
+            for (int k = 0; k < 4; k++) { auto v2 = wt.cf[k]; v2.resize(NeA, 0); cols.push_back(std::move(v2)); }
+            for (int k = 0; k < 4; k++) { auto v2 = wt.sf[k]; v2.resize(NeA, 0); cols.push_back(std::move(v2)); }
+            for (int c = 0; c < NDR; c++) cols.push_back(C[c].v);
+        } else {
+            cols.push_back(wt.qa); cols.push_back(wt.qb);
+            cols.push_back(wt.oa); cols.push_back(wt.ob);
+            for (int k = 0; k < 4; k++) cols.push_back(wt.cf[k]);
+            for (int k = 0; k < 4; k++) cols.push_back(wt.sf[k]);
+            for (int c = 0; c < NDR; c++) cols.push_back(wt.ws[c]);
+        }
         CFn F = [&](const gl_t* v) { return F_rp(v, lamEv.data()); };
-        std::vector<gl_t> rE = sc5_prove(tr, "rop-scE", std::move(cols), F, pf.mE);
-        pf.yQA = claimc(tr, lg, ops.Q, ins_pt(rE, wt.lh, 0));
-        pf.yQB = claimc(tr, lg, ops.Q, ins_pt(rE, wt.lh, 1));
-        pf.yOA = claimc(tr, lg, ops.OUT, ins_pt(rE, wt.lh, 0));
-        pf.yOB = claimc(tr, lg, ops.OUT, ins_pt(rE, wt.lh, 1));
+        std::vector<gl_t> rE = p3hwl::sc5z(tr, "rop-scE", wt.ln, std::move(cols), F, pf.mE,
+                                           0, R, lg, lucols, pf.zbl[0]);
+        std::vector<gl_t> rlow(rE.begin(), rE.begin() + wt.ln);
+        pf.yQA = claimc(tr, lg, ops.Q, p3zkc::expt(ins_pt(rlow, wt.lh, 0), rE, wt.ln));
+        pf.yQB = claimc(tr, lg, ops.Q, p3zkc::expt(ins_pt(rlow, wt.lh, 1), rE, wt.ln));
+        pf.yOA = claimc(tr, lg, ops.OUT, p3zkc::expt(ins_pt(rlow, wt.lh, 0), rE, wt.ln));
+        pf.yOB = claimc(tr, lg, ops.OUT, p3zkc::expt(ins_pt(rlow, wt.lh, 1), rE, wt.ln));
         pf.yE.resize(NDR);
         for (int c = 0; c < NDR; c++) pf.yE[c] = claimc(tr, lg, C[c], rE);
     }
 
-    for (size_t i = 0; i < lg.cls.size(); i++)
-        pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
-                                               "rop-bo" + std::to_string(i)));
+    if (!xc) {
+        pf.lug = p3lu::lu_flush(tr, XC, R, Q, strict);
+        for (size_t i = 0; i < lg.cls.size(); i++)
+            pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
+                                                   "rop-bo" + std::to_string(i)));
+    }
     return pf;
 }
 
@@ -417,7 +464,8 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const RopeProof& 
                           const std::vector<uint16_t>& sinp,
                           const p3fri::Hash& rQ, const p3fri::Hash& rOUT,
                           uint32_t seq, uint32_t dh,
-                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr) {
+                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr,
+                          p3lu::VCtx* xv = nullptr) {
     auto fail = [&](const char* m) { if (why) *why = m; return false; };
     if (Q_pub < 20 || R_pub < 1) return fail("insecure params");
     uint32_t half = dh / 2, lp = ilog2(seq), lh = ilog2(half);
@@ -427,7 +475,9 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const RopeProof& 
     size_t Ne = (size_t)seq * half;
     if (cosp.size() != Ne || sinp.size() != Ne) return fail("cos/sin size");
     if (pf.yE.size() != NDR) return fail("yE count");
-    p3bo::VLedger vlg;
+    p3lu::VCtx vc_loc;
+    p3lu::VCtx& VC = xv ? *xv : vc_loc;
+    p3bo::VLedger& vlg = VC.vlg;
 
     // rebuild the public field columns
     std::vector<gl_t> cf[4], sf[4], cmf(Ne), smf(Ne);
@@ -455,27 +505,37 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const RopeProof& 
 
     auto LD = lu_defs();
     for (int i = 0; i < NLRP; i++) {
-        if (pf.lu[i].n != ln) return fail("lookup domain");
         std::vector<const p3fri::Hash*> roots;
         for (int cid : LD[i].cols)
             roots.push_back(cid < 0 ? nullptr : &pf.rws[cid]);
         const Table& tab = LD[i].tab < 0 ? T.MUL7 : T.BT.t[LD[i].tab];
         bool ismul = i >= LRP_MAC && i <= LRP_MSA;
-        std::vector<gl_t> rA, yv;
-        if (!p3lu::verify_v(tr, roots, tab, pf.lu[i], Q_pub, R_pub,
-                            "ropLU" + std::to_string(i), why,
-                            ismul ? &rA : nullptr, ismul ? &yv : nullptr,
-                            nullptr, &vlg)) return false;
+        p3lu::VBind bind;
         if (ismul) {
-            if (yv.size() != 2) return fail("MUL y_virt count");
             int wcol = (i == LRP_MAC || i == LRP_MSA) ? RP_AMB : RP_BMB;
-            gl_t ymb = claimv(tr, vlg, pf.rws[wcol], rA, pf.yMK[i - LRP_MAC]);
-            if (yv[0] != gl_add(128ULL, ymb)) return fail("MUL witness-key binding");
-            // the public cos/sin key: the verifier evaluates the MLE itself
-            const std::vector<gl_t>& pub =
-                (i == LRP_MAC || i == LRP_MCB) ? cmf : smf;
-            if (yv[1] != mle_eval(pub, rA)) return fail("MUL public-key binding");
+            p3fri::Hash hw = pf.rws[wcol];
+            std::vector<gl_t> pub = (i == LRP_MAC || i == LRP_MCB) ? cmf : smf;
+            uint32_t lnc = ln;
+            bind = [hw, pub, lnc](fs::Transcript& trb, p3lu::VCtx& vc,
+                                  const std::vector<gl_t>& pm, const std::vector<gl_t>& yv,
+                                  const std::vector<gl_t>& ex, const char** wy) {
+                auto f = [&](const char* m) { if (wy) *wy = m; return false; };
+                if (yv.size() != 2) return f("MUL y_virt count");
+                if (ex.size() != 1) return f("MUL extra count");
+                gl_t ymb = claimv(trb, vc.vlg, hw, pm, ex[0]);
+                if (yv[0] != gl_add(128ULL, ymb)) return f("MUL witness-key binding");
+                // the public cos/sin key: the verifier evaluates the MLE itself
+                // (zk: the prover's key column is zero-extended -> (1-r_ex) factors)
+                std::vector<gl_t> rAl(pm.begin(), pm.begin() + lnc);
+                gl_t ypub = mle_eval(pub, rAl);
+                for (size_t ii = lnc; ii < pm.size(); ii++)
+                    ypub = gl_mul(ypub, gl_sub(1ULL, pm[ii]));
+                if (yv[1] != ypub) return f("MUL public-key binding");
+                return true;
+            };
         }
+        p3lu::vdefer_v(VC, std::move(roots), tab, ln,
+                       "ropLU" + std::to_string(i), std::move(bind));
     }
 
     std::vector<gl_t> zE = chal_vec(tr, ln);
@@ -483,24 +543,35 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const RopeProof& 
     std::vector<gl_t> lamEv(N_RP_C); lamEv[0] = 1;
     for (int j = 1; j < N_RP_C; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[0]);
         std::vector<gl_t> rE; gl_t claim;
-        if (!sc5_verify(pf.mE, ln, 0, tr, "rop-scE", rE, claim)) return fail("De sumcheck");
+        if (!sc5_verify(pf.mE, p3zkc::vfull(ln), gl_mul(rho, pf.zbl[0].H),
+                        tr, "rop-scE", rE, claim)) return fail("De sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
         std::vector<gl_t> v(13 + NDR);
-        v[0] = p3bf::eq_point(rE, zE);
-        v[1] = claimv(tr, vlg, rQ, ins_pt(rE, lh, 0), pf.yQA);
-        v[2] = claimv(tr, vlg, rQ, ins_pt(rE, lh, 1), pf.yQB);
-        v[3] = claimv(tr, vlg, rOUT, ins_pt(rE, lh, 0), pf.yOA);
-        v[4] = claimv(tr, vlg, rOUT, ins_pt(rE, lh, 1), pf.yOB);
-        for (int k = 0; k < 4; k++) v[5 + k] = mle_eval(cf[k], rE);
-        for (int k = 0; k < 4; k++) v[9 + k] = mle_eval(sf[k], rE);
+        v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
+        std::vector<gl_t> rlow(rE.begin(), rE.begin() + ln);
+        v[1] = claimv(tr, vlg, rQ, p3zkc::expt(ins_pt(rlow, lh, 0), rE, ln), pf.yQA);
+        v[2] = claimv(tr, vlg, rQ, p3zkc::expt(ins_pt(rlow, lh, 1), rE, ln), pf.yQB);
+        v[3] = claimv(tr, vlg, rOUT, p3zkc::expt(ins_pt(rlow, lh, 0), rE, ln), pf.yOA);
+        v[4] = claimv(tr, vlg, rOUT, p3zkc::expt(ins_pt(rlow, lh, 1), rE, ln), pf.yOB);
+        gl_t exf = 1ULL;                          // zk: public fields zero-extended
+        for (size_t ii = ln; ii < rE.size(); ii++) exf = gl_mul(exf, gl_sub(1ULL, rE[ii]));
+        for (int k = 0; k < 4; k++) v[5 + k] = gl_mul(mle_eval(cf[k], rlow), exf);
+        for (int k = 0; k < 4; k++) v[9 + k] = gl_mul(mle_eval(sf[k], rlow), exf);
         for (int c = 0; c < NDR; c++) v[13 + c] = claimv(tr, vlg, pf.rws[c], rE, pf.yE[c]);
-        if (F_rp(v.data(), lamEv.data()) != claim) return fail("De terminal");
+        gl_t end = gl_add(F_rp(v.data(), lamEv.data()),
+                          p3hwl::sc5_blindterm(pf.zbl[0], rho, v[0]));
+        if (end != claim) return fail("De terminal");
     }
 
-    if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
-    for (size_t i = 0; i < vlg.cls.size(); i++)
-        if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
-                                "rop-bo" + std::to_string(i), why)) return false;
+    if (!xv) {
+        if (!p3lu::lu_verify_flush(tr, VC, pf.lug, Q_pub, R_pub, why)) return false;
+        if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
+        for (size_t i = 0; i < vlg.cls.size(); i++)
+            if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
+                                    "rop-bo" + std::to_string(i), why)) return false;
+    } else if (!pf.batches.empty() || !pf.lug.empty()) return fail("unexpected batches");
 
     if (why) *why = "ok";
     return true;
@@ -508,7 +579,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const RopeProof& 
 
 static inline size_t proof_size(const RopeProof& pf) {
     size_t s = 8 + NDR * 32;
-    for (int i = 0; i < NLRP; i++) s += p3hwl::sz_lu(pf.lu[i]);
+    for (auto& g : pf.lug) s += p3lu::sz_group(g);
     s += pf.mE.size() * 40;
     s += 8 * (NDR + 8);
     for (auto& b : pf.batches) s += p3bo::sz_batch(b);

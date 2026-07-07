@@ -10,6 +10,7 @@
 // challenge before its round message is absorbed makes the round forgeable
 // (see PHASE0_NOTES §10: the me_open steering attack).
 #pragma once
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -95,6 +96,19 @@ inline void sha256(const void* data, size_t n, uint8_t out[32]) {
     Sha256Ctx c; sha256_init(c); sha256_update(c, data, n); sha256_final(c, out);
 }
 
+// ---- challenge tape (hiding-battery experimental control; nullptr = normal FS) ----
+// RECORD: challenges computed normally and logged.  REPLAY: challenges are read
+// back from the tape in global draw order, so a prover re-run with different
+// masks/blinds/salts sees the SAME public challenges (the fixed-challenge
+// setting the chi-square battery requires; such transcripts are for
+// distribution analysis only and are not FS-verifiable).
+struct Tape {
+    std::vector<std::array<uint8_t, 32>> ch;
+    size_t pos = 0;
+    bool record = false;
+};
+static Tape* g_tape = nullptr;
+
 // ---- transcript ----
 struct Transcript {
     uint8_t state[32];
@@ -116,12 +130,21 @@ struct Transcript {
         sha256_final(c, state);
     }
     void challenge_bytes(uint8_t out[32]) {
+        if (g_tape && !g_tape->record) {
+            if (g_tape->pos >= g_tape->ch.size()) { memset(out, 0, 32); return; }
+            memcpy(out, g_tape->ch[g_tape->pos++].data(), 32);
+            return;
+        }
         { Sha256Ctx c; sha256_init(c); sha256_update(c, state, 32);
           sha256_update(c, "chal", 4); sha256_final(c, out); }
         { Sha256Ctx c; sha256_init(c); sha256_update(c, state, 32);
           uint8_t tmp[32];
           sha256_update(c, "rtch", 4); sha256_final(c, tmp);
           memcpy(state, tmp, 32); }
+        if (g_tape && g_tape->record) {
+            std::array<uint8_t, 32> a; memcpy(a.data(), out, 32);
+            g_tape->ch.push_back(a);
+        }
     }
 };
 

@@ -278,18 +278,19 @@ static inline std::vector<LuDef> lu_defs(const Tables& T) {
 struct QntProof {
     uint32_t B = 0, ld = 0;
     p3fri::Hash rde[NDE], rdb[NDB];
-    p3lu::LookupProof lu[NLUQ];
+    std::vector<p3lu::GroupProof> lug;   // standalone merged lookup groups
     std::vector<Msg5> mDe; gl_t yDe[NDE] = {}; gl_t yDeX = 0, yDeC = 0, yDeE = 0;
     std::vector<Msg5> mDb; gl_t yDb[NDB] = {}; gl_t yDbS = 0;
     gl_t yBF = 0;
     std::vector<Msg5> mBind; gl_t yBSEL = 0;
+    p3zkc::Blind zbl[3];                       // zk: De, Db, bind blinds
     std::vector<p3bo::BatchProof> batches;
 };
 
 // ==================== prover ====================
 static inline QntProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
                              const Operands& ops, uint32_t R, uint32_t Q,
-                             bool strict = true) {
+                             bool strict = true, p3lu::XCtx* xc = nullptr) {
     const Dims& dm = wt.dm;
     QntProof pf; pf.B = dm.B; pf.ld = dm.ld;
 
@@ -301,12 +302,34 @@ static inline QntProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     tr.absorb("qnt-C", ops.CODES.root.data(), 32);
     tr.absorb("qnt-S", ops.SCALES.root.data(), 32);
 
-    p3bo::PLedger lg;
-    std::deque<Col> lucols;
+    p3lu::XCtx xc_loc;
+    p3lu::XCtx& XC = xc ? *xc : xc_loc;
+    p3bo::PLedger& lg = XC.lg;
+    std::deque<Col>& lucols = XC.keep;
 
-    std::vector<Col> CDe(NDE), CDb(NDB);
-    for (int c = 0; c < NDE; c++) { CDe[c] = commit_col_nc(wt.de[c], R); pf.rde[c] = CDe[c].root; }
-    for (int c = 0; c < NDB; c++) { CDb[c] = commit_col_nc(wt.db[c], R); pf.rdb[c] = CDb[c].root; }
+    std::vector<Col>& CDe = XC.vec(NDE);
+    std::vector<Col>& CDb = XC.vec(NDB);
+    const bool zk = p3zkc::G.on;
+    // zk: the row binding sum_i SEL = 1 - FSEL is CLAIM algebra -> the identity
+    // must hold on the mask slice the (z||zex) claims touch (p3_zkc mechanism 1)
+    std::vector<gl_t> mSEL, mFSEL;
+    if (zk) {
+        mSEL = p3zkc::fresh_mask(dm.le);
+        mFSEL = p3zkc::fresh_mask(dm.lb);
+        for (uint32_t b = 0; b < dm.Bpad; b++) {
+            gl_t s = 0;
+            for (uint32_t i = 0; i < dm.d; i++) s = gl_add(s, mSEL[((size_t)b << dm.ld) | i]);
+            mFSEL[b] = gl_sub(1ULL, s);
+        }
+    }
+    for (int c = 0; c < NDE; c++) {
+        CDe[c] = commit_col_nc(wt.de[c], R, (zk && c == D_SEL) ? &mSEL : nullptr);
+        pf.rde[c] = CDe[c].root;
+    }
+    for (int c = 0; c < NDB; c++) {
+        CDb[c] = commit_col_nc(wt.db[c], R, (zk && c == R_FSEL) ? &mFSEL : nullptr);
+        pf.rdb[c] = CDb[c].root;
+    }
     for (int c = 0; c < NDE; c++) tr.absorb("qnt-ce", pf.rde[c].data(), 32);
     for (int c = 0; c < NDB; c++) tr.absorb("qnt-cb", pf.rdb[c].data(), 32);
 
@@ -315,8 +338,7 @@ static inline QntProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
         std::vector<LuColSpec> spec;
         for (int cid : LD[i].cols)
             spec.push_back(LC(LD[i].dom == 0 ? &CDe[cid] : &CDb[cid]));
-        pf.lu[i] = p3lu::prove_v(tr, spec, wt.lidx[i], *LD[i].tab, R, Q, LD[i].label,
-                                 true, strict, nullptr, &lg, &lucols);
+        p3lu::defer_v(XC, std::move(spec), wt.lidx[i], *LD[i].tab, LD[i].label);
     }
 
     // -- De zero-check --
@@ -325,19 +347,19 @@ static inline QntProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     for (int j = 1; j < N_DE_C; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
         std::vector<std::vector<gl_t>> cols; cols.reserve(3 + NDE + 1);
-        cols.push_back(beq(zE));
-        cols.push_back(wt.xpat); cols.push_back(wt.cpat);
-        for (int c = 0; c < NDE; c++) cols.push_back(wt.de[c]);
-        std::vector<gl_t> Ebc(dm.Ne);
-        for (size_t e = 0; e < dm.Ne; e++) Ebc[e] = wt.db[R_E][e >> dm.ld];
-        cols.push_back(std::move(Ebc));
+        cols.push_back(beq(p3zkc::zpt(zE)));
+        cols.push_back(ops.X.v); cols.push_back(ops.CODES.v);
+        for (int c = 0; c < NDE; c++) cols.push_back(CDe[c].v);
+        cols.push_back(p3zkc::bc_aug(CDb[R_E].v, dm.lb, dm.le, dm.Ne,
+                                     [&](size_t e) { return e >> dm.ld; }));
         CFn F = [&](const gl_t* v) { return F_de(v, lamEv); };
-        std::vector<gl_t> rE = sc5_prove(tr, "qnt-scE", std::move(cols), F, pf.mDe);
+        std::vector<gl_t> rE = p3hwl::sc5z(tr, "qnt-scE", dm.le, std::move(cols), F, pf.mDe,
+                                           0, R, lg, lucols, pf.zbl[0]);
         pf.yDeX = claimc(tr, lg, ops.X, rE);
         pf.yDeC = claimc(tr, lg, ops.CODES, rE);
         for (int c = 0; c < NDE; c++) pf.yDe[c] = claimc(tr, lg, CDe[c], rE);
-        std::vector<gl_t> rb(rE.begin() + dm.ld, rE.end());
-        pf.yDeE = claimc(tr, lg, CDb[R_E], rb);
+        std::vector<gl_t> rb(rE.begin() + dm.ld, rE.begin() + dm.le);
+        pf.yDeE = claimc(tr, lg, CDb[R_E], p3zkc::expt(rb, rE, dm.le));
     }
 
     // -- Db zero-check --
@@ -346,34 +368,49 @@ static inline QntProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     for (int j = 1; j < N_DB_C; j++) lamBv[j] = gl_mul(lamBv[j-1], lamB);
     {
         std::vector<std::vector<gl_t>> cols; cols.reserve(2 + NDB);
-        cols.push_back(beq(zB));
-        cols.push_back(wt.spat);
-        for (int c = 0; c < NDB; c++) cols.push_back(wt.db[c]);
+        cols.push_back(beq(p3zkc::zpt(zB)));
+        cols.push_back(ops.SCALES.v);
+        for (int c = 0; c < NDB; c++) cols.push_back(CDb[c].v);
         CFn F = [&](const gl_t* v) { return F_db(v, lamBv); };
-        std::vector<gl_t> rB = sc5_prove(tr, "qnt-scB", std::move(cols), F, pf.mDb);
+        std::vector<gl_t> rB = p3hwl::sc5z(tr, "qnt-scB", dm.lb, std::move(cols), F, pf.mDb,
+                                           0, R, lg, lucols, pf.zbl[1]);
         pf.yDbS = claimc(tr, lg, ops.SCALES, rB);
         for (int c = 0; c < NDB; c++) pf.yDb[c] = claimc(tr, lg, CDb[c], rB);
     }
 
-    // -- row binding: sum_i SEL = 1 - FSEL --
+    // -- row binding: sum_i SEL = 1 - FSEL (zk: fresh ex challenge + slice-1
+    //    linked masks; weight built from the target point zero-extended) --
     std::vector<gl_t> z2 = chal_vec(tr, dm.lb);
-    pf.yBF = claimc(tr, lg, CDb[R_FSEL], z2);
+    gl_t zexq = zk ? chal(tr) : 0;
+    pf.yBF = claimc(tr, lg, CDb[R_FSEL], p3zkc::xpt(z2, zexq));
     {
-        std::vector<gl_t> eqb = beq(z2);
-        std::vector<gl_t> EQb(dm.Ne);
-        for (size_t e = 0; e < dm.Ne; e++) EQb[e] = eqb[e >> dm.ld];
+        uint32_t e_e = p3zkc::e_of(dm.le);
+        std::vector<gl_t> ptb = z2;
+        if (zk) { ptb.push_back(zexq); ptb.resize(dm.lb + e_e, 0); }
+        std::vector<gl_t> eqb = beq(ptb);
+        size_t NeA = CDe[D_SEL].v.size();
+        std::vector<gl_t> EQb(NeA);
+        for (size_t q = 0; q < NeA; q++) {
+            size_t ex = q >> dm.le, e = q & (dm.Ne - 1);
+            EQb[q] = eqb[(ex << dm.lb) | (e >> dm.ld)];
+        }
         std::vector<std::vector<gl_t>> cols;
         cols.push_back(std::move(EQb));
-        cols.push_back(wt.de[D_SEL]);
+        cols.push_back(CDe[D_SEL].v);
         CFn F = [&](const gl_t* v) { return F_bind(v); };
-        std::vector<gl_t> rS = sc5_prove(tr, "qnt-scS", std::move(cols), F, pf.mBind);
+        gl_t base0 = gl_sub(1ULL, pf.yBF);
+        std::vector<gl_t> rS = p3hwl::sc5z(tr, "qnt-scS", dm.le, std::move(cols), F, pf.mBind,
+                                           base0, R, lg, lucols, pf.zbl[2]);
         pf.yBSEL = claimc(tr, lg, CDe[D_SEL], rS);
     }
 
-    // -- batched openings --
-    for (size_t i = 0; i < lg.cls.size(); i++)
-        pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
-                                               "qnt-bo" + std::to_string(i)));
+    // -- batched openings (deferred to the caller under an external ledger) --
+    if (!xc) {
+        pf.lug = p3lu::lu_flush(tr, XC, R, Q, strict);
+        for (size_t i = 0; i < lg.cls.size(); i++)
+            pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
+                                                   "qnt-bo" + std::to_string(i)));
+    }
     return pf;
 }
 
@@ -382,12 +419,15 @@ static inline QntProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
 static inline bool verify(fs::Transcript& tr, const Tables& T, const QntProof& pf,
                           const p3fri::Hash& rX, const p3fri::Hash& rCODES,
                           const p3fri::Hash& rSCALES, uint32_t B, uint32_t ld,
-                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr) {
+                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr,
+                          p3lu::VCtx* xv = nullptr) {
     auto fail = [&](const char* m) { if (why) *why = m; return false; };
     if (Q_pub < 20 || R_pub < 1) return fail("insecure params");
     if (pf.B != B || pf.ld != ld) return fail("dims mismatch");
     Dims dm = make_dims(B, ld);
-    p3bo::VLedger vlg;
+    p3lu::VCtx vc_loc;
+    p3lu::VCtx& VC = xv ? *xv : vc_loc;
+    p3bo::VLedger& vlg = VC.vlg;
 
     uint32_t hdr[2] = {B, ld};
     tr.absorb("qnt-dims", hdr, sizeof hdr);
@@ -402,12 +442,10 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const QntProof& p
     auto LD = lu_defs(T);
     for (int i = 0; i < NLUQ; i++) {
         uint32_t explog = LD[i].dom == 0 ? dm.le : dm.lb;
-        if (pf.lu[i].n != explog) return fail("lookup domain");
         std::vector<const p3fri::Hash*> roots;
         for (int cid : LD[i].cols)
             roots.push_back(LD[i].dom == 0 ? &pf.rde[cid] : &pf.rdb[cid]);
-        if (!p3lu::verify_v(tr, roots, *LD[i].tab, pf.lu[i], Q_pub, R_pub, LD[i].label,
-                            why, nullptr, nullptr, nullptr, &vlg)) return false;
+        p3lu::vdefer_v(VC, std::move(roots), *LD[i].tab, explog, LD[i].label);
     }
 
     // -- De zero-check --
@@ -415,15 +453,19 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const QntProof& p
     gl_t lamE = chal(tr), lamEv[N_DE_C]; lamEv[0] = 1;
     for (int j = 1; j < N_DE_C; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[0]);
         std::vector<gl_t> rE; gl_t claim;
-        if (!sc5_verify(pf.mDe, dm.le, 0, tr, "qnt-scE", rE, claim)) return fail("De sumcheck");
-        gl_t v[3 + NDE + 1]; v[0] = p3bf::eq_point(rE, zE);
+        if (!sc5_verify(pf.mDe, p3zkc::vfull(dm.le), gl_mul(rho, pf.zbl[0].H),
+                        tr, "qnt-scE", rE, claim)) return fail("De sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
+        gl_t v[3 + NDE + 1]; v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
         v[1] = claimv(tr, vlg, rX, rE, pf.yDeX);
         v[2] = claimv(tr, vlg, rCODES, rE, pf.yDeC);
         for (int c = 0; c < NDE; c++) v[3 + c] = claimv(tr, vlg, pf.rde[c], rE, pf.yDe[c]);
-        std::vector<gl_t> rb(rE.begin() + ld, rE.end());
-        v[3 + NDE] = claimv(tr, vlg, pf.rdb[R_E], rb, pf.yDeE);
-        if (F_de(v, lamEv) != claim) return fail("De terminal");
+        std::vector<gl_t> rb(rE.begin() + ld, rE.begin() + dm.le);
+        v[3 + NDE] = claimv(tr, vlg, pf.rdb[R_E], p3zkc::expt(rb, rE, dm.le), pf.yDeE);
+        gl_t end = gl_add(F_de(v, lamEv), p3hwl::sc5_blindterm(pf.zbl[0], rho, v[0]));
+        if (end != claim) return fail("De terminal");
     }
 
     // -- Db zero-check --
@@ -431,32 +473,49 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const QntProof& p
     gl_t lamB = chal(tr), lamBv[N_DB_C]; lamBv[0] = 1;
     for (int j = 1; j < N_DB_C; j++) lamBv[j] = gl_mul(lamBv[j-1], lamB);
     {
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[1]);
         std::vector<gl_t> rB; gl_t claim;
-        if (!sc5_verify(pf.mDb, dm.lb, 0, tr, "qnt-scB", rB, claim)) return fail("Db sumcheck");
-        gl_t v[2 + NDB]; v[0] = p3bf::eq_point(rB, zB);
+        if (!sc5_verify(pf.mDb, p3zkc::vfull(dm.lb), gl_mul(rho, pf.zbl[1].H),
+                        tr, "qnt-scB", rB, claim)) return fail("Db sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[1], rB);
+        gl_t v[2 + NDB]; v[0] = p3bf::eq_point(rB, p3zkc::zpt(zB));
         v[1] = claimv(tr, vlg, rSCALES, rB, pf.yDbS);
         for (int c = 0; c < NDB; c++) v[2 + c] = claimv(tr, vlg, pf.rdb[c], rB, pf.yDb[c]);
-        if (F_db(v, lamBv) != claim) return fail("Db terminal");
+        gl_t end = gl_add(F_db(v, lamBv), p3hwl::sc5_blindterm(pf.zbl[1], rho, v[0]));
+        if (end != claim) return fail("Db terminal");
     }
 
     // -- row binding --
     std::vector<gl_t> z2 = chal_vec(tr, dm.lb);
     {
-        gl_t yF = claimv(tr, vlg, pf.rdb[R_FSEL], z2, pf.yBF);
+        const bool zk = p3zkc::G.on;
+        gl_t zexq = zk ? p3lu::chal(tr) : 0;
+        gl_t yF = claimv(tr, vlg, pf.rdb[R_FSEL], p3zkc::xpt(z2, zexq), pf.yBF);
         gl_t claim0 = gl_sub(1ULL, yF);
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[2]);
+        claim0 = gl_add(claim0, gl_mul(rho, pf.zbl[2].H));
         std::vector<gl_t> rS; gl_t claim;
-        if (!sc5_verify(pf.mBind, dm.le, claim0, tr, "qnt-scS", rS, claim))
+        if (!sc5_verify(pf.mBind, p3zkc::vfull(dm.le), claim0, tr, "qnt-scS", rS, claim))
             return fail("bind sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[2], rS);
         gl_t ySEL = claimv(tr, vlg, pf.rde[D_SEL], rS, pf.yBSEL);
-        std::vector<gl_t> rSb(rS.begin() + ld, rS.end());
-        if (gl_mul(p3bf::eq_point(rSb, z2), ySEL) != claim) return fail("bind terminal");
+        std::vector<gl_t> rSb(rS.begin() + ld, rS.begin() + dm.le);
+        rSb.insert(rSb.end(), rS.begin() + dm.le, rS.end());
+        std::vector<gl_t> ptb = z2;
+        if (zk) { ptb.push_back(zexq); ptb.resize(dm.lb + p3zkc::e_of(dm.le), 0); }
+        gl_t w = p3bf::eq_point(rSb, ptb);
+        gl_t end = gl_add(gl_mul(w, ySEL), p3hwl::sc5_blindterm(pf.zbl[2], rho, w));
+        if (end != claim) return fail("bind terminal");
     }
 
-    // -- batched openings --
-    if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
-    for (size_t i = 0; i < vlg.cls.size(); i++)
-        if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
-                                "qnt-bo" + std::to_string(i), why)) return false;
+    // -- batched openings (caller-run under an external ledger) --
+    if (!xv) {
+        if (!p3lu::lu_verify_flush(tr, VC, pf.lug, Q_pub, R_pub, why)) return false;
+        if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
+        for (size_t i = 0; i < vlg.cls.size(); i++)
+            if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
+                                    "qnt-bo" + std::to_string(i), why)) return false;
+    } else if (!pf.batches.empty() || !pf.lug.empty()) return fail("unexpected batches");
 
     if (why) *why = "ok";
     return true;
@@ -465,7 +524,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const QntProof& p
 // ---------------- proof size (serialized-payload bytes) ----------------
 static inline size_t proof_size(const QntProof& pf) {
     size_t s = 8 + (NDE + NDB) * 32;
-    for (int i = 0; i < NLUQ; i++) s += p3hwl::sz_lu(pf.lu[i]);
+    for (auto& g : pf.lug) s += p3lu::sz_group(g);
     auto msgs = [&](const std::vector<Msg5>& m) { return m.size() * 40; };
     s += msgs(pf.mDe) + msgs(pf.mDb) + msgs(pf.mBind);
     s += 8 * (NDE + 3 + NDB + 1 + 2);

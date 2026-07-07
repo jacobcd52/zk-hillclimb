@@ -192,13 +192,14 @@ int main() {
         { auto p2 = pf; p2.yDeMX = gl_add(p2.yDeMX, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered max-pattern broadcast claim rejects", rj, why); }
-        { auto p2 = pf; p2.lu[LSM_EXP].S = gl_add(p2.lu[LSM_EXP].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].S = gl_add(p2.lug[0].S, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered EXP lookup sum rejects", rj, why); }
         { auto p2 = pf; p2.yBS = gl_add(p2.yBS, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered denominator sum claim rejects", rj, why); }
-        { auto p2 = pf; p2.yM3mrc = gl_add(p2.yM3mrc, 1ULL);
+        { auto p2 = pf;
+          for (auto& g : p2.lug) { for (auto& m : g.mem) if (m.extra.size() > 1) { m.extra[1] = gl_add(m.extra[1], 1ULL); goto smxdone; } } smxdone:;
           bool rj = !vfy(p2, Q);
           ck("tampered reciprocal key binding rejects", rj, why); }
     }

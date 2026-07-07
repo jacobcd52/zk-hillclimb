@@ -437,15 +437,16 @@ static inline gl_t F_ba(const gl_t* v, const gl_t* lam) {
 struct BfaProof {
     uint32_t n = 0;
     p3fri::Hash rws[NBA];
-    p3lu::LookupProof lu[NBLU];
+    std::vector<p3lu::GroupProof> lug;   // standalone merged lookup groups
     std::vector<Msg5> mE; gl_t yE[NBA] = {}; gl_t yX1 = 0, yX2 = 0, yOUT = 0;
+    p3zkc::Blind zbl[1];                       // zk: element zero-check blind
     std::vector<p3bo::BatchProof> batches;
 };
 
 // ==================== prover ====================
 static inline BfaProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
                              const Operands& ops, uint32_t R, uint32_t Q,
-                             bool strict = true) {
+                             bool strict = true, p3lu::XCtx* xc = nullptr) {
     BfaProof pf; pf.n = wt.n;
     uint32_t hdr[1] = {wt.n};
     tr.absorb("bfa-dims", hdr, sizeof hdr);
@@ -454,10 +455,12 @@ static inline BfaProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     tr.absorb("bfa-X2", ops.X2.root.data(), 32);
     tr.absorb("bfa-O", ops.OUT.root.data(), 32);
 
-    p3bo::PLedger lg;
-    std::deque<Col> lucols;
+    p3lu::XCtx xc_loc;
+    p3lu::XCtx& XC = xc ? *xc : xc_loc;
+    p3bo::PLedger& lg = XC.lg;
+    std::deque<Col>& lucols = XC.keep;
 
-    std::vector<Col> C(NBA);
+    std::vector<Col>& C = XC.vec(NBA);
     for (int c = 0; c < NBA; c++) { C[c] = commit_col_nc(wt.ws[c], R); pf.rws[c] = C[c].root; }
     for (int c = 0; c < NBA; c++) tr.absorb("bfa-cw", pf.rws[c].data(), 32);
 
@@ -465,9 +468,8 @@ static inline BfaProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     for (int i = 0; i < NBLU; i++) {
         std::vector<LuColSpec> spec;
         for (int cid : LD[i].cols) spec.push_back(LC(&C[cid]));
-        pf.lu[i] = p3lu::prove_v(tr, spec, wt.lidx[i], T.t[LD[i].tab], R, Q,
-                                 "bfaLU" + std::to_string(i), true, strict,
-                                 nullptr, &lg, &lucols);
+        p3lu::defer_v(XC, std::move(spec), wt.lidx[i], T.t[LD[i].tab],
+                      "bfaLU" + std::to_string(i));
     }
 
     std::vector<gl_t> zE = chal_vec(tr, wt.ln);
@@ -475,20 +477,24 @@ static inline BfaProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     for (int j = 1; j < N_BA_C; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
         std::vector<std::vector<gl_t>> cols; cols.reserve(4 + NBA);
-        cols.push_back(beq(zE));
-        cols.push_back(wt.x1); cols.push_back(wt.x2); cols.push_back(wt.opat);
-        for (int c = 0; c < NBA; c++) cols.push_back(wt.ws[c]);
+        cols.push_back(beq(p3zkc::zpt(zE)));
+        cols.push_back(ops.X1.v); cols.push_back(ops.X2.v); cols.push_back(ops.OUT.v);
+        for (int c = 0; c < NBA; c++) cols.push_back(C[c].v);
         CFn F = [&](const gl_t* v) { return F_ba(v, lamEv); };
-        std::vector<gl_t> rE = sc5_prove(tr, "bfa-scE", std::move(cols), F, pf.mE);
+        std::vector<gl_t> rE = p3hwl::sc5z(tr, "bfa-scE", wt.ln, std::move(cols), F, pf.mE,
+                                           0, R, lg, lucols, pf.zbl[0]);
         pf.yX1 = claimc(tr, lg, ops.X1, rE);
         pf.yX2 = claimc(tr, lg, ops.X2, rE);
         pf.yOUT = claimc(tr, lg, ops.OUT, rE);
         for (int c = 0; c < NBA; c++) pf.yE[c] = claimc(tr, lg, C[c], rE);
     }
 
-    for (size_t i = 0; i < lg.cls.size(); i++)
-        pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
-                                               "bfa-bo" + std::to_string(i)));
+    if (!xc) {
+        pf.lug = p3lu::lu_flush(tr, XC, R, Q, strict);
+        for (size_t i = 0; i < lg.cls.size(); i++)
+            pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
+                                                   "bfa-bo" + std::to_string(i)));
+    }
     return pf;
 }
 
@@ -496,13 +502,16 @@ static inline BfaProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
 static inline bool verify(fs::Transcript& tr, const Tables& T, const BfaProof& pf,
                           const p3fri::Hash& rX1, const p3fri::Hash& rX2,
                           const p3fri::Hash& rOUT, uint32_t n,
-                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr) {
+                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr,
+                          p3lu::VCtx* xv = nullptr) {
     auto fail = [&](const char* m) { if (why) *why = m; return false; };
     if (Q_pub < 20 || R_pub < 1) return fail("insecure params");
     if (pf.n != n) return fail("dims mismatch");
     uint32_t ln = ilog2(n);
     if ((1u << ln) != n) return fail("n must be pow2");
-    p3bo::VLedger vlg;
+    p3lu::VCtx vc_loc;
+    p3lu::VCtx& VC = xv ? *xv : vc_loc;
+    p3bo::VLedger& vlg = VC.vlg;
 
     uint32_t hdr[1] = {n};
     tr.absorb("bfa-dims", hdr, sizeof hdr);
@@ -514,33 +523,39 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const BfaProof& p
 
     auto LD = ba_lu_defs();
     for (int i = 0; i < NBLU; i++) {
-        if (pf.lu[i].n != ln) return fail("lookup domain");
         std::vector<const p3fri::Hash*> roots;
         for (int cid : LD[i].cols) roots.push_back(&pf.rws[cid]);
-        if (!p3lu::verify_v(tr, roots, T.t[LD[i].tab], pf.lu[i], Q_pub, R_pub,
-                            "bfaLU" + std::to_string(i), why,
-                            nullptr, nullptr, nullptr, &vlg)) return false;
+        p3lu::vdefer_v(VC, std::move(roots), T.t[LD[i].tab], ln,
+                       "bfaLU" + std::to_string(i));
     }
 
     std::vector<gl_t> zE = chal_vec(tr, ln);
     gl_t lamE = chal(tr), lamEv[N_BA_C]; lamEv[0] = 1;
     for (int j = 1; j < N_BA_C; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[0]);
         std::vector<gl_t> rE; gl_t claim;
-        if (!sc5_verify(pf.mE, ln, 0, tr, "bfa-scE", rE, claim)) return fail("De sumcheck");
+        if (!sc5_verify(pf.mE, p3zkc::vfull(ln), gl_mul(rho, pf.zbl[0].H),
+                        tr, "bfa-scE", rE, claim)) return fail("De sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
         std::vector<gl_t> v(4 + NBA);
-        v[0] = p3bf::eq_point(rE, zE);
+        v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
         v[1] = claimv(tr, vlg, rX1, rE, pf.yX1);
         v[2] = claimv(tr, vlg, rX2, rE, pf.yX2);
         v[3] = claimv(tr, vlg, rOUT, rE, pf.yOUT);
         for (int c = 0; c < NBA; c++) v[4 + c] = claimv(tr, vlg, pf.rws[c], rE, pf.yE[c]);
-        if (F_ba(v.data(), lamEv) != claim) return fail("De terminal");
+        gl_t end = gl_add(F_ba(v.data(), lamEv),
+                          p3hwl::sc5_blindterm(pf.zbl[0], rho, v[0]));
+        if (end != claim) return fail("De terminal");
     }
 
-    if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
-    for (size_t i = 0; i < vlg.cls.size(); i++)
-        if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
-                                "bfa-bo" + std::to_string(i), why)) return false;
+    if (!xv) {
+        if (!p3lu::lu_verify_flush(tr, VC, pf.lug, Q_pub, R_pub, why)) return false;
+        if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
+        for (size_t i = 0; i < vlg.cls.size(); i++)
+            if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
+                                    "bfa-bo" + std::to_string(i), why)) return false;
+    } else if (!pf.batches.empty() || !pf.lug.empty()) return fail("unexpected batches");
 
     if (why) *why = "ok";
     return true;
@@ -548,7 +563,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const BfaProof& p
 
 static inline size_t proof_size(const BfaProof& pf) {
     size_t s = 4 + NBA * 32;
-    for (int i = 0; i < NBLU; i++) s += p3hwl::sz_lu(pf.lu[i]);
+    for (auto& g : pf.lug) s += p3lu::sz_group(g);
     s += pf.mE.size() * 40;
     s += 8 * (NBA + 3);
     for (auto& b : pf.batches) s += p3bo::sz_batch(b);

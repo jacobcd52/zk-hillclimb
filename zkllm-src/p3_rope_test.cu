@@ -176,11 +176,11 @@ int main() {
         { auto p2 = pf; p2.yQA = gl_add(p2.yQA, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered Q half-slice claim rejects", rj, why); }
-        { auto p2 = pf; p2.yMK[0] = gl_add(p2.yMK[0], 1ULL);
+        { auto p2 = pf;
+          for (auto& g : p2.lug) { for (auto& m : g.mem) if (!m.extra.empty()) { m.extra[0] = gl_add(m.extra[0], 1ULL); goto ropedone; } } ropedone:;
           bool rj = !vfy(p2, Q);
           ck("tampered MUL7 key binding rejects", rj, why); }
-        { auto p2 = pf; p2.lu[LRP_A1 + p3bfa::BLU_RMH].S =
-              gl_add(p2.lu[LRP_A1 + p3bfa::BLU_RMH].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].S = gl_add(p2.lug[0].S, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered combine RNE lookup sum rejects", rj, why); }
     }
