@@ -182,6 +182,68 @@ __global__ void p3bo_axpy_kernel(gl_t* out, const gl_t* in, gl_t s, uint32_t n) 
     out[i] = gl_add(out[i], gl_mul(s, in[i]));
 }
 
+// ---- fused per-class reduction over STACKED per-point buffers ----
+// The resident (!strCol && !strG) path used to launch one kernel per (point,
+// round): T up to ~200 points x ~10 rounds x 3 kernels was pure launch
+// latency at small dims.  These kernels process all T points in ONE launch
+// per operation; every sum is the same exact field value (mod-p addition is
+// associative/commutative), so messages and transcripts are unchanged.
+__global__ void p3bo_gbuild_kernel(const gl_t* const* ecol, const gl_t* ew,
+                                   const uint32_t* estart, gl_t* Gs,
+                                   uint32_t T, uint32_t N) {
+    uint32_t j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= T * N) return;
+    uint32_t t = j / N, i = j % N;
+    gl_t acc = 0;
+    for (uint32_t e = estart[t]; e < estart[t + 1]; e++)
+        acc = gl_add(acc, gl_mul(ew[e], ecol[e][i]));
+    Gs[j] = acc;
+}
+__global__ void p3bo_eqs_kernel(const gl_t* zs, gl_t* Es, uint32_t T, uint32_t v,
+                                uint32_t N) {
+    uint32_t j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= T * N) return;
+    uint32_t t = j / N, b = j % N;
+    const gl_t* z = zs + (size_t)t * v;
+    gl_t p = 1ULL;
+    for (uint32_t i = 0; i < v; i++)
+        p = gl_mul(p, (b & (1u << i)) ? z[i] : gl_sub(1ULL, z[i]));
+    Es[j] = p;
+}
+__global__ void p3bo_msgs_kernel(const gl_t* Gs, const gl_t* Es, uint32_t L,
+                                 uint32_t half, uint32_t T,
+                                 gl_t* b0, gl_t* b1, gl_t* b2) {
+    __shared__ gl_t s0[256], s1[256], s2[256];
+    uint32_t tid = threadIdx.x; gl_t l0 = 0, l1 = 0, l2 = 0;
+    size_t tot = (size_t)T * half;
+    for (size_t j = (size_t)blockIdx.x * blockDim.x + tid; j < tot;
+         j += (size_t)gridDim.x * blockDim.x) {
+        size_t t = j / half, i = j % half;
+        const gl_t* c = Gs + t * L; const gl_t* w = Es + t * L;
+        gl_t cl = c[2*i], ch = c[2*i+1], wl = w[2*i], wh = w[2*i+1];
+        l0 = gl_add(l0, gl_mul(cl, wl)); l1 = gl_add(l1, gl_mul(ch, wh));
+        gl_t c2 = gl_sub(gl_add(ch, ch), cl), w2 = gl_sub(gl_add(wh, wh), wl);
+        l2 = gl_add(l2, gl_mul(c2, w2));
+    }
+    s0[tid] = l0; s1[tid] = l1; s2[tid] = l2; __syncthreads();
+    for (uint32_t s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) { s0[tid] = gl_add(s0[tid], s0[tid+s]);
+                       s1[tid] = gl_add(s1[tid], s1[tid+s]);
+                       s2[tid] = gl_add(s2[tid], s2[tid+s]); }
+        __syncthreads();
+    }
+    if (tid == 0) { b0[blockIdx.x] = s0[0]; b1[blockIdx.x] = s1[0]; b2[blockIdx.x] = s2[0]; }
+}
+__global__ void p3bo_binds_kernel(const gl_t* Gs, const gl_t* Es, gl_t* nG, gl_t* nE,
+                                  uint32_t L, uint32_t half, uint32_t T, gl_t a) {
+    uint32_t j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= T * half) return;
+    uint32_t t = j / half, i = j % half;
+    const gl_t* g = Gs + (size_t)t * L; const gl_t* e = Es + (size_t)t * L;
+    nG[(size_t)t * half + i] = gl_add(g[2*i], gl_mul(a, gl_sub(g[2*i+1], g[2*i])));
+    nE[(size_t)t * half + i] = gl_add(e[2*i], gl_mul(a, gl_sub(e[2*i+1], e[2*i])));
+}
+
 // device coeffs -> device codeword (zero-padded forward NTT)
 static inline gl_t* bo_encode_dev(const gl_t* d_vals, uint32_t N, uint32_t logM0, const P3Ntt& ntt) {
     uint32_t M0 = 1u << logM0;
@@ -344,11 +406,42 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     };
 
     // ---- per-point combined columns G_t (+ eq columns when resident) ----
+    const bool fused = !strCol && !strG;   // stacked one-launch-per-op path
     std::vector<gl_t*> dG(T, nullptr), dEq(T, nullptr);   // resident mode
     std::vector<std::vector<gl_t>> hG(strG ? T : 0);      // host-parked mode
+    gl_t* dGs = nullptr; gl_t* dEs = nullptr;             // fused stacked buffers
     SumMsg msg0{0, 0, 0};                                 // round-0 message (streamed mode
                                                           // computes it during the build)
-    {
+    if (fused) {
+        // CSR of entries by point id, weights and resident column pointers
+        std::vector<uint32_t> estart(T + 1, 0);
+        for (size_t j = 0; j < k; j++) estart[C.ents[j].zid + 1]++;
+        for (uint32_t t = 0; t < T; t++) estart[t + 1] += estart[t];
+        std::vector<const gl_t*> ecol(k); std::vector<gl_t> ew(k);
+        { std::vector<uint32_t> pos(estart.begin(), estart.end() - 1);
+          for (size_t j = 0; j < k; j++) {
+              uint32_t p = pos[C.ents[j].zid]++;
+              ecol[p] = dcol[colidx[j]]; ew[p] = muw[j];
+          } }
+        const gl_t** d_ecol; cudaMallocAsync(&d_ecol, k * sizeof(gl_t*), 0);
+        cudaMemcpy(d_ecol, ecol.data(), k * sizeof(gl_t*), cudaMemcpyHostToDevice);
+        gl_t* d_ew = p3bf::dmalloc(k, "bo:ew");
+        cudaMemcpy(d_ew, ew.data(), k * 8, cudaMemcpyHostToDevice);
+        uint32_t* d_es; cudaMallocAsync(&d_es, (size_t)(T + 1) * 4, 0);
+        cudaMemcpy(d_es, estart.data(), (size_t)(T + 1) * 4, cudaMemcpyHostToDevice);
+        dGs = p3bf::dmalloc((size_t)T * N, "bo:Gs");
+        p3bo_gbuild_kernel<<<((uint32_t)((size_t)T * N + 255)) / 256, 256>>>(
+            d_ecol, d_ew, d_es, dGs, T, N);
+        cudaFreeAsync((void*)d_ecol, 0); cudaFreeAsync(d_ew, 0); cudaFreeAsync(d_es, 0);
+        std::vector<gl_t> zs((size_t)T * v);
+        for (uint32_t t = 0; t < T; t++)
+            memcpy(zs.data() + (size_t)t * v, C.pts[t].data(), (size_t)v * 8);
+        gl_t* d_zs = p3bf::dmalloc(zs.size() ? zs.size() : 1, "bo:zs");
+        cudaMemcpy(d_zs, zs.data(), zs.size() * 8, cudaMemcpyHostToDevice);
+        dEs = p3bf::dmalloc((size_t)T * N, "bo:Es");
+        p3bo_eqs_kernel<<<((uint32_t)((size_t)T * N + 255)) / 256, 256>>>(d_zs, dEs, T, v, N);
+        cudaFreeAsync(d_zs, 0);
+    } else {
         gl_t* eqbuf = strG ? p3bf::dmalloc(N, "bo:eqbuf") : nullptr;
         for (uint32_t t = 0; t < T; t++) {
             gl_t* g = p3bf::dmalloc(N, "bo:G");
@@ -388,7 +481,17 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     for (uint32_t rd = 0; rd < v; rd++) {
         uint32_t L = N >> rd, half = L / 2;
         SumMsg msg{0, 0, 0};
-        if (!strG) {
+        if (fused) {
+            const uint32_t NBm = 256;
+            p3bo_msgs_kernel<<<NBm, 256>>>(dGs, dEs, L, half, T, db0, db1, db2);
+            cudaMemcpy(hb0.data(), db0, NBm * 8, cudaMemcpyDeviceToHost);
+            cudaMemcpy(hb1.data(), db1, NBm * 8, cudaMemcpyDeviceToHost);
+            cudaMemcpy(hb2.data(), db2, NBm * 8, cudaMemcpyDeviceToHost);
+            for (uint32_t i = 0; i < NBm; i++) {
+                msg.s0 = gl_add(msg.s0, hb0[i]); msg.s1 = gl_add(msg.s1, hb1[i]);
+                msg.s2 = gl_add(msg.s2, hb2[i]);
+            }
+        } else if (!strG) {
             for (uint32_t t = 0; t < T; t++) {
                 SumMsg m = bo_scmsg(dG[t], dEq[t], half, db0, db1, db2, hb0, hb1, hb2);
                 msg.s0 = gl_add(msg.s0, m.s0); msg.s1 = gl_add(msg.s1, m.s1);
@@ -417,7 +520,14 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         }
         pf.rmsgs.push_back(msg); tr.absorb("bo-rm", &msg, sizeof msg);
         gl_t a = chal(tr); rstar.push_back(a);
-        if (!strG) {
+        if (fused) {
+            gl_t* nGs = p3bf::dmalloc((size_t)T * half, "bo:nGs");
+            gl_t* nEs = p3bf::dmalloc((size_t)T * half, "bo:nEs");
+            p3bo_binds_kernel<<<((uint32_t)((size_t)T * half + 255)) / 256, 256>>>(
+                dGs, dEs, nGs, nEs, L, half, T, a);
+            cudaFreeAsync(dGs, 0); cudaFreeAsync(dEs, 0);
+            dGs = nGs; dEs = nEs;
+        } else if (!strG) {
             for (uint32_t t = 0; t < T; t++) {
                 gl_t *nG, *nE;
                 nG = p3bf::dmalloc(half, "bo:nG"); nE = p3bf::dmalloc(half, "bo:nE");
@@ -446,7 +556,8 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
             cudaFreeAsync(gbuf, 0); cudaFreeAsync(nbuf, 0);
         }
     }
-    if (!strG)
+    if (fused) { cudaFreeAsync(dGs, 0); cudaFreeAsync(dEs, 0); }
+    else if (!strG)
         for (uint32_t t = 0; t < T; t++) { cudaFreeAsync(dG[t], 0); cudaFreeAsync(dEq[t], 0); }
     else if (strGdev)
         for (uint32_t t = 0; t < T; t++) if (dG[t]) cudaFreeAsync(dG[t], 0);
