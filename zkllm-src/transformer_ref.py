@@ -635,6 +635,98 @@ class TinyLayer:
         return out
 
 
+# ============================== full model ==================================
+
+class TinyModel:
+    """Tiny FULL-STACK model: public token ids -> embedding lookup (committed
+    table) -> nlayers TinyLayers -> final RMSNorm -> LM head Hawkeye matmul ->
+    public logits.  Every intermediate activation is a hidden witness in the
+    ZK proof; only the token ids and the logits are public IO."""
+
+    def __init__(self, rng, nlayers=2, vocab=16):
+        self.nlayers, self.vocab = nlayers, vocab
+        self.layers = [TinyLayer(rng) for _ in range(nlayers)]
+        L0 = self.layers[0]
+        self.seq, self.d = L0.seq, L0.d
+        self.emb = np.array([[bf_from_f64(v) for v in row]
+                             for row in rng.normal(0, 1.0, (vocab, self.d))],
+                            np.uint16)
+        self.gF = np.array([bf_from_f64(v) for v in 1 + rng.normal(0, 0.1, self.d)],
+                           np.uint16)
+        hc = rng.integers(0, 256, (vocab, self.d)).astype(np.uint8)
+        hs = (np.exp(rng.normal(0, 0.3, vocab)) * 0.02).astype(np.float32)
+        self.Wh = (hc, hs)                        # LM head, vocab x d
+        self.rms = L0.rms
+
+    def forward(self, ids, trace=None):
+        """ids: (seq,) int token ids -> (seq, vocab) bf16 logit patterns."""
+        T = trace if trace is not None else {}
+        assert len(ids) == self.seq and all(0 <= t < self.vocab for t in ids)
+        X = self.emb[np.asarray(ids)].copy();            T['x0'] = X
+        for li, L in enumerate(self.layers):
+            sub = {}
+            X = L.forward(X, sub)
+            for k, v in sub.items():
+                T[f'L{li}.{k}'] = v
+        hF = self.rms.forward(X, self.gF);               T['hF'] = hF
+        codes, xsc = quant_rows_e4m3(hF)
+        logits = hawkeye_ref(codes, xsc.view(np.float32),
+                             self.Wh[0], self.Wh[1].view(np.float32))
+        T['logits'] = logits
+        return logits
+
+
+MODEL_SEED = 20260707
+MODEL_IDS = [3, 1, 4, 15]                        # the canonical public prompt
+
+
+def dump_model_weights(path, nlayers=2, vocab=16):
+    """Weights of the canonical tiny MODEL: embedding table, per-layer weights
+    (7 matrices + g1/g2, dump_weights order), final gain gF, LM head matrix,
+    pinned rope tables.  Format 'TFMW'."""
+    m = TinyModel(np.random.default_rng(MODEL_SEED), nlayers, vocab)
+    L0 = m.layers[0]
+    with open(path, 'wb') as f:
+        np.array([0x54464D57, m.nlayers, m.vocab, m.seq, m.d, L0.nh, L0.dh,
+                  L0.dff], np.int64).tofile(f)
+        m.emb.astype(np.uint16).tofile(f)
+        for L in m.layers:
+            for codes, sc in [L.Wq, L.Wk, L.Wv, L.Wo, L.Wg, L.Wu, L.Wd]:
+                np.array(list(codes.shape), np.int64).tofile(f)
+                codes.astype(np.uint8).tofile(f)
+                sc.view(np.uint32).tofile(f)
+            L.g1.astype(np.uint16).tofile(f)
+            L.g2.astype(np.uint16).tofile(f)
+        m.gF.astype(np.uint16).tofile(f)
+        np.array(list(m.Wh[0].shape), np.int64).tofile(f)
+        m.Wh[0].astype(np.uint8).tofile(f)
+        m.Wh[1].view(np.uint32).tofile(f)
+        L0.cos.astype(np.uint16).tofile(f)
+        L0.sin.astype(np.uint16).tofile(f)
+    print(f"wrote tiny-model weights (nlayers={m.nlayers} vocab={m.vocab}) to {path}")
+
+
+def dump_model_trace(path, nlayers=2, vocab=16):
+    """Golden full-forward-pass trace on the canonical public prompt: token
+    ids, embedded input, every per-layer intermediate (L<i>.<op>), the final
+    normed hidden state and the logits.  Format 'TFMT' (TRLY-style records)."""
+    m = TinyModel(np.random.default_rng(MODEL_SEED), nlayers, vocab)
+    tr = {}
+    m.forward(MODEL_IDS, tr)
+    with open(path, 'wb') as f:
+        np.array([0x54464D54, len(tr), m.seq, m.vocab], np.int64).tofile(f)
+        np.array(MODEL_IDS, np.int64).tofile(f)
+        def put(name, arr):
+            nb = name.encode()
+            np.array([len(nb)], np.int64).tofile(f)
+            f.write(nb)
+            np.array(list(arr.shape) + [0] * (2 - arr.ndim), np.int64).tofile(f)
+            arr.astype(np.uint16).tofile(f)
+        for k in sorted(tr):
+            put(k, tr[k])
+    print(f"wrote full tiny-model trace ({len(tr)} arrays, ids={MODEL_IDS}) to {path}")
+
+
 # ========================== validation battery ==============================
 
 def torch_bf16_pat(t):
@@ -1253,6 +1345,10 @@ if __name__ == '__main__':
         dump_goldens(sys.argv[_i + 1], _ld)
     elif '--dump-weights' in sys.argv:
         dump_weights(sys.argv[sys.argv.index('--dump-weights') + 1])
+    elif '--dump-model-weights' in sys.argv:
+        dump_model_weights(sys.argv[sys.argv.index('--dump-model-weights') + 1])
+    elif '--dump-model-trace' in sys.argv:
+        dump_model_trace(sys.argv[sys.argv.index('--dump-model-trace') + 1])
     elif '--dump-layer' in sys.argv:
         dump_layer(sys.argv[sys.argv.index('--dump-layer') + 1])
     else:

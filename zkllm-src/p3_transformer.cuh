@@ -521,7 +521,10 @@ static inline std::vector<gl_t> restr_mask(const Col& codes, uint32_t ldr, uint3
     }
     return p3zkc::mk_linked(lk + lb, cons1);
 }
-static inline TfOps commit_all(const TfWit& w, uint32_t R) {
+// x0ext: an ALREADY-COMMITTED input column (multi-layer chaining: the previous
+// layer's res[1].OUT, or the embedding-linked X0) -- the layer then shares that
+// commitment as its rms1.X instead of committing the input fresh.
+static inline TfOps commit_all(const TfWit& w, uint32_t R, const Col* x0ext = nullptr) {
     TfOps o;
     const bool zk = p3zkc::G.on;
     const Config& c = w.cfg;
@@ -571,8 +574,14 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R) {
             }
         return p3zkc::mk_linked(ld + lT, cons1);
     };
-    // rms1: X = committed layer input, G = g1, Y fresh
-    o.rms[0] = p3rms::commit_operands(w.rms[0], R);
+    // rms1: X = committed layer input (shared when chained), G = g1, Y fresh
+    if (x0ext) {
+        o.rms[0].X = *x0ext;
+        o.rms[0].G = commit_col_nc(w.rms[0].gpat, R);
+        o.rms[0].Y = commit_col_nc(w.rms[0].ypat, R);
+    } else {
+        o.rms[0] = p3rms::commit_operands(w.rms[0], R);
+    }
     // quant h1 shares rms1.Y as its X
     o.qn[QN_H1].X = o.rms[0].Y;
     o.qn[QN_H1].CODES = commit_col_nc(w.qn[QN_H1].cpat, R);
@@ -771,12 +780,17 @@ static inline std::vector<gl_t> slice_pt(const std::vector<gl_t>& z, uint32_t li
 }
 
 // ==================== prover ====================
-static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
-                            const TfTables& T, const Art& a, uint32_t R, uint32_t Q,
-                            bool strict = true, TfProf* prof = nullptr) {
+// SUB-PROOF SECTION (multi-layer composition entry): absorbs this layer's
+// header, records the chained roots and runs every gadget sub-proof on the
+// SHARED transcript + ledger.  The lookup flush, the seam claims and the
+// batched opening are NOT here -- a multi-layer caller runs prove_subs for
+// every layer (+ the head gadgets), ONE lu_flush, then prove_seams per layer
+// (+ its own embedding/head seams), then ONE batched-opening pass.
+static inline void prove_subs(fs::Transcript& tr, const TfWit& w, const TfOps& o,
+                              const TfTables& T, const Art& a, uint32_t R, uint32_t Q,
+                              bool strict, p3lu::XCtx& xc, TfProof& pf, TfProf& P) {
     const Config& c = w.cfg;
     const bool zk = p3zkc::G.on;
-    TfProof pf;
     pf.seq = c.seq; pf.d = c.d; pf.nh = c.nh; pf.dh = c.dh; pf.dff = c.dff; pf.batch = c.batch;
     const uint32_t A = c.A(), nh = c.nh;
     pf.qn.resize(c.nqn()); pf.mm.resize(c.nmm()); pf.rp.resize(2 * A); pf.sm.resize(A);
@@ -785,13 +799,10 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     pf.rRopeQ.resize(2 * A); pf.rRopeO.resize(2 * A);
     pf.rSmP.resize(A); pf.rVtX.resize(A);
     pf.mmY.resize(c.nmm());
-    TfProf pl; TfProf& P = prof ? *prof : pl;
-    double tall = now_ms(), tp;
+    double tp;
 
     uint32_t hdr[6] = {c.seq, c.d, c.nh, c.dh, c.dff, c.batch};
     tr.absorb("tf-dims", hdr, sizeof hdr);
-
-    p3lu::XCtx xc;
 
     // roots into the proof (the chain the verifier re-pins)
     pf.rX0 = o.rms[0].X.root;
@@ -866,14 +877,19 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     P.mm += now_ms() - tp; tp = now_ms();
     pf.res[1] = p3bfa::prove(tr, w.res[1], T.bfa, o.res[1], R, Q, strict, &xc);
     P.bfa += now_ms() - tp;
+}
 
-    // -- ONE merged-lookup flush for ALL gadget instances (R3b) --
-    tp = now_ms();
-    pf.lug = p3lu::lu_flush(tr, xc, R, Q, strict);
-    P.lug += now_ms() - tp;
-
+// SEAM SECTION (multi-layer composition entry): the layer's composition seam
+// claims.  bind_in/bind_out toggle the PUBLIC input/output binding claims --
+// a multi-layer caller turns BOTH off (layer inputs/outputs are hidden and
+// chained by ROOT EQUALITY; the model binds only token ids and logits).
+static inline void prove_seams(fs::Transcript& tr, const TfWit& w, const TfOps& o,
+                               bool strict, p3lu::XCtx& xc, TfProof& pf,
+                               bool bind_in = true, bool bind_out = true) {
+    const Config& c = w.cfg;
+    const bool zk = p3zkc::G.on;
+    const uint32_t nh = c.nh;
     // -- seam claims (all roots are in the transcript; fresh challenges) --
-    tp = now_ms();
     // clp: public/real-slice claim (input/output bindings, canonical-zero pads --
     // all reveal only PUBLIC values).  clx: hiding seam-pair claim at a SHARED ex
     // coordinate zex (touches real slice + mask slice 1; the two sides' slice-1
@@ -912,7 +928,7 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     const uint32_t lkH1 = ilog2(w.mm[MM_WQ].d.Kpad), lkQK = ilog2(w.mm[c.mmQK(0)].d.Kpad),
                    lkPV = ilog2(w.mm[c.mmPV(0)].d.Kpad), lkSW = ilog2(w.mm[c.mmWD()].d.Kpad);
     // input binding
-    {
+    if (bind_in) {
         std::vector<gl_t> z = chal_vec(tr, ld + lT);
         clp(o.rms[0].X, z);
     }
@@ -950,10 +966,31 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     seam_codes(o.qn[c.qnH2()].CODES, o.mm[c.mmWG()].X, ld, lkH1, lT, "h2 codes");
     seam_codes(o.qn[c.qnSW()].CODES, o.mm[c.mmWD()].X, ldff, lkSW, lT, "swiglu codes");
     // output binding
-    {
+    if (bind_out) {
         std::vector<gl_t> z = chal_vec(tr, ld + lT);
         clp(o.res[1].OUT, z);
     }
+}
+
+// single-layer prover: subs -> ONE lookup flush -> seams (both public IO
+// bindings on) -> ONE batched opening pass.  Transcript is byte-identical to
+// the pre-refactor monolithic prove.
+static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
+                            const TfTables& T, const Art& a, uint32_t R, uint32_t Q,
+                            bool strict = true, TfProf* prof = nullptr) {
+    TfProof pf;
+    TfProf pl; TfProf& P = prof ? *prof : pl;
+    double tall = now_ms(), tp;
+    p3lu::XCtx xc;
+    prove_subs(tr, w, o, T, a, R, Q, strict, xc, pf, P);
+
+    // -- ONE merged-lookup flush for ALL gadget instances (R3b) --
+    tp = now_ms();
+    pf.lug = p3lu::lu_flush(tr, xc, R, Q, strict);
+    P.lug += now_ms() - tp;
+
+    tp = now_ms();
+    prove_seams(tr, w, o, strict, xc, pf, true, true);
     P.seam += now_ms() - tp;
 
     // -- ONE batched opening pass per size class for the whole layer --
@@ -967,23 +1004,18 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
 }
 
 // ==================== verifier ====================
-// PUBLIC statement, all pinned by the CALLER: dims, input (patterns + root),
-// g1/g2 roots, the 7 weight code+scale roots, the pinned rope cos/sin tables,
-// the canonical table artifact, Q/R -- and the claimed OUTPUT patterns, which
-// the accepted proof binds bitwise to the committed final residual column.
-static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables& T,
-                          const Art& a, const Config& c,
-                          const std::vector<uint16_t>& x0pub, const Hash& rX0,
-                          const WeightRoots& wr,
-                          const std::vector<uint16_t>& cosp, const std::vector<uint16_t>& sinp,
-                          const std::vector<uint16_t>& outpub,
-                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr) {
+// SUB-VERIFY SECTION (multi-layer composition entry): shape checks, this
+// layer's header absorb and every gadget sub-verify on the SHARED transcript
+// + verifier ledger.  rX0 pins the committed layer input: the caller passes
+// the previous layer's rOut (multi-layer chaining by root equality) or the
+// independently-recomputed input root (single layer, public input).
+static inline bool verify_subs(fs::Transcript& tr, const TfProof& pf, const TfTables& T,
+                               const Art& a, const Config& c, const Hash& rX0,
+                               const WeightRoots& wr,
+                               const std::vector<uint16_t>& cosp, const std::vector<uint16_t>& sinp,
+                               uint32_t Q_pub, uint32_t R_pub, const char** why,
+                               p3lu::VCtx& vctx) {
     auto fail = [&](const char* m) { if (why) *why = m; return false; };
-    if (Q_pub < 20 || R_pub < 1) return fail("insecure params");
-    if (!c.pow2()) return fail("config must be pow2");
-    if (pf.seq != c.seq || pf.d != c.d || pf.nh != c.nh || pf.dh != c.dh
-        || pf.dff != c.dff || pf.batch != c.batch)
-        return fail("dims mismatch");
     const uint32_t A = c.A(), nh = c.nh;
     if ((int)pf.qn.size() != c.nqn() || (int)pf.mm.size() != c.nmm()
         || pf.rp.size() != 2 * A || pf.sm.size() != A
@@ -993,8 +1025,9 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
         || pf.rSmP.size() != A || pf.rVtX.size() != A
         || (int)pf.mmY.size() != c.nmm())
         return fail("proof shape");
-    if (x0pub.size() != (size_t)c.T() * c.d || outpub.size() != (size_t)c.T() * c.d)
-        return fail("public i/o size");
+    if (pf.seq != c.seq || pf.d != c.d || pf.nh != c.nh || pf.dh != c.dh
+        || pf.dff != c.dff || pf.batch != c.batch)
+        return fail("dims mismatch");
     if (!(pf.rX0 == rX0)) return fail("input root mismatch");
     const bool zk = p3zkc::G.on;
     if (!zk) for (int i = 0; i < c.nmm(); i++) {
@@ -1004,14 +1037,11 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
         else if (i == c.mmWG() || i == c.mmWU()) N = c.dff;
         if (pf.mmY[i].size() != (size_t)Bm * N) return fail("mmY size");
     }
-    const uint32_t lseq = c.lseq(), ld = c.ld(), ldh = c.ldh(), ldff = c.ldff(),
-                   lT = c.lT(), lnh = c.lnh(), lB = c.lbb();
+    const uint32_t lseq = c.lseq(), ld = c.ld(), ldh = c.ldh(), ldff = c.ldff();
 
     uint32_t hdr[6] = {c.seq, c.d, c.nh, c.dh, c.dff, c.batch};
     tr.absorb("tf-dims", hdr, sizeof hdr);
 
-    p3lu::VCtx vctx;
-    p3bo::VLedger& vlg = vctx.vlg;
     const std::vector<uint8_t> causal = [&] {
         std::vector<uint8_t> m((size_t)c.seq * c.seq, 0);
         for (uint32_t i = 0; i < c.seq; i++)
@@ -1095,11 +1125,23 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
                        c.T(), c.dff, c.d, Q_pub, R_pub, why, &vctx)) return false;
     if (!p3bfa::verify(tr, T.bfa, pf.res[1], pf.rRes1, rY(c.mmWD()), pf.rOut,
                        c.T() * c.d, Q_pub, R_pub, why, &vctx)) return false;
+    if (why) *why = "ok";
+    return true;
+}
 
-    // -- merged-lookup flush (mirror of the prover's group pass) --
-    if (!p3lu::lu_verify_flush(tr, vctx, pf.lug, Q_pub, R_pub, why)) return false;
-
-    // -- seam checks (mirror of the prover's claim sequence) --
+// SEAM SECTION (multi-layer composition entry): mirror of prove_seams.
+// x0pub/outpub null = that public binding claim is absent (hidden chained IO).
+static inline bool verify_seams(fs::Transcript& tr, const TfProof& pf, const Config& c,
+                                const std::vector<uint16_t>* x0pub,
+                                const std::vector<uint16_t>* outpub,
+                                const char** why, p3lu::VCtx& vctx) {
+    auto fail = [&](const char* m) { if (why) *why = m; return false; };
+    const bool zk = p3zkc::G.on;
+    const uint32_t nh = c.nh;
+    p3bo::VLedger& vlg = vctx.vlg;
+    auto rY = [&](int i) -> const Hash& { return pf.mm[i].rdo[p3hwl::O_YB]; };
+    const uint32_t lseq = c.lseq(), ld = c.ld(), ldh = c.ldh(), ldff = c.ldff(),
+                   lT = c.lT(), lnh = c.lnh(), lB = c.lbb();
     size_t si = 0;
     bool seam_short = false;
     auto vclp = [&](const Hash& root, const std::vector<gl_t>& z) -> gl_t {
@@ -1132,10 +1174,10 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
     const uint32_t lkQK = ilog2(p3hwl::make_dims(c.seq, c.dh, c.seq).Kpad);
     const uint32_t lkPV = ilog2(p3hwl::make_dims(c.seq, c.seq, c.dh).Kpad);
     const uint32_t lkSW = ilog2(p3hwl::make_dims(c.T(), c.dff, c.d).Kpad);
-    {   // input binding: committed layer input == the PUBLIC x
+    if (x0pub) {   // input binding: committed layer input == the PUBLIC x
         std::vector<gl_t> z = chal_vec(tr, ld + lT);
-        std::vector<gl_t> xp(x0pub.begin(), x0pub.end());
-        if (vclp(rX0, z) != mle_eval(xp, z) || seam_short)
+        std::vector<gl_t> xp(x0pub->begin(), x0pub->end());
+        if (vclp(pf.rX0, z) != mle_eval(xp, z) || seam_short)
             return fail("public input binding");
     }
     if (!seam_codes(pf.rCodes[QN_H1], pf.rMX[MM_WQ], ld, lkH1, lT))
@@ -1180,15 +1222,46 @@ static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables&
         return fail("seam: h2 codes");
     if (!seam_codes(pf.rCodes[c.qnSW()], pf.rMX[c.mmWD()], ldff, lkSW, lT))
         return fail("seam: swiglu codes");
-    {   // output binding: committed final residual == the PUBLIC out, bitwise
+    if (outpub) {  // output binding: committed final residual == the PUBLIC out
         std::vector<gl_t> z = chal_vec(tr, ld + lT);
-        std::vector<gl_t> op(outpub.begin(), outpub.end());
+        std::vector<gl_t> op(outpub->begin(), outpub->end());
         if (vclp(pf.rOut, z) != mle_eval(op, z) || seam_short)
             return fail("public output binding");
     }
     if (si != pf.seam.size()) return fail("seam claim count");
+    if (why) *why = "ok";
+    return true;
+}
+
+// single-layer verifier.  PUBLIC statement, all pinned by the CALLER: dims,
+// input (patterns + root), g1/g2 roots, the 7 weight code+scale roots, the
+// pinned rope cos/sin tables, the canonical table artifact, Q/R -- and the
+// claimed OUTPUT patterns, which the accepted proof binds bitwise to the
+// committed final residual column.
+static inline bool verify(fs::Transcript& tr, const TfProof& pf, const TfTables& T,
+                          const Art& a, const Config& c,
+                          const std::vector<uint16_t>& x0pub, const Hash& rX0,
+                          const WeightRoots& wr,
+                          const std::vector<uint16_t>& cosp, const std::vector<uint16_t>& sinp,
+                          const std::vector<uint16_t>& outpub,
+                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr) {
+    auto fail = [&](const char* m) { if (why) *why = m; return false; };
+    if (Q_pub < 20 || R_pub < 1) return fail("insecure params");
+    if (!c.pow2()) return fail("config must be pow2");
+    if (x0pub.size() != (size_t)c.T() * c.d || outpub.size() != (size_t)c.T() * c.d)
+        return fail("public i/o size");
+
+    p3lu::VCtx vctx;
+    if (!verify_subs(tr, pf, T, a, c, rX0, wr, cosp, sinp, Q_pub, R_pub, why, vctx))
+        return false;
+
+    // -- merged-lookup flush (mirror of the prover's group pass) --
+    if (!p3lu::lu_verify_flush(tr, vctx, pf.lug, Q_pub, R_pub, why)) return false;
+
+    if (!verify_seams(tr, pf, c, &x0pub, &outpub, why, vctx)) return false;
 
     // -- the ONE shared batched opening per size class --
+    p3bo::VLedger& vlg = vctx.vlg;
     if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
     for (size_t i = 0; i < vlg.cls.size(); i++)
         if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
