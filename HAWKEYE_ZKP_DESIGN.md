@@ -706,3 +706,118 @@ CAVEAT: tiny-scale; both sides are overhead-bound (forward ~3 ms launch floor; p
 per-instance costs). Asymptotically the attention O(tokens·seq) term would eventually make long
 sequences the expensive end for prove — not reached at these sizes. Absolute overhead ~10^3
 (non-ZK) / ~10^4 (ZK, ~8x the non-ZK from 13.4) — order-of-magnitude, consistent w/ zkML.
+
+## 14. llama-68m scale (2026-07-06) [VERIFIED unless marked]
+
+Goal: the composed layer proof at REAL llama-68m per-layer dims — d=1024, nh=16, dh=64,
+dff=4096 (pow2-padded) — and the ZK overhead sweep there.  Bench:
+`/root/p3_transformer_bench <seq> 1024 16 64 4096 <batch> <zk> tables_ld10.bin`
+(`P3_MEMLOG=1` prints per-group / per-class memory shapes and phase timings).
+NOTE: seq*batch = 1 is unsupported (row pads are >= 2; the T=1 corner mismatches the
+swiglu virtual-column domains).  Use >= 2 tokens.
+
+### 14.1 RMSNorm (and softmax) large-d window fix
+
+The canonical S' window was FIXED at 2^23 (transformer_ref.py assert + gadget tables), which
+is exactly the arithmetic bound for ld = 6: S = sum of aligned mantissa-squares < 2^(ld+16),
+EPSA < 2^18, so S' < 2^(17+ld).  At d = 1024 (ld = 10) honest witnesses overflow it ("rms: S'
+window", no in-domain witness).  Fix: the window is now PARAMETRIC, wd <= 17+ld, in both the
+reference (assert) and the gadget:
+  * T.R11 -> range(2^(ld+5))  (U1H/U2H high limb; low limb stays 12 bits, constraints unchanged),
+  * T.RM8 -> (pw, r<pw) rows for pw <= 2^(ld+1)  (the S' remainder-alignment table),
+  * T.WD24 valid rows wd <= 17+ld (32 rows still; ld <= 13),
+  * witness guard S' < 2^(17+ld).
+At ld = 6 every table is BIT-IDENTICAL to the historical build (17+6 = 23), so ld=6
+transcripts/tests are unchanged.  Softmax has the same window over its seq-length denominator
+sum (16-bit lanes, no eps): p3smx::build_tables(a, wmax) with stored Tables.wmax, prover/
+verifier guard 16+ln <= wmax; the composed builder takes p3tf::build_tables(a, smx_wmax)
+(default 23 == historical; the bench passes max(23, 16+ceil_log2(seq))).
+[VERIFIED] p3_rmsnorm_test now takes optional (tables, goldens) argv:
+ld=6 25/25 (regression), ld=8 25/25, ld=10 25/25 — bitwise vs the widened reference AND the
+full must-reject battery at each size; reference validation battery ALL PASS; softmax 19/19.
+
+### 14.2 The two real memory walls
+
+(a) **GPU (24 GB RTX 4090)**: the biggest committed columns at d=1024 are the matmul
+per-product witness columns (NDP = 10 per instance) on P = Kpad*Bpad*Npad — 2^25 per MLP
+matmul at 4 tokens, ∝ tokens.  A single commit's transient (codeword 2^27 x 8B + full device
+Merkle 64B/leaf = 8 GB+) plus the retained mempool exceeded the card: cudaMallocAsync failures
+were UNCHECKED, so the prover silently produced corrupt proofs (honest proof rejected with
+"group sumcheck A" — the first verified object).  This is now impossible: p3bf::ckcuda /
+dmalloc throw at the failure point.
+
+(b) **Host: a 41 GB cgroup cap** (`/sys/fs/cgroup/memory.max` = 41.0e9; `free` shows the
+host's 251 GB but the container OOM-killer fires at 41 GB, exit 137; 9.4 GB free disk => no
+swap).  Every committed column's host values are retained for the final shared batch opening,
+so TOTAL committed bytes ~ bound the proof.  This cap — not the GPU — is the binding
+constraint at d=1024.
+
+### 14.3 Levers landed (all transcript-identical; every battery re-run green)
+
+GPU side:
+  * **Streamed Merkle (p3fri::StreamTree)**: pow2-aligned 2^22-leaf chunks reduce to their
+    subtree roots (bit-identical to the flat tree), host upper tree; path extraction rebuilds
+    only the <= 2Q touched chunks (one-pass build+paths variant for round-0 subset opens).
+    Used by commit_gpu_rootonly, salted_commit_root (offset-aware salted leaf kernel), the
+    batched-opening fold rounds and per-column round-0 opens for codewords >= 2^24.
+  * **Streamed prove_class**: distinct columns stay on HOST, uploaded per use (strCol, > 2 GB
+    per class); the per-point combined columns G_t park on host between rounds with the eq
+    columns REBUILT per round from separability (strG, > 3 GB); fold codewords park on host.
+    Query values for rounds >= 1 read from the parked host codewords.
+  * **LU_GCAP = 26** (protocol constant, prover+verifier grouping): merged-lookup groups are
+    split so the stacked domain n+g <= 26 (helper columns and the merged witness A live on
+    2^(n+g+E)); inactive at tiny dims (historical transcripts unchanged).
+  * zk group A-side sumcheck moved to the GPU (FLuGpuZk functor; messages byte-identical).
+  Result: GPU peak 24 GB (corrupt) -> 11.7 GB (verify_ok=1) at seq=4 non-zk.
+
+Host side:
+  * **OpenMP** (build with `-Xcompiler -fopenmp`; 128 cores): build_eq, eval_h, inv_all_add
+    (block-wise Montgomery batch inversion), the merged-A build, sc5_prove / sc_prove message
+    loops, bind_lsb, blind-H sums.  Exact field ops => identical values, any order.
+    seq=4 d=1024 non-zk prove: 169 s -> 97 s (claims 6.9 s -> 0.7 s per big group).
+  * **Drop-and-regenerate ledger columns (PLedger::Ent.gen)**: columns that exist only to be
+    batch-opened at the very end no longer stay resident —
+      - Libra blind columns (sc5z quartic blinds; group A-side cubic blinds): pure PRNG
+        streams, regenerated from their captured seed (blind_col_seeded / blind_col_aug);
+      - merged-group hA helper columns: recomputed from the (still-resident) member witness
+        columns + gamma/beta (rebuild closure).
+    prove_class materializes them transiently per use.
+  * `p3hwl::g_free_dp` / `p3lu::g_free_idx` (bench-only, witness-mutating): the 10 per-product
+    witness columns free right after their commits copy them; lookup index vectors free after
+    their group is proven.
+
+### 14.4 Additional zk levers (what made ZK fit under 41 GB) [VERIFIED]
+
+The zk proof at d=1024 was cgroup-OOM-killed three more times after 14.3; each kill pointed
+at the next resident block, all now fixed (transcripts unchanged; every battery re-run green):
+  * **sc5z on the device** (`sc5z_gpu`, FF5Zk functor: quartic base + Libra blind term): the
+    host copy of one P-domain zero-check's columns plus its first-bind halves (~10 GB) never
+    exists; the blind terminal values are read from the fully-bound device columns (the
+    v-round fold IS the multilinear restriction, exact).
+  * **ColSrc borrow-through-round-0**: the matmul Dp/bind zero-checks no longer copy the 10
+    committed P-domain columns (borrowed for round 0; the first bind writes the owned halves).
+  * **Device-generated group blinds**: the merged-group A-side Libra blinds are generated on
+    the GPU from a random-access PRNG stream (`zprng_at`, splitmix64 -- the host regenerates
+    bit-identically for the opening ledger), committed from device (`salted_commit_root_dev`),
+    blind-sum H reduced on device; the host never holds a byte of them.  Am and hA host
+    copies are dropped right after their device upload (hA's ledger entry regenerates).
+  * **strGdev**: the batched-opening per-point combined columns G_t park on the DEVICE when
+    T+2 columns fit in 12 GB (the v=26 zk class has T=19 x 512 MB = 9.7 GB, which as HOST
+    parking breached the cap); host parking remains the fallback.
+  * malloc_trim at phase boundaries (OpenMP arenas).
+
+### 14.5 Status at d=1024 [VERIFIED]
+
+**A zero-knowledge llama-68m layer proof works on this box**: seq=4 batch=1 zk:
+verify_ok=1, **prove 750.9 s (12.5 min), verify 5.6 s, proof 167.8 MB, host RSS 36.1 GB**
+(cap 41), witness 18.6 s.  Non-ZK same point: prove 154.7 s, verify 3.0 s, proof 47.5 MB,
+RSS 18.6 GB, GPU peak 11.7 GB.  (The drop-and-regenerate levers cost ~1.6x prove time vs the
+resident-everything build -- 97 s measured before they landed -- but they are what makes zk
+and the 8-token point fit at all.)
+
+Full regression after ALL of the above: hawkeye 35/35, rmsnorm 25/25 at ld=6 AND ld=8 AND
+ld=10, swiglu 16/16, quant 26/26, bfadd 22/22, rope 17/17, softmax 19/19, logup 13/13,
+isolated hiding 19/19, zk soundness smoke 15/15, composed layer 30/30, full-layer zk hiding
+13/13.  (Note: the sc5z_gpu / device-blind / strGdev paths trigger only above ~2^20-row
+domains, so the tiny-dim batteries exercise the host paths; the d=1024 verify_ok=1 runs are
+the coverage for the big-domain paths.)

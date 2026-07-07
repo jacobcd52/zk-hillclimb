@@ -104,13 +104,17 @@ int main(int argc, char** argv) {
 
     p3fri::g_gpu_merkle = true; p3bf::p3_enable_mempool();
     p3zkc::G.on = zk;
+    p3hwl::g_free_dp = true;      // witness dp columns freed after their commits
+    p3lu::g_free_idx = true;      // lookup index vectors freed after their groups
 
     Art A;
     if (!p3rms::load_art(tables, A)) { printf("FATAL: bad tables %s\n", tables); return 1; }
     if ((uint32_t)A.ld != cfg.ld()) { printf("FATAL: artifact ld=%d != %u\n", A.ld, cfg.ld()); return 1; }
 
     const uint32_t R = 2, Q = 24;
-    TfTables T = p3tf::build_tables(A);
+    uint32_t lseq = p3lu::ilog2(p3hwl::pow2_at_least(cfg.seq));
+    uint32_t smx_wmax = 16 + lseq > 23 ? 16 + lseq : 23;
+    TfTables T = p3tf::build_tables(A, smx_wmax);
 
     // retry a few seeds if a random draw lands outside a gadget v1 domain
     TfWit w; Weights W; bool ok = false; int tries = 0;

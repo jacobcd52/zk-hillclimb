@@ -15,6 +15,13 @@
 // and is the one production change flagged for this module.
 #pragma once
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#if defined(__GLIBC__) || defined(__linux__)
+#include <malloc.h>
+#endif
+#include <stdexcept>
+#include <string>
 #include <vector>
 #include <chrono>
 #include "p3_goldilocks.cuh"
@@ -25,6 +32,50 @@
 namespace p3bf {
 using p3fri::Hash; using p3fri::Merkle; using p3fri::RoundOpen; using p3fri::QueryProof;
 using p3fri::leaf_hash; using p3fri::verify_path; using p3fri::fold; using p3fri::idx_from;
+
+// Loud CUDA failure surface.  The p3 stack cannot recover from a failed device
+// allocation; an UNCHECKED failure silently corrupts every downstream proof
+// message (the prover completes and the verifier rejects an honest proof).
+// Throw at the failure point instead.
+static inline void ckcuda(const char* tag) {
+    cudaError_t e = cudaGetLastError();
+    if (e != cudaSuccess)
+        throw std::runtime_error(std::string("p3: CUDA error at ") + tag + ": " +
+                                 cudaGetErrorString(e));
+}
+static inline gl_t* dmalloc(size_t nelem, const char* tag) {
+    void* p = nullptr;
+    cudaError_t e = cudaMallocAsync(&p, nelem * sizeof(gl_t), 0);
+    if (e != cudaSuccess) {
+        cudaGetLastError();
+        throw std::runtime_error(std::string("p3: device alloc failed at ") + tag +
+                                 " (" + std::to_string(nelem * sizeof(gl_t)) + " bytes): " +
+                                 cudaGetErrorString(e));
+    }
+    return (gl_t*)p;
+}
+// memory-shape diagnostics for the scale work (stderr, off unless P3_MEMLOG=1)
+static inline bool memlog() { static int v = -1;
+    if (v < 0) { const char* e = getenv("P3_MEMLOG"); v = e && *e == '1' ? 1 : 0; }
+    return v == 1; }
+// return freed glibc-arena memory to the OS at phase boundaries -- with 128
+// OpenMP threads the retained arenas otherwise hold GBs against the 41 GB
+// container cap.  No-op cost when there is nothing to trim.
+static inline void trim_heap() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
+static inline void rsslog(const char* tag) {
+    if (!memlog()) return;
+    FILE* f = fopen("/proc/self/status", "r");
+    if (!f) return;
+    char line[128]; size_t kb = 0;
+    while (fgets(line, sizeof line, f))
+        if (sscanf(line, "VmRSS: %zu kB", &kb) == 1) break;
+    fclose(f);
+    fprintf(stderr, "# rss %.1f GB at %s\n", kb / 1048576.0, tag);
+}
 
 struct SumMsg { gl_t s0, s1, s2; };           // sumcheck univariate at t=0,1,2
 struct EvalProof {
@@ -38,9 +89,12 @@ struct EvalProof {
 };
 
 // eq weights over the hypercube: w[b] = eq(b,z) = prod_i (b_i?z_i:(1-z_i)), length 2^v.
+// OpenMP-parallel when compiled with -Xcompiler -fopenmp (bit-identical values --
+// exact field arithmetic, embarrassingly parallel); serial otherwise.
 static inline std::vector<gl_t> build_eq(const std::vector<gl_t>& z) {
     uint32_t v = (uint32_t)z.size(), N = 1u << v;
     std::vector<gl_t> w(N, 1ULL);
+    #pragma omp parallel for schedule(static) if (N >= 65536)
     for (uint32_t b = 0; b < N; b++) {
         gl_t prod = 1ULL;
         for (uint32_t i = 0; i < v; i++)
@@ -49,9 +103,24 @@ static inline std::vector<gl_t> build_eq(const std::vector<gl_t>& z) {
     }
     return w;
 }
-// committed-poly value h(z) = c~(z) = sum_b c[b]*eq(b,z).
+// committed-poly value h(z) = c~(z) = sum_b c[b]*eq(b,z).  Parallel partial sums
+// combine to the SAME field element (exact addition, any order).
 static inline gl_t eval_h(const std::vector<gl_t>& c, const std::vector<gl_t>& eq) {
-    gl_t acc = 0; for (size_t b = 0; b < c.size(); b++) acc = gl_add(acc, gl_mul(c[b], eq[b])); return acc;
+    const size_t n = c.size();
+    if (n < 65536) {
+        gl_t acc = 0; for (size_t b = 0; b < n; b++) acc = gl_add(acc, gl_mul(c[b], eq[b])); return acc;
+    }
+    const int P = 256;
+    gl_t part[P];
+    #pragma omp parallel for schedule(static)
+    for (int p = 0; p < P; p++) {
+        size_t lo = n * p / P, hi = n * (p + 1) / P;
+        gl_t acc = 0;
+        for (size_t b = lo; b < hi; b++) acc = gl_add(acc, gl_mul(c[b], eq[b]));
+        part[p] = acc;
+    }
+    gl_t acc = 0; for (int p = 0; p < P; p++) acc = gl_add(acc, part[p]);
+    return acc;
 }
 
 // log2 of a power-of-two.
@@ -78,15 +147,22 @@ static inline Hash commit(const std::vector<gl_t>& c, uint32_t R, std::vector<gl
 // GPU Reed-Solomon encode returning the DEVICE codeword (caller frees with cudaFree).
 // Lets commit build the Merkle tree directly on the device codeword (no D2H/H2D
 // round trip of the M0-length codeword that the old path paid on every commit).
+// cached NTT plans (twiddle tables live on device for the process lifetime --
+// rebuilding them per commit dominated small-column commit latency)
+static inline const P3Ntt& ntt_plan(uint32_t logM0) {
+    static P3Ntt* plans[32] = {};
+    if (!plans[logM0]) plans[logM0] = new P3Ntt(logM0);
+    return *plans[logM0];
+}
 static inline gl_t* rs_encode_gpu_dev(const std::vector<gl_t>& c, uint32_t R, uint32_t& M0_out) {
     uint32_t v = ilog2((uint32_t)c.size()), logM0 = v + R, M0 = 1u << logM0; M0_out = M0;
-    gl_t *d_in, *d_out;
-    cudaMalloc(&d_in, (size_t)M0 * sizeof(gl_t)); cudaMalloc(&d_out, (size_t)M0 * sizeof(gl_t));
-    cudaMemset(d_in, 0, (size_t)M0 * sizeof(gl_t));
-    cudaMemcpy(d_in, c.data(), c.size() * sizeof(gl_t), cudaMemcpyHostToDevice);
-    { P3Ntt ntt(logM0); ntt.run(d_in, d_out, true); }
-    cudaFree(d_in);
-    return d_out;
+    gl_t* d_in = dmalloc(M0, "rs_encode:in");
+    gl_t* d_out = dmalloc(M0, "rs_encode:out");
+    cudaMemsetAsync(d_in, 0, (size_t)M0 * sizeof(gl_t), 0);
+    cudaMemcpyAsync(d_in, c.data(), c.size() * sizeof(gl_t), cudaMemcpyHostToDevice, 0);
+    ntt_plan(logM0).run(d_in, d_out, true);
+    cudaFreeAsync(d_in, 0);
+    return d_out;                    // caller frees with cudaFreeAsync(d_out, 0)
 }
 // GPU Reed-Solomon encode (forward NTT of the zero-padded coeff vector) -- same
 // codeword as rs_encode but in ms instead of the O(N*M) host Horner.
@@ -94,15 +170,34 @@ static inline std::vector<gl_t> rs_encode_gpu(const std::vector<gl_t>& c, uint32
     uint32_t M0; gl_t* d_out = rs_encode_gpu_dev(c, R, M0);
     std::vector<gl_t> cw(M0);
     cudaMemcpy(cw.data(), d_out, (size_t)M0 * sizeof(gl_t), cudaMemcpyDeviceToHost);
-    cudaFree(d_out);
+    cudaFreeAsync(d_out, 0);
     return cw;
+}
+// commit returning ONLY the root (no host codeword materialization) -- for
+// callers that defer openings to the batched-opening module (p3_batchopen),
+// which re-encodes coefficient vectors on device when it needs codewords.
+static inline Hash commit_gpu_rootonly(const std::vector<gl_t>& c, uint32_t R) {
+    uint32_t M0; gl_t* d_out = rs_encode_gpu_dev(c, R, M0);
+    Hash r;
+    if (M0 >= (1u << 24)) {          // stream: the full tree would hold 64*M0 bytes
+        r = p3fri::stream_tree_build(M0, [&](size_t off, uint32_t len, uint8_t* out) {
+                p3_merkle_leaf_kernel<<<(len + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS,
+                                        P3_MERKLE_THREADS>>>(d_out + off, out, len);
+            }).root();
+    } else {
+        p3fri::DeviceMerkle mk; mk.build_dev(d_out, M0);
+        r = mk.root(); mk.free_();
+    }
+    cudaFreeAsync(d_out, 0);
+    ckcuda("commit_gpu_rootonly");
+    return r;
 }
 static inline Hash commit_gpu(const std::vector<gl_t>& c, uint32_t R, std::vector<gl_t>& cw) {
     uint32_t M0; gl_t* d_out = rs_encode_gpu_dev(c, R, M0);
-    p3fri::DeviceMerkle mk; mk.build_dev(d_out, M0); cudaDeviceSynchronize();
+    p3fri::DeviceMerkle mk; mk.build_dev(d_out, M0);
     Hash r = mk.root(); mk.free_();                  // tree from device codeword; root only
     cw.resize(M0); cudaMemcpy(cw.data(), d_out, (size_t)M0 * sizeof(gl_t), cudaMemcpyDeviceToHost);
-    cudaFree(d_out);
+    cudaFreeAsync(d_out, 0);
     return r;
 }
 

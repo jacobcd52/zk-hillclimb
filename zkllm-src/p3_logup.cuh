@@ -23,6 +23,9 @@
 // Challenges are base-field (the whole p3 stack's stated GL2 upgrade applies).
 // Non-ZK: masking of hA/hT/openings is the increment-2 hardening, as in p3pfc.
 #pragma once
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -48,11 +51,43 @@ struct FLuGpu {
                       gl_mul(c[2], gl_sub(gl_mul(c[0], gl_add(c[1], p[1])), c[3])));
     }
 };
+// zk variant: + rho*(B0 + E*(B1 + E*B2)); c = [H,V,E,D,B0,B1,B2], p = [lam,beta,rho]
+struct FLuGpuZk {
+    static __device__ gl_t eval(const gl_t* c, const gl_t* p) {
+        gl_t f = gl_add(gl_mul(p[0], c[0]),
+                        gl_mul(c[2], gl_sub(gl_mul(c[0], gl_add(c[1], p[1])), c[3])));
+        return gl_add(f, gl_mul(p[2],
+                 gl_add(c[4], gl_mul(c[2], gl_add(c[5], gl_mul(c[2], c[6]))))));
+    }
+};
+// device reduction of the blind-sum H = sum_b B0 + E*(B1 + E*B2) (block partials)
+__global__ void p3lu_blindsum_kernel(const gl_t* b0, const gl_t* b1, const gl_t* b2,
+                                     const gl_t* e, gl_t* out, size_t n) {
+    __shared__ gl_t sh[256];
+    uint32_t tid = threadIdx.x;
+    gl_t acc = 0;
+    for (size_t i = (size_t)blockIdx.x * blockDim.x + tid; i < n;
+         i += (size_t)gridDim.x * blockDim.x) {
+        gl_t ez = e[i];
+        acc = gl_add(acc, gl_add(b0[i], gl_mul(ez, gl_add(b1[i], gl_mul(ez, b2[i])))));
+    }
+    sh[tid] = acc; __syncthreads();
+    for (uint32_t s = 128; s > 0; s >>= 1) {
+        if (tid < s) sh[tid] = gl_add(sh[tid], sh[tid + s]);
+        __syncthreads();
+    }
+    if (tid == 0) out[blockIdx.x] = sh[0];
+}
 
 // perf counters (profiling only; no protocol effect)
 struct LuStats { double ms = 0, commit_ms = 0, sc_ms = 0, cnt_ms = 0, inv_ms = 0,
                  ev_ms = 0, scg_ms = 0; long calls = 0, commits = 0; };
 static LuStats g_lustats;
+
+// Free each member's lookup-index vector after its group is proven (the
+// indices feed only the multiplicity count).  Off by default because it
+// mutates the caller's witness; the scale bench opts in.
+static bool g_free_idx = false;
 static inline double lu_now_ms() {
     using namespace std::chrono;
     return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
@@ -226,6 +261,7 @@ static inline gl_t cubic_eval(gl_t s0, gl_t s1, gl_t s2, gl_t s3, gl_t t) {
 }
 static inline void bind_lsb(std::vector<gl_t>& f, gl_t a) {
     uint32_t h = (uint32_t)f.size() / 2; std::vector<gl_t> nf(h);
+    #pragma omp parallel for schedule(static) if (h >= 65536)
     for (uint32_t i = 0; i < h; i++)
         nf[i] = gl_add(f[2*i], gl_mul(a, gl_sub(f[2*i+1], f[2*i])));
     f = nf;
@@ -236,16 +272,27 @@ static inline uint32_t ilog2(size_t n) { uint32_t l = 0; while ((1ull << l) < n)
 // plus 3 muls/element instead of N Fermat inversions (~64 sqmuls each).
 static inline std::vector<gl_t> inv_all_add(const std::vector<gl_t>& A, gl_t beta) {
     size_t N = A.size();
-    std::vector<gl_t> d(N), pre(N);
-    gl_t acc = 1ULL;
-    for (size_t i = 0; i < N; i++) {
-        gl_t di = gl_add(A[i], beta);
-        if (di == 0) throw std::runtime_error("p3lu: zero denom (resample beta)");
-        d[i] = di; pre[i] = acc; acc = gl_mul(acc, di);
-    }
-    gl_t inv = gl_inv(acc);
     std::vector<gl_t> out(N);
-    for (size_t i = N; i-- > 0;) { out[i] = gl_mul(pre[i], inv); inv = gl_mul(inv, d[i]); }
+    // block-parallel Montgomery batch inversion: each block runs an independent
+    // prefix/suffix pass with one gl_inv of its own block product -- out[i] is
+    // the SAME field element 1/(A[i]+beta) regardless of blocking.
+    const int P = N >= 65536 ? 256 : 1;
+    std::atomic<bool> zero{false};
+    #pragma omp parallel for schedule(static)
+    for (int p = 0; p < P; p++) {
+        size_t lo = N * p / P, hi = N * (p + 1) / P;
+        if (lo == hi) continue;
+        std::vector<gl_t> d(hi - lo), pre(hi - lo);
+        gl_t acc = 1ULL;
+        for (size_t i = lo; i < hi; i++) {
+            gl_t di = gl_add(A[i], beta);
+            if (di == 0) { zero.store(true); di = 1ULL; }
+            d[i - lo] = di; pre[i - lo] = acc; acc = gl_mul(acc, di);
+        }
+        gl_t inv = gl_inv(acc);
+        for (size_t i = hi; i-- > lo;) { out[i] = gl_mul(pre[i - lo], inv); inv = gl_mul(inv, d[i - lo]); }
+    }
+    if (zero.load()) throw std::runtime_error("p3lu: zero denom (resample beta)");
     return out;
 }
 
@@ -277,27 +324,36 @@ static inline std::vector<gl_t> sc_prove(std::vector<gl_t> H, std::vector<gl_t> 
     for (uint32_t rd = 0; rd < v; rd++) {
         uint32_t half = (uint32_t)H.size() / 2;
         gl_t s[4] = {0, 0, 0, 0};
-        for (uint32_t i = 0; i < half; i++) {
-            gl_t h = H[2*i], dh = gl_sub(H[2*i+1], H[2*i]);
-            gl_t x = V[2*i], dx = gl_sub(V[2*i+1], V[2*i]);
-            gl_t e = E[2*i], de = gl_sub(E[2*i+1], E[2*i]);
-            gl_t d = D[2*i], dd = gl_sub(D[2*i+1], D[2*i]);
-            gl_t b0 = 0, db0 = 0, b1 = 0, db1 = 0, b2 = 0, db2 = 0;
-            if (B) {
-                b0 = B[0][2*i]; db0 = gl_sub(B[0][2*i+1], b0);
-                b1 = B[1][2*i]; db1 = gl_sub(B[1][2*i+1], b1);
-                b2 = B[2][2*i]; db2 = gl_sub(B[2][2*i+1], b2);
-            }
-            for (int t = 0; t < 4; t++) {
-                gl_t val = gl_add(gl_mul(lam, h),
-                                  gl_mul(e, gl_sub(gl_mul(h, gl_add(x, beta)), d)));
-                if (B) val = gl_add(val, gl_mul(rho,
-                                gl_add(b0, gl_mul(e, gl_add(b1, gl_mul(e, b2))))));
-                s[t] = gl_add(s[t], val);
-                h = gl_add(h, dh); x = gl_add(x, dx); e = gl_add(e, de); d = gl_add(d, dd);
-                if (B) { b0 = gl_add(b0, db0); b1 = gl_add(b1, db1); b2 = gl_add(b2, db2); }
+        const int P = half >= 65536 ? 128 : 1;
+        std::vector<std::array<gl_t, 4>> part(P, {0, 0, 0, 0});
+        #pragma omp parallel for schedule(static) if (P > 1)
+        for (int p = 0; p < P; p++) {
+            size_t lo = (size_t)half * p / P, hi = (size_t)half * (p + 1) / P;
+            std::array<gl_t, 4>& sp = part[p];
+            for (size_t i = lo; i < hi; i++) {
+                gl_t h = H[2*i], dh = gl_sub(H[2*i+1], H[2*i]);
+                gl_t x = V[2*i], dx = gl_sub(V[2*i+1], V[2*i]);
+                gl_t e = E[2*i], de = gl_sub(E[2*i+1], E[2*i]);
+                gl_t d = D[2*i], dd = gl_sub(D[2*i+1], D[2*i]);
+                gl_t b0 = 0, db0 = 0, b1 = 0, db1 = 0, b2 = 0, db2 = 0;
+                if (B) {
+                    b0 = B[0][2*i]; db0 = gl_sub(B[0][2*i+1], b0);
+                    b1 = B[1][2*i]; db1 = gl_sub(B[1][2*i+1], b1);
+                    b2 = B[2][2*i]; db2 = gl_sub(B[2][2*i+1], b2);
+                }
+                for (int t = 0; t < 4; t++) {
+                    gl_t val = gl_add(gl_mul(lam, h),
+                                      gl_mul(e, gl_sub(gl_mul(h, gl_add(x, beta)), d)));
+                    if (B) val = gl_add(val, gl_mul(rho,
+                                    gl_add(b0, gl_mul(e, gl_add(b1, gl_mul(e, b2))))));
+                    sp[t] = gl_add(sp[t], val);
+                    h = gl_add(h, dh); x = gl_add(x, dx); e = gl_add(e, de); d = gl_add(d, dd);
+                    if (B) { b0 = gl_add(b0, db0); b1 = gl_add(b1, db1); b2 = gl_add(b2, db2); }
+                }
             }
         }
+        for (int p = 0; p < P; p++)
+            for (int t = 0; t < 4; t++) s[t] = gl_add(s[t], part[p][t]);
         Msg4 msg{s[0], s[1], s[2], s[3]};
         msgs.push_back(msg); tr.absorb(tag, &msg, sizeof msg);
         gl_t a = chal(tr); r.push_back(a);
@@ -928,6 +984,10 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
     const size_t NM = (size_t)1 << (n + g + E);          // merged full rows
     pf.n = n; pf.m = m; pf.c = c; pf.k = k;
     pf.mem.resize(k);
+    if (p3bf::memlog())
+        fprintf(stderr, "# lu group %s: n=%u g=%u k=%u E=%u NM=2^%u (%.2f GB host Am)\n",
+                xc.luq[mi[0]].label.c_str(), n, g, k, E, n + g + E,
+                (double)NM * 8 / 1073741824.0);
 
     tr.absorb("lug-tab", T.id.data(), 32);
     uint32_t hdr[4] = {n, g, k, c};
@@ -937,7 +997,11 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
         if ((uint32_t)W.size() != c) throw std::runtime_error("p3lu: group col count");
         for (auto& w : W) {
             const std::vector<gl_t>* v = w.com ? &w.com->v : w.virt;
-            if (v->size() != NA) throw std::runtime_error("p3lu: group member size");
+            if (v->size() != NA)
+                throw std::runtime_error("p3lu: group member size: " + xc.luq[j].label +
+                                         " col=" + std::to_string(&w - W.data()) +
+                                         " len=" + std::to_string(v->size()) +
+                                         " NA=" + std::to_string(NA));
             if (w.com) tr.absorb("lug-W", w.com->root.data(), 32);
             else       tr.absorb("lug-Wv", "virt", 4);
         }
@@ -963,23 +1027,33 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
     gl_t a0 = 0; for (uint32_t t = 0; t < c; t++) a0 = gl_add(a0, gl_mul(gp[t], T.cols[t][0]));
 
     // merged combined witness A over the full merged domain
+    double t_am = lu_now_ms();
     std::vector<gl_t> Am(NM);
     for (uint32_t ex = 0; ex < (1u << E); ex++)
         for (uint32_t j = 0; j < kp; j++) {
             gl_t* dst = Am.data() + (((size_t)ex << (n + g)) | ((size_t)j << n));
-            if (j >= k) { for (size_t i = 0; i < N; i++) dst[i] = a0; continue; }
+            if (j >= k) {
+                #pragma omp parallel for schedule(static) if (N >= 65536)
+                for (size_t i = 0; i < N; i++) dst[i] = a0;
+                continue;
+            }
             auto& W = xc.luq[mi[j]].W;
-            for (size_t i = 0; i < N; i++) dst[i] = 0;
+            std::vector<const gl_t*> srcs(c);
             for (uint32_t t = 0; t < c; t++) {
                 const std::vector<gl_t>& v = W[t].com ? W[t].com->v : *W[t].virt;
-                const gl_t* src = v.data() + ((size_t)ex << n);
-                for (size_t i = 0; i < N; i++)
-                    dst[i] = gl_add(dst[i], gl_mul(gp[t], src[i]));
+                srcs[t] = v.data() + ((size_t)ex << n);
+            }
+            #pragma omp parallel for schedule(static) if (N >= 65536)
+            for (size_t i = 0; i < N; i++) {
+                gl_t s = 0;
+                for (uint32_t t = 0; t < c; t++) s = gl_add(s, gl_mul(gp[t], srcs[t][i]));
+                dst[i] = s;
             }
         }
 
     // helper columns
     double t_inv = lu_now_ms();
+    const double am_ms = t_inv - t_am;
     std::vector<gl_t> Areal(Am.begin(), Am.begin() + NR);
     std::vector<gl_t> hA = inv_all_add(Areal, beta);
     std::vector<const std::vector<gl_t>*> tp;
@@ -996,13 +1070,15 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
 
     Col ChA, ChT;
     gl_t Sp = SA;
+    uint64_t hAtailseed = 0;
     if (zk) {
         // merged hA: real prefix NR computed, mask tail (E member-policy slices)
         // fresh uniform -- committed manually (the canonical e_of(n+g) policy
         // would give a different width than the member ex coordinates)
         hA.resize(NM, 0);
         if (p3zkc::G.mask_on) {
-            uint64_t s = p3zkc::next_seed();
+            hAtailseed = p3zkc::next_seed();
+            uint64_t s = hAtailseed;
             for (size_t i = NR; i < NM; i++) hA[i] = p3zkc::zprng(s);
         }
         ChA.v = std::move(hA); ChA.vreal = n + g;
@@ -1024,15 +1100,39 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
 
     // zk Libra blinds: A side over the merged full domain (manual length),
     // T side over the canonical augmented table domain
+    // big zk groups: the blind columns are generated ON DEVICE (zprng_at, the
+    // random-access stream the ledger regenerates bit-identically on host),
+    // the blind-sum H is reduced on device, and Am/hA host copies are dropped
+    // right after their device upload -- the host never holds the group's
+    // working set, which otherwise breaches the 41 GB container cap.
+    const bool bigzk = zk && gpu && (n + g) >= 16;
     std::vector<Col> BA(3), BT(3);
+    gl_t* d_ba[3] = {nullptr, nullptr, nullptr};
+    uint64_t baseed[3] = {0, 0, 0};
     gl_t rhoA = 0, rhoT = 0;
     if (zk) {
         for (int j = 0; j < 3; j++) {
-            std::vector<gl_t> b(NM, 0);
-            if (p3zkc::G.blind_on) { uint64_t s = p3zkc::next_seed(); for (auto& x : b) x = p3zkc::zprng(s); }
-            BA[j].v = std::move(b); BA[j].vreal = n + g;
-            BA[j].sseed = p3zkc::next_seed();
-            BA[j].root = p3zkc::salted_commit_root(BA[j].v, R, BA[j].sseed);
+            if (p3zkc::G.blind_on) baseed[j] = p3zkc::next_seed();
+            if (bigzk) {
+                d_ba[j] = p3bf::dmalloc(NM, "lug:dblind");
+                if (p3zkc::G.blind_on)
+                    p3zkc::p3zkc_fill_at_kernel<<<((uint32_t)((NM + 255) / 256)), 256>>>(
+                        d_ba[j], baseed[j], NM);
+                else cudaMemsetAsync(d_ba[j], 0, (size_t)NM * 8, 0);
+                BA[j].vreal = n + g;
+                BA[j].sseed = p3zkc::next_seed();
+                BA[j].root = p3zkc::salted_commit_root_dev(d_ba[j], NM, R, BA[j].sseed);
+            } else {
+                std::vector<gl_t> b(NM, 0);
+                if (p3zkc::G.blind_on) {
+                    uint64_t bs = baseed[j];
+                    #pragma omp parallel for schedule(static) if (NM >= 65536)
+                    for (size_t i = 0; i < NM; i++) b[i] = p3zkc::zprng_at(bs, i);
+                }
+                BA[j].v = std::move(b); BA[j].vreal = n + g;
+                BA[j].sseed = p3zkc::next_seed();
+                BA[j].root = p3zkc::salted_commit_root(BA[j].v, R, BA[j].sseed);
+            }
             pf.blA.rt[j] = BA[j].root; tr.absorb("lug-bA", BA[j].root.data(), 32);
         }
         pf.blA.nb = 3;
@@ -1047,37 +1147,87 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
     // ---- A-side sumcheck over the merged domain ----
     std::vector<gl_t> zA = chal_vec(tr, n + g); gl_t lamA = chal(tr);
     std::vector<gl_t> zAf = zA; zAf.resize(n + g + E, 0);
+    gl_t* dE_pre = nullptr;                    // bigzk: device eq, reused by the sc
     if (zk) {
-        std::vector<gl_t> Ez = p3bf::build_eq(zAf);
         gl_t HA = 0;
-        for (size_t b = 0; b < NM; b++)
-            HA = gl_add(HA, gl_add(BA[0].v[b],
-                     gl_mul(Ez[b], gl_add(BA[1].v[b], gl_mul(Ez[b], BA[2].v[b])))));
+        if (bigzk) {
+            gl_t* dz = p3bf::dmalloc(zAf.size(), "lug:z");
+            cudaMemcpy(dz, zAf.data(), zAf.size() * 8, cudaMemcpyHostToDevice);
+            dE_pre = p3bf::dmalloc(NM, "lug:scA-E");
+            p3bf::p3bf_eq_kernel<<<((uint32_t)NM + 255) / 256, 256>>>(
+                dz, dE_pre, (uint32_t)zAf.size(), (uint32_t)NM);
+            cudaFreeAsync(dz, 0);
+            const uint32_t NBH = 256;
+            gl_t* dout = p3bf::dmalloc(NBH, "lug:hsum");
+            p3lu_blindsum_kernel<<<NBH, 256>>>(d_ba[0], d_ba[1], d_ba[2], dE_pre, dout, NM);
+            std::vector<gl_t> hh(NBH);
+            cudaMemcpy(hh.data(), dout, (size_t)NBH * 8, cudaMemcpyDeviceToHost);
+            cudaFreeAsync(dout, 0);
+            for (auto x : hh) HA = gl_add(HA, x);
+        } else {
+            std::vector<gl_t> Ez = p3bf::build_eq(zAf);
+            const int P = NM >= 65536 ? 128 : 1;
+            std::vector<gl_t> part(P, 0);
+            #pragma omp parallel for schedule(static) if (P > 1)
+            for (int p = 0; p < P; p++) {
+                size_t lo = NM * p / P, hi = NM * (p + 1) / P;
+                gl_t acc = 0;
+                for (size_t b = lo; b < hi; b++)
+                    acc = gl_add(acc, gl_add(BA[0].v[b],
+                             gl_mul(Ez[b], gl_add(BA[1].v[b], gl_mul(Ez[b], BA[2].v[b])))));
+                part[p] = acc;
+            }
+            for (int p = 0; p < P; p++) HA = gl_add(HA, part[p]);
+        }
         pf.blA.H = HA;
         tr.absorb("lug-HA", &pf.blA.H, sizeof(gl_t));
         rhoA = chal(tr);
     }
     double t_sc = lu_now_ms();
-    bool big = gpu && (n + g) >= 16 && !zk;
+    bool big = gpu && (n + g) >= 16;
     std::vector<gl_t> rA;
+    std::vector<gl_t*> dc_fin;                 // bigzk: bound (length-1) device columns
     if (big) {
         gl_t *dH, *dV, *dE, *dD, *dz;
-        cudaMallocAsync(&dH, (size_t)NM * 8, 0);
+        dH = p3bf::dmalloc(NM, "lug:scA-H");
         cudaMemcpy(dH, ChA.v.data(), (size_t)NM * 8, cudaMemcpyHostToDevice);
-        cudaMallocAsync(&dV, (size_t)NM * 8, 0);
+        if (bigzk) { std::vector<gl_t>().swap(ChA.v); }   // regen closure registered below
+        dV = p3bf::dmalloc(NM, "lug:scA-V");
         cudaMemcpy(dV, Am.data(), (size_t)NM * 8, cudaMemcpyHostToDevice);
-        cudaMallocAsync(&dz, (size_t)(n + g) * 8, 0);
-        cudaMemcpy(dz, zA.data(), (size_t)(n + g) * 8, cudaMemcpyHostToDevice);
-        cudaMallocAsync(&dE, (size_t)NM * 8, 0);
-        p3bf::p3bf_eq_kernel<<<((uint32_t)NM + 255) / 256, 256>>>(dz, dE, n + g, (uint32_t)NM);
-        cudaFreeAsync(dz, 0);
-        cudaMallocAsync(&dD, (size_t)NM * 8, 0);
+        if (bigzk) { std::vector<gl_t>().swap(Am); }
+        if (bigzk) dE = dE_pre;
+        else {
+            uint32_t nz = zk ? (uint32_t)zAf.size() : n + g;
+            const gl_t* zsrc = zk ? zAf.data() : zA.data();
+            cudaMallocAsync(&dz, (size_t)nz * 8, 0);
+            cudaMemcpy(dz, zsrc, (size_t)nz * 8, cudaMemcpyHostToDevice);
+            dE = p3bf::dmalloc(NM, "lug:scA-E");
+            p3bf::p3bf_eq_kernel<<<((uint32_t)NM + 255) / 256, 256>>>(dz, dE, nz, (uint32_t)NM);
+            cudaFreeAsync(dz, 0);
+        }
+        dD = p3bf::dmalloc(NM, "lug:scA-D");
         p3sg::p3sg_fill_kernel<<<((uint32_t)NM + 255) / 256, 256>>>(dD, 1ULL, (uint32_t)NM);
-        std::vector<gl_t*> dc = {dH, dV, dE, dD};
-        gl_t par2[2] = {lamA, beta};
-        rA = p3sg::sc_prove_gpu<FLuGpu, Msg4, 4, 4>(tr, "lug-scA", dc, (uint32_t)NM,
-                                                    par2, 2, pf.msgsA);
-        for (auto p : dc) cudaFreeAsync(p, 0);
+        if (zk) {
+            std::vector<gl_t*> dc = {dH, dV, dE, dD, nullptr, nullptr, nullptr};
+            for (int j = 0; j < 3; j++) {
+                if (bigzk) dc[4 + j] = d_ba[j];
+                else {
+                    dc[4 + j] = p3bf::dmalloc(NM, "lug:scA-B");
+                    cudaMemcpy(dc[4 + j], BA[j].v.data(), (size_t)NM * 8, cudaMemcpyHostToDevice);
+                }
+            }
+            gl_t par3[3] = {lamA, beta, rhoA};
+            rA = p3sg::sc_prove_gpu<FLuGpuZk, Msg4, 4, 7>(tr, "lug-scA", dc, (uint32_t)NM,
+                                                          par3, 3, pf.msgsA);
+            if (bigzk) dc_fin = dc;            // terminals read below, then freed
+            else for (auto p : dc) cudaFreeAsync(p, 0);
+        } else {
+            std::vector<gl_t*> dc = {dH, dV, dE, dD};
+            gl_t par2[2] = {lamA, beta};
+            rA = p3sg::sc_prove_gpu<FLuGpu, Msg4, 4, 4>(tr, "lug-scA", dc, (uint32_t)NM,
+                                                        par2, 2, pf.msgsA);
+            for (auto p : dc) cudaFreeAsync(p, 0);
+        }
     } else if (zk) {
         std::vector<gl_t> Bcols[3] = {BA[0].v, BA[1].v, BA[2].v};
         rA = sc_prove(ChA.v, Am, p3bf::build_eq(zAf), std::vector<gl_t>(NM, 1ULL),
@@ -1086,7 +1236,9 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
         rA = sc_prove(ChA.v, Am, p3bf::build_eq(zA), std::vector<gl_t>(NM, 1ULL),
                       lamA, beta, tr, "lug-scA", pf.msgsA);
     }
-    g_lustats.sc_ms += lu_now_ms() - t_sc;
+    const double sc_ms = lu_now_ms() - t_sc;
+    g_lustats.sc_ms += sc_ms;
+    double t_cl = lu_now_ms();
 
     // shared member point pm = (rA[0..n) || rA[n+g..))
     std::vector<gl_t> pm(rA.begin(), rA.begin() + n);
@@ -1097,20 +1249,79 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
     auto evA = [&](const std::vector<gl_t>& col) {
         return big ? p3bf::eval_h_gpu(col, rA) : p3bf::eval_h(col, eqrA);
     };
-    gl_t y_hA = evA(ChA.v);
+    // bigzk: the v-round binds reduced each device column to its value at rA
+    gl_t y_hA;
+    if (bigzk) cudaMemcpy(&y_hA, dc_fin[0], 8, cudaMemcpyDeviceToHost);
+    else y_hA = evA(ChA.v);
     pf.y_hA_c = y_hA;
     {
+        // hA is recomputable from the member witness columns (which the shared
+        // context keeps alive until the batched opening): register a rebuild
+        // closure and DROP the values -- at llama-68m dims the retained hA
+        // columns alone are tens of GB.
+        std::vector<std::vector<const std::vector<gl_t>*>> wsrc(k);
+        for (uint32_t j = 0; j < k; j++) {
+            auto& W = xc.luq[mi[j]].W;
+            for (uint32_t t = 0; t < c; t++)
+                wsrc[j].push_back(W[t].com ? &W[t].com->v : W[t].virt);
+        }
+        std::vector<gl_t> gpc = gp;
+        uint32_t nn = n, kk2 = k, kp2 = kp, cc = c;
+        size_t NN = N, NR2 = NR, NM2 = NM;
+        gl_t beta2 = beta, a02 = a0;
+        bool zk2 = zk, mask2 = p3zkc::G.mask_on;
+        uint64_t tail2 = hAtailseed;
+        auto rebuild_hA = [wsrc, gpc, nn, kk2, kp2, cc, NN, NR2, NM2, beta2, a02,
+                           zk2, mask2, tail2]() {
+            std::vector<gl_t> Am2(NR2);
+            for (uint32_t j = 0; j < kp2; j++) {
+                gl_t* dst = Am2.data() + ((size_t)j << nn);
+                if (j >= kk2) {
+                    #pragma omp parallel for schedule(static) if (NN >= 65536)
+                    for (size_t i = 0; i < NN; i++) dst[i] = a02;
+                    continue;
+                }
+                #pragma omp parallel for schedule(static) if (NN >= 65536)
+                for (size_t i = 0; i < NN; i++) {
+                    gl_t s = 0;
+                    for (uint32_t t = 0; t < cc; t++)
+                        s = gl_add(s, gl_mul(gpc[t], (*wsrc[j][t])[i]));
+                    dst[i] = s;
+                }
+            }
+            std::vector<gl_t> h = inv_all_add(Am2, beta2);
+            if (zk2) {
+                h.resize(NM2, 0);
+                if (mask2) { uint64_t s = tail2;
+                             for (size_t i = NR2; i < NM2; i++) h[i] = p3zkc::zprng(s); }
+            }
+            return h;
+        };
         uint64_t ss = ChA.sseed;
         xc.keep.push_back(std::move(ChA));
-        xc.lg.add(&xc.keep.back().v, pf.root_hA, rA, y_hA, ss);
+        xc.lg.add(&xc.keep.back().v, pf.root_hA, rA, y_hA, ss, rebuild_hA);
+        xc.keep.back().v.clear(); xc.keep.back().v.shrink_to_fit();
     }
     if (zk) for (int j = 0; j < 3; j++) {
-        pf.blA.yB[j] = p3bf::eval_h(BA[j].v, eqrA);
+        if (bigzk) cudaMemcpy(&pf.blA.yB[j], dc_fin[4 + j], 8, cudaMemcpyDeviceToHost);
+        else pf.blA.yB[j] = evA(BA[j].v);
         tr.absorb("lug-ybA", &pf.blA.yB[j], sizeof(gl_t));
         uint64_t s2 = BA[j].sseed;
         xc.keep.push_back(std::move(BA[j]));
-        xc.lg.add(&xc.keep.back().v, pf.blA.rt[j], rA, pf.blA.yB[j], s2);
+        size_t NM3 = NM; uint64_t bs = baseed[j]; bool bo = p3zkc::G.blind_on;
+        xc.lg.add(&xc.keep.back().v, pf.blA.rt[j], rA, pf.blA.yB[j], s2,
+                  [NM3, bs, bo] {
+                      std::vector<gl_t> b(NM3, 0);
+                      if (bo) {
+                          #pragma omp parallel for schedule(static) if (NM3 >= 65536)
+                          for (size_t i = 0; i < NM3; i++) b[i] = p3zkc::zprng_at(bs, i);
+                      }
+                      return b;
+                  });
+        xc.keep.back().v.clear(); xc.keep.back().v.shrink_to_fit();
     }
+    if (!dc_fin.empty()) { for (auto p : dc_fin) cudaFreeAsync(p, 0); dc_fin.clear(); }
+    p3bf::ckcuda("lug:A-side");
     // per-member witness claims at pm (+ the member's bind callback)
     for (uint32_t j = 0; j < k; j++) {
         auto& W = xc.luq[mi[j]].W;
@@ -1131,6 +1342,7 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
     }
 
     // ---- T side (unchanged semantics, once per group) ----
+    const double cl_ms = lu_now_ms() - t_cl;
     double t_scT = lu_now_ms();
     std::vector<gl_t> zT = chal_vec(tr, pf.m); gl_t lamT = chal(tr);
     std::vector<gl_t> zTf = p3zkc::zpt(zT);
@@ -1195,22 +1407,51 @@ static inline GroupProof prove_group(fs::Transcript& tr, XCtx& xc,
     tr.absorb("lug-ends", &y_hA, sizeof(gl_t));
     tr.absorb("lug-ends", &y_hT, sizeof(gl_t));
     tr.absorb("lug-ends", &y_cnt, sizeof(gl_t));
+    if (p3bf::memlog() && NM >= ((size_t)1 << 22))
+        fprintf(stderr, "# lu group %s timing: am=%.0f inv+commit=%.0f scA=%.0f claims=%.0f Tside=%.0f ms\n",
+                xc.luq[mi[0]].label.c_str(), am_ms, t_sc - t_inv, sc_ms, cl_ms,
+                lu_now_ms() - t_scT);
+    if (g_free_idx)
+        for (size_t j : mi) {
+            auto* ix = const_cast<std::vector<uint32_t>*>(xc.luq[j].idx);
+            ix->clear(); ix->shrink_to_fit();
+        }
+    if (NM >= ((size_t)1 << 24)) p3bf::trim_heap();
     return pf;
 }
 
-// group the queued obligations by (table id, log-rows), first-appearance order
+// group the queued obligations by (table id, log-rows), first-appearance order.
+// LU_GCAP caps the STACKED group domain: a k-member group over 2^n rows is
+// proven on 2^(n+g) merged rows (g = ceil log2 k) and its helper columns live
+// there; at llama-68m dims an uncapped stack exceeds the card, so groups are
+// split deterministically (first-appearance order, chunks of 2^(LU_GCAP-n))
+// with n >= LU_GCAP members proving as singletons.  Public protocol constant:
+// prover and verifier derive the same split.  Inactive at the tiny-layer dims
+// (all n + g <= 26 there), so historical transcripts are unchanged.
+static const uint32_t LU_GCAP = 26;
 template <typename OBL>
 static inline void lu_groups(const std::vector<OBL>& q,
                              std::function<uint32_t(const OBL&)> n_of,
                              std::vector<std::vector<size_t>>& members,
                              std::vector<uint32_t>& gn) {
+    std::vector<std::vector<size_t>> mem0;
+    std::vector<uint32_t> gn0;
     std::vector<p3fri::Hash> gid;
     for (size_t i = 0; i < q.size(); i++) {
         uint32_t n = n_of(q[i]);
         size_t gi = 0;
-        for (; gi < gid.size(); gi++) if (gid[gi] == q[i].tab->id && gn[gi] == n) break;
-        if (gi == gid.size()) { gid.push_back(q[i].tab->id); gn.push_back(n); members.push_back({}); }
-        members[gi].push_back(i);
+        for (; gi < gid.size(); gi++) if (gid[gi] == q[i].tab->id && gn0[gi] == n) break;
+        if (gi == gid.size()) { gid.push_back(q[i].tab->id); gn0.push_back(n); mem0.push_back({}); }
+        mem0[gi].push_back(i);
+    }
+    for (size_t gi = 0; gi < mem0.size(); gi++) {
+        uint32_t n = gn0[gi];
+        size_t cap = n >= LU_GCAP ? 1 : (size_t)1 << (LU_GCAP - n);
+        for (size_t off = 0; off < mem0[gi].size(); off += cap) {
+            size_t end = std::min(off + cap, mem0[gi].size());
+            members.emplace_back(mem0[gi].begin() + off, mem0[gi].begin() + end);
+            gn.push_back(n);
+        }
     }
 }
 

@@ -473,13 +473,15 @@ struct TfTables {
     p3bfa::Tables bfa;
     p3swg::Tables swg;
 };
-static inline TfTables build_tables(const Art& a) {
+// smx_wmax: softmax denominator window; rows of length seq need >= 16+lseq
+// (the default 23 covers seq <= 128 and keeps historical transcripts identical).
+static inline TfTables build_tables(const Art& a, uint32_t smx_wmax = 23) {
     TfTables T;
     T.hw = p3hwl::build_tables();
     T.rms = p3rms::build_tables(a);
     T.qnt = p3qnt::build_tables(a);
     T.rope = p3rope::build_tables(a);
-    T.smx = p3smx::build_tables(a);
+    T.smx = p3smx::build_tables(a, smx_wmax);
     T.bfa = p3bfa::build_tables();
     T.swg = p3swg::build_tables(a);
     return T;

@@ -9,8 +9,10 @@
 // Fold:  f'(x^2) = (f(x)+f(-x))/2 + beta*(f(x)-f(-x))/(2x),  x=-x at index j+M/2.
 // k = logN fold rounds -> final codeword length 2^R must be constant (degree 0).
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <vector>
 #include <array>
 #include "p3_goldilocks.cuh"
@@ -106,6 +108,10 @@ struct DeviceMerkle {
     void build_dev(const gl_t* d_cw, uint32_t M) {
         uint8_t* d0; cudaMallocAsync(&d0, (size_t)M*32, 0);
         p3_merkle_leaf_kernel<<<(M+P3_MERKLE_THREADS-1)/P3_MERKLE_THREADS,P3_MERKLE_THREADS>>>(d_cw,d0,M);
+        build_leaves(d0, M);
+    }
+    // build from a precomputed device leaf-hash buffer (takes ownership of d0)
+    void build_leaves(uint8_t* d0, uint32_t M) {
         dlev.assign(1,d0); sz.assign(1,M);
         for (uint32_t cnt=M; cnt>1;){ uint32_t half=cnt/2; uint8_t* dn; cudaMallocAsync(&dn,(size_t)half*32,0);
             p3_merkle_internal_kernel<<<(half+P3_MERKLE_THREADS-1)/P3_MERKLE_THREADS,P3_MERKLE_THREADS>>>(dlev.back(),dn,half);
@@ -146,6 +152,138 @@ inline std::vector<std::vector<Hash>> DeviceMerkle::paths_batch(const std::vecto
     std::vector<uint8_t> hout((size_t)n*P*32); cudaMemcpy(hout.data(), d_out, (size_t)n*P*32, cudaMemcpyDeviceToHost);
     cudaFreeAsync(d_lev,0); cudaFreeAsync(d_idx,0); cudaFreeAsync(d_out,0);
     for (uint32_t i=0;i<n;i++){ res[i].resize(P); for(uint32_t l=0;l<P;l++) memcpy(res[i][l].data(), &hout[((size_t)i*P+l)*32], 32); }
+    return res;
+}
+
+// ==================== streamed Merkle (bounded device memory) ====================
+// A full DeviceMerkle over an M-leaf codeword holds ~64*M bytes of device hash
+// levels; at llama-68m dims a single 2^29-leaf tree exceeds the 24 GB card.  The
+// streamed variant reduces pow2-aligned contiguous CHUNKS to their subtree roots
+// (bit-identical to the flat tree's internal nodes at the chunk boundary), keeps
+// only the per-chunk subroots plus the HOST upper tree, and rebuilds individual
+// chunks on demand for path extraction.  Roots and paths are byte-identical to
+// DeviceMerkle, so verify_path and all verifiers are unchanged.
+static const uint32_t P3_STREAM_LCH = 22;      // leaves per chunk (2^22 -> 128 MB hash buf)
+
+struct StreamTree {
+    size_t M = 0; uint32_t lch = 0;            // leaf count, log2 leaves-per-chunk
+    std::vector<std::vector<Hash>> upper;      // upper[0] = chunk subroots (host)
+    Hash root() const { return upper.back()[0]; }
+    void build_upper(std::vector<Hash> sub) {
+        upper.assign(1, std::move(sub));
+        while (upper.back().size() > 1) {
+            const auto& cur = upper.back();
+            std::vector<Hash> nx(cur.size() / 2);
+            for (size_t i = 0; i < nx.size(); i++) nx[i] = node_hash(cur[2*i], cur[2*i+1]);
+            upper.push_back(std::move(nx));
+        }
+    }
+};
+
+// LeafFn(off, len, d_out): write the leaf hashes of codeword positions
+// [off, off+len) into the device buffer d_out (len*32 bytes).
+template <class LeafFn>
+static inline StreamTree stream_tree_build(size_t M, LeafFn leaf_chunk) {
+    StreamTree st; st.M = M;
+    size_t CH = (size_t)1 << P3_STREAM_LCH; if (CH > M) CH = M;
+    st.lch = 0; while (((size_t)1 << st.lch) < CH) st.lch++;
+    const size_t nch = M / CH;
+    uint8_t *ha, *hb;
+    cudaMallocAsync(&ha, CH * 32, 0);
+    cudaMallocAsync(&hb, (CH / 2 ? CH / 2 : 1) * 32, 0);
+    std::vector<Hash> sub(nch);
+    for (size_t c = 0; c < nch; c++) {
+        leaf_chunk(c * CH, (uint32_t)CH, ha);
+        uint8_t *cur = ha, *nxt = hb;
+        for (size_t cnt = CH; cnt > 1; cnt /= 2) {
+            uint32_t half = (uint32_t)(cnt / 2);
+            p3_merkle_internal_kernel<<<(half + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS,
+                                        P3_MERKLE_THREADS>>>(cur, nxt, half);
+            uint8_t* t = cur; cur = nxt; nxt = t;
+        }
+        cudaMemcpy(sub[c].data(), cur, 32, cudaMemcpyDeviceToHost);
+    }
+    cudaFreeAsync(ha, 0); cudaFreeAsync(hb, 0);
+    st.build_upper(std::move(sub));
+    return st;
+}
+
+// full authentication paths (aligned with DeviceMerkle::paths_batch) for a list
+// of leaf positions; rebuilds ONLY the chunks containing positions.
+template <class LeafFn>
+static inline std::vector<std::vector<Hash>> stream_tree_paths(const StreamTree& st, LeafFn leaf_chunk,
+                                                               const std::vector<uint32_t>& pos) {
+    const size_t CH = std::min<size_t>((size_t)1 << st.lch, st.M);
+    std::vector<std::vector<Hash>> res(pos.size());
+    std::map<uint32_t, std::vector<uint32_t>> byc;
+    for (uint32_t i = 0; i < (uint32_t)pos.size(); i++) byc[(uint32_t)(pos[i] >> st.lch)].push_back(i);
+    for (auto& cc : byc) {
+        uint8_t* d0; cudaMallocAsync(&d0, CH * 32, 0);
+        leaf_chunk((size_t)cc.first << st.lch, (uint32_t)CH, d0);
+        DeviceMerkle mk; mk.build_leaves(d0, (uint32_t)CH);      // takes ownership of d0
+        cudaDeviceSynchronize();
+        std::vector<uint32_t> loc; loc.reserve(cc.second.size());
+        for (auto i : cc.second) loc.push_back(pos[i] & (uint32_t)(CH - 1));
+        auto lp = mk.paths_batch(loc);
+        mk.free_();
+        for (size_t q = 0; q < cc.second.size(); q++) {
+            auto& r = res[cc.second[q]]; r = std::move(lp[q]);   // in-chunk levels
+            uint32_t u = (uint32_t)(pos[cc.second[q]] >> st.lch);
+            for (size_t l = 0; l + 1 < st.upper.size(); l++) { r.push_back(st.upper[l][u ^ 1]); u >>= 1; }
+        }
+    }
+    return res;
+}
+
+// ONE-PASS variant for positions KNOWN at build time (round-0 subset opens):
+// chunks containing positions keep their sublevels transiently and yield paths
+// during the same pass that produces the subroots -- saves the second full
+// hashing pass of stream_tree_build + stream_tree_paths.
+template <class LeafFn>
+static inline std::vector<std::vector<Hash>> stream_tree_paths_onepass(
+        size_t M, LeafFn leaf_chunk, const std::vector<uint32_t>& pos) {
+    StreamTree st; st.M = M;
+    size_t CH = (size_t)1 << P3_STREAM_LCH; if (CH > M) CH = M;
+    st.lch = 0; while (((size_t)1 << st.lch) < CH) st.lch++;
+    const size_t nch = M / CH;
+    std::map<uint32_t, std::vector<uint32_t>> byc;
+    for (uint32_t i = 0; i < (uint32_t)pos.size(); i++) byc[(uint32_t)(pos[i] >> st.lch)].push_back(i);
+    uint8_t *ha, *hb;
+    cudaMallocAsync(&ha, CH * 32, 0);
+    cudaMallocAsync(&hb, (CH / 2 ? CH / 2 : 1) * 32, 0);
+    std::vector<Hash> sub(nch);
+    std::vector<std::vector<Hash>> res(pos.size());
+    for (size_t c = 0; c < nch; c++) {
+        auto hit = byc.find((uint32_t)c);
+        if (hit == byc.end()) {
+            leaf_chunk(c * CH, (uint32_t)CH, ha);
+            uint8_t *cur = ha, *nxt = hb;
+            for (size_t cnt = CH; cnt > 1; cnt /= 2) {
+                uint32_t half = (uint32_t)(cnt / 2);
+                p3_merkle_internal_kernel<<<(half + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS,
+                                            P3_MERKLE_THREADS>>>(cur, nxt, half);
+                uint8_t* t = cur; cur = nxt; nxt = t;
+            }
+            cudaMemcpy(sub[c].data(), cur, 32, cudaMemcpyDeviceToHost);
+        } else {
+            uint8_t* d0; cudaMallocAsync(&d0, CH * 32, 0);
+            leaf_chunk(c * CH, (uint32_t)CH, d0);
+            DeviceMerkle mk; mk.build_leaves(d0, (uint32_t)CH);
+            cudaDeviceSynchronize();
+            sub[c] = mk.root();
+            std::vector<uint32_t> loc; loc.reserve(hit->second.size());
+            for (auto i : hit->second) loc.push_back(pos[i] & (uint32_t)(CH - 1));
+            auto lp = mk.paths_batch(loc);
+            mk.free_();
+            for (size_t q = 0; q < hit->second.size(); q++) res[hit->second[q]] = std::move(lp[q]);
+        }
+    }
+    cudaFreeAsync(ha, 0); cudaFreeAsync(hb, 0);
+    st.build_upper(std::move(sub));
+    for (uint32_t i = 0; i < (uint32_t)pos.size(); i++) {
+        uint32_t u = (uint32_t)(pos[i] >> st.lch);
+        for (size_t l = 0; l + 1 < st.upper.size(); l++) { res[i].push_back(st.upper[l][u ^ 1]); u >>= 1; }
+    }
     return res;
 }
 

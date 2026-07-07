@@ -53,19 +53,24 @@ static bool prove_verify(const Wit& wt, const Operands& ops, uint32_t B, uint32_
     return verify(tv, *TT, A, pf, ops.X.root, ops.G.root, ops.Y.root, B, ld, Q, R, why);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    // optional: argv[1] tables.bin, argv[2] goldens.bin (large-d runs, e.g.
+    // ld=8/ld=10; default = the historical ld=6 pair)
+    const char* tab_path = argc > 1 ? argv[1] : "p3_rmsnorm_tables.bin";
+    const char* gld_path = argc > 2 ? argv[2] : "p3_rmsnorm_golden.bin";
     printf("=== RMSNorm gadget selftest (canonical spec = transformer_ref.py) ===\n");
+    printf("tables=%s goldens=%s\n", tab_path, gld_path);
     p3fri::g_gpu_merkle = true; p3bf::p3_enable_mempool();
     const char* why = nullptr;
 
-    if (!load_art("p3_rmsnorm_tables.bin", A)) {
-        printf("FATAL: run  python3 transformer_ref.py --dump-tables p3_rmsnorm_tables.bin\n");
+    if (!load_art(tab_path, A)) {
+        printf("FATAL: run  python3 transformer_ref.py --dump-tables %s\n", tab_path);
         return 1;
     }
     uint32_t ld = 0;
     vector<Golden> Gs;
-    if (!load_goldens("p3_rmsnorm_golden.bin", Gs, ld)) {
-        printf("FATAL: run  python3 transformer_ref.py --dump-goldens p3_rmsnorm_golden.bin\n");
+    if (!load_goldens(gld_path, Gs, ld)) {
+        printf("FATAL: run  python3 transformer_ref.py --dump-goldens %s\n", gld_path);
         return 1;
     }
     printf("artifact: ld=%u EMIN=%ld eps_bits=0x%08lx; %zu golden cases\n",
@@ -248,7 +253,7 @@ int main() {
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);
           ck("tampered claimed Y evaluation rejects", !ok, why); }
-        { auto p2 = pf; p2.lu[LUR_RSQ].S = gl_add(p2.lu[LUR_RSQ].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].S = gl_add(p2.lug[0].S, 1ULL);
           fs::Transcript tv("rms");
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);
@@ -258,7 +263,8 @@ int main() {
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);
           ck("swapped witness column root rejects", !ok, why); }
-        { auto p2 = pf; p2.yM1mr = gl_add(p2.yM1mr, 1ULL);
+        { auto p2 = pf;
+          for (auto& g : p2.lug) { for (auto& m : g.mem) if (!m.extra.empty()) { m.extra.back() = gl_add(m.extra.back(), 1ULL); goto rmsdone; } } rmsdone:;
           fs::Transcript tv("rms");
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);

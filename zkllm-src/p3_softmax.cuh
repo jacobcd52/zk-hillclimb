@@ -89,26 +89,35 @@ struct Tables {
     p3bfa::Tables BT;                            // R128/R256/R512/RM17/REXP/...
     Table R11, R12, R16, SH512, WD24, RM8;       // rmsnorm-style constructions
     Table MUL7, EXPT, RCPT;
+    uint32_t wmax = 23;                          // max supported bitlen(S): rows
+                                                 // of length n need wmax >= 16+ln
 };
-static inline Tables build_tables(const Art& a) {
+static inline Tables build_tables(const Art& a, uint32_t wmax = 23) {
     Tables T;
+    // Denominator window is row-length dependent: S < 2^(16+ln) arithmetically
+    // (16-bit lanes).  wmax = 23 keeps the historical tables (n <= 128)
+    // bit-identical; pass wmax = 16 + ln for longer rows.
+    if (wmax < 23 || wmax > 30) throw std::runtime_error("smx: wmax out of [23,30]");
+    T.wmax = wmax;
     T.BT = p3bfa::build_tables();
     auto range = [](uint32_t n) { std::vector<gl_t> v(n);
         for (uint32_t j = 0; j < n; j++) v[j] = j; return make_table({v}); };
-    T.R11 = range(2048); T.R12 = range(4096); T.R16 = range(65536);
+    T.R11 = range(1u << (wmax - 12));            // U1H/U2H high limb (low limb 12b)
+    T.R12 = range(4096); T.R16 = range(65536);
     { std::vector<gl_t> s(512), p(512);
       for (uint32_t j = 0; j < 512; j++) { s[j] = j; p[j] = 1ULL << (j < 16 ? j : 16); }
       T.SH512 = make_table({s, p}); }
     { std::vector<gl_t> w(32), plo(32), phi(32), pdn(32), pup(32);
       for (uint32_t j = 0; j < 32; j++) {
-          uint32_t wd = j <= 23 ? j : 0;
+          uint32_t wd = j <= wmax ? j : 0;
           w[j] = wd; plo[j] = wd ? (1ULL << (wd - 1)) : 0; phi[j] = 1ULL << wd;
           pdn[j] = 1ULL << (wd > 16 ? wd - 16 : 0);
           pup[j] = 1ULL << (wd < 16 ? 16 - wd : 0);
       }
       T.WD24 = make_table({w, plo, phi, pdn, pup}); }
-    { std::vector<gl_t> p(256, 1), r(256, 0); uint32_t row = 0;
-      for (uint32_t t = 0; t <= 7; t++)
+    { uint32_t tmax = wmax - 16;                                // r < pw <= 2^(wmax-16)
+      std::vector<gl_t> p(1u << (tmax + 1), 1), r(1u << (tmax + 1), 0); uint32_t row = 0;
+      for (uint32_t t = 0; t <= tmax; t++)
           for (uint32_t x = 0; x < (1u << t); x++) { p[row] = 1ULL << t; r[row] = x; row++; }
       T.RM8 = make_table({p, r}); }
     { std::vector<gl_t> ma(16384), mb(16384), mo(16384), ei(16384);
@@ -301,7 +310,9 @@ static inline Wit gen_witness(const Golden& L, const Art& a, const SmTamper* tm 
         int64_t wd = 1, plo = 1, phi = 2, pdn = 1, pup = 1 << 15;
         int64_t u1 = 0, u2 = 0, nr = 0, u16 = 32768, mrc = 128, hbc = 1, reb = 1;
         if (!emp) {
-            if (S < 1 || S >= (1 << 23)) throw std::runtime_error("smx: S window");
+            int64_t wcap = 16 + (int64_t)ln < 30 ? 16 + (int64_t)ln : 30;
+            if (wcap < 23) wcap = 23;
+            if (S < 1 || S >= ((int64_t)1 << wcap)) throw std::runtime_error("smx: S window");
             wd = bitlen((uint64_t)S);
             plo = (int64_t)1 << (wd - 1); phi = (int64_t)1 << wd;
             pdn = (int64_t)1 << (wd > 16 ? wd - 16 : 0);
@@ -503,22 +514,25 @@ static inline std::vector<LuDef> lu_defs() {
 struct SmxProof {
     uint32_t B = 0, ln = 0;
     p3fri::Hash rde[NDE2], rdb[NDB2];
-    p3lu::LookupProof lu[NLSM];
-    gl_t yM3emb = 0, yM3mrc = 0;                 // MUL7 virtual-key bindings
+    std::vector<p3lu::GroupProof> lug;           // standalone merged lookup groups
+    // MUL7 virtual-key binding claims ride the M3 member's `extra` slots
     std::vector<Msg5> mDe; std::vector<gl_t> yDe;
     gl_t yDeS = 0, yDeP = 0, yDeKM = 0, yDeMX = 0, yDeE = 0, yDeRB = 0;
     std::vector<Msg5> mDb; gl_t yDb[NDB2] = {};
     gl_t yBF = 0, yBS = 0;
     std::vector<Msg5> mBind; gl_t yBSEL1 = 0, yBSEL2 = 0, yBQ2 = 0;
+    p3zkc::Blind zbl[3];                         // zk: De, Db, bind blinds
     std::vector<p3bo::BatchProof> batches;
 };
 
 // ==================== prover ====================
 static inline SmxProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
                              const Art& a, const Operands& ops, uint32_t R, uint32_t Q,
-                             bool strict = true) {
+                             bool strict = true, p3lu::XCtx* xc = nullptr) {
     const Dims& dm = wt.dm;
     SmxProof pf; pf.B = dm.B; pf.ln = dm.ln;
+    if (16 + dm.ln > T.wmax)
+        throw std::runtime_error("smx: tables too small (need wmax >= 16+ln)");
 
     uint32_t hdr[3] = {dm.B, dm.ln, (uint32_t)a.sm_emin};
     tr.absorb("smx-dims", hdr, sizeof hdr);
@@ -530,32 +544,78 @@ static inline SmxProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     tr.absorb("smx-S", ops.S.root.data(), 32);
     tr.absorb("smx-P", ops.P.root.data(), 32);
 
-    p3bo::PLedger lg;
-    std::deque<Col> lucols;
+    p3lu::XCtx xc_loc;
+    p3lu::XCtx& XC = xc ? *xc : xc_loc;
+    p3bo::PLedger& lg = XC.lg;
+    std::deque<Col>& lucols = XC.keep;
 
-    std::vector<Col> CDe(NDE2), CDb(NDB2);
-    for (int c = 0; c < NDE2; c++) { CDe[c] = commit_col_nc(wt.de[c], R); pf.rde[c] = CDe[c].root; }
-    for (int c = 0; c < NDB2; c++) { CDb[c] = commit_col_nc(wt.db[c], R); pf.rdb[c] = CDb[c].root; }
+    std::vector<Col>& CDe = XC.vec(NDE2);
+    std::vector<Col>& CDb = XC.vec(NDB2);
+    // zk: the row bindings sum SEL1 = 1-EMP (EMP public, zero-extended -> the
+    // slice-1 rows must sum to 1), sum SEL2 = 1-FSEL, sum Q2 = S are CLAIM
+    // algebra -> slice-1 linked masks (p3_zkc mechanism 1)
+    const bool zk = p3zkc::G.on;
+    std::vector<gl_t> mSEL1, mSEL2, mQ2, mFSEL, mS;
+    if (zk) {
+        mSEL1 = p3zkc::fresh_mask(dm.le); mSEL2 = p3zkc::fresh_mask(dm.le);
+        mQ2 = p3zkc::fresh_mask(dm.le);
+        mFSEL = p3zkc::fresh_mask(dm.lb); mS = p3zkc::fresh_mask(dm.lb);
+        for (uint32_t b = 0; b < dm.Bpad; b++) {
+            gl_t s1 = 0, s2 = 0, sq = 0;
+            for (uint32_t j = 0; j + 1 < dm.n; j++) s1 = gl_add(s1, mSEL1[((size_t)b << dm.ln) | j]);
+            mSEL1[((size_t)b << dm.ln) | (dm.n - 1)] = gl_sub(1ULL, s1);   // rowsum = 1
+            for (uint32_t j = 0; j < dm.n; j++) {
+                s2 = gl_add(s2, mSEL2[((size_t)b << dm.ln) | j]);
+                sq = gl_add(sq, mQ2[((size_t)b << dm.ln) | j]);
+            }
+            mFSEL[b] = gl_sub(1ULL, s2);
+            mS[b] = sq;
+        }
+    }
+    for (int c = 0; c < NDE2; c++) {
+        const std::vector<gl_t>* m = nullptr;
+        if (zk) { if (c == SM_SEL1) m = &mSEL1; else if (c == SM_SEL2) m = &mSEL2;
+                  else if (c == SM_Q2) m = &mQ2; }
+        CDe[c] = commit_col_nc(wt.de[c], R, m); pf.rde[c] = CDe[c].root;
+    }
+    for (int c = 0; c < NDB2; c++) {
+        const std::vector<gl_t>* m = nullptr;
+        if (zk) { if (c == B_FSEL) m = &mFSEL; else if (c == B_S) m = &mS; }
+        CDb[c] = commit_col_nc(wt.db[c], R, m); pf.rdb[c] = CDb[c].root;
+    }
     for (int c = 0; c < NDE2; c++) tr.absorb("smx-ce", pf.rde[c].data(), 32);
     for (int c = 0; c < NDB2; c++) tr.absorb("smx-cb", pf.rdb[c].data(), 32);
 
+    // zk: virtual MUL7 keys rebuilt over the augmented domain (affine/broadcast)
+    const std::vector<gl_t> *pem = &wt.emf, *pmr = &wt.mrcf;
+    if (zk) {
+        std::vector<gl_t> emf_z = CDe[SM_EMB].v; for (auto& x : emf_z) x = gl_add(x, 128ULL);
+        pem = &XC.varr(std::move(emf_z));
+        pmr = &XC.varr(p3zkc::bc_aug(CDb[B_MRC].v, dm.lb, dm.le, dm.Ne,
+                               [&](size_t e) { return e >> dm.ln; }));
+    }
     auto LD = lu_defs();
     for (int i = 0; i < NLSM; i++) {
         std::vector<LuColSpec> spec;
         for (int cid : LD[i].cols) {
-            if (cid == -1) spec.push_back(LV(&wt.emf));
-            else if (cid == -2) spec.push_back(LV(&wt.mrcf));
+            if (cid == -1) spec.push_back(LV(pem));
+            else if (cid == -2) spec.push_back(LV(pmr));
             else spec.push_back(LC(LD[i].dom == 0 ? &CDe[cid] : &CDb[cid]));
         }
-        std::vector<gl_t> rA;
-        pf.lu[i] = p3lu::prove_v(tr, spec, wt.lidx[i], tab_of(T, LD[i].tab), R, Q,
-                                 "smxLU" + std::to_string(i), true, strict,
-                                 i == LSM_M3 ? &rA : nullptr, &lg, &lucols);
+        p3lu::PBind bind;
         if (i == LSM_M3) {
-            pf.yM3emb = claimc(tr, lg, CDe[SM_EMB], rA);
-            std::vector<gl_t> rb(rA.begin() + dm.ln, rA.end());
-            pf.yM3mrc = claimc(tr, lg, CDb[B_MRC], rb);
+            const Col *emb = &CDe[SM_EMB], *mrc = &CDb[B_MRC];
+            Dims dmc = dm;
+            bind = [emb, mrc, dmc](fs::Transcript& trb, p3lu::XCtx& xcb,
+                                   const std::vector<gl_t>& pm, const std::vector<gl_t>&) {
+                gl_t y1 = claimc(trb, xcb.lg, *emb, pm);
+                std::vector<gl_t> rb(pm.begin() + dmc.ln, pm.begin() + dmc.le);
+                gl_t y2 = claimc(trb, xcb.lg, *mrc, p3zkc::expt(rb, pm, dmc.le));
+                return std::vector<gl_t>{y1, y2};
+            };
         }
+        p3lu::defer_v(XC, std::move(spec), wt.lidx[i], tab_of(T, LD[i].tab),
+                      "smxLU" + std::to_string(i), std::move(bind));
     }
 
     // -- De zero-check --
@@ -565,28 +625,28 @@ static inline SmxProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     for (int j = 1; j < N_SM_DE; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
         std::vector<std::vector<gl_t>> cols; cols.reserve(8 + NDE2);
-        cols.push_back(beq(zE));
-        cols.push_back(wt.spat); cols.push_back(wt.ppat); cols.push_back(wt.mskc);
-        for (int c = 0; c < NDE2; c++) cols.push_back(wt.de[c]);
-        std::vector<gl_t> KMb(dm.Ne), MXb(dm.Ne), Eb(dm.Ne), RBb(dm.Ne);
-        for (size_t e = 0; e < dm.Ne; e++) {
-            uint32_t b = (uint32_t)(e >> dm.ln);
-            KMb[e] = wt.db[B_KMAX][b]; MXb[e] = wt.db[B_MXP][b];
-            Eb[e] = wt.db[B_E][b]; RBb[e] = wt.db[B_REB][b];
-        }
-        cols.push_back(std::move(KMb)); cols.push_back(std::move(MXb));
-        cols.push_back(std::move(Eb)); cols.push_back(std::move(RBb));
+        cols.push_back(beq(p3zkc::zpt(zE)));
+        cols.push_back(ops.S.v); cols.push_back(ops.P.v);
+        if (zk) { auto mz = wt.mskc; mz.resize(CDe[0].v.size(), 0); cols.push_back(std::move(mz)); }
+        else cols.push_back(wt.mskc);
+        for (int c = 0; c < NDE2; c++) cols.push_back(CDe[c].v);
+        auto bmap = [&](size_t e) { return e >> dm.ln; };
+        cols.push_back(p3zkc::bc_aug(CDb[B_KMAX].v, dm.lb, dm.le, dm.Ne, bmap));
+        cols.push_back(p3zkc::bc_aug(CDb[B_MXP].v, dm.lb, dm.le, dm.Ne, bmap));
+        cols.push_back(p3zkc::bc_aug(CDb[B_E].v, dm.lb, dm.le, dm.Ne, bmap));
+        cols.push_back(p3zkc::bc_aug(CDb[B_REB].v, dm.lb, dm.le, dm.Ne, bmap));
         CFn F = [&](const gl_t* v) { return F_de(v, lamEv.data()); };
-        std::vector<gl_t> rE = sc5_prove(tr, "smx-scE", std::move(cols), F, pf.mDe);
+        std::vector<gl_t> rE = p3hwl::sc5z(tr, "smx-scE", dm.le, std::move(cols), F, pf.mDe,
+                                           0, R, lg, lucols, pf.zbl[0]);
         pf.yDeS = claimc(tr, lg, ops.S, rE);
         pf.yDeP = claimc(tr, lg, ops.P, rE);
         pf.yDe.resize(NDE2);
         for (int c = 0; c < NDE2; c++) pf.yDe[c] = claimc(tr, lg, CDe[c], rE);
-        std::vector<gl_t> rb(rE.begin() + dm.ln, rE.end());
-        pf.yDeKM = claimc(tr, lg, CDb[B_KMAX], rb);
-        pf.yDeMX = claimc(tr, lg, CDb[B_MXP], rb);
-        pf.yDeE = claimc(tr, lg, CDb[B_E], rb);
-        pf.yDeRB = claimc(tr, lg, CDb[B_REB], rb);
+        std::vector<gl_t> rb(rE.begin() + dm.ln, rE.begin() + dm.le);
+        pf.yDeKM = claimc(tr, lg, CDb[B_KMAX], p3zkc::expt(rb, rE, dm.le));
+        pf.yDeMX = claimc(tr, lg, CDb[B_MXP], p3zkc::expt(rb, rE, dm.le));
+        pf.yDeE = claimc(tr, lg, CDb[B_E], p3zkc::expt(rb, rE, dm.le));
+        pf.yDeRB = claimc(tr, lg, CDb[B_REB], p3zkc::expt(rb, rE, dm.le));
     }
 
     // -- Db zero-check --
@@ -595,39 +655,58 @@ static inline SmxProof prove(fs::Transcript& tr, const Wit& wt, const Tables& T,
     for (int j = 1; j < N_SM_DB; j++) lamBv[j] = gl_mul(lamBv[j-1], lamB);
     {
         std::vector<std::vector<gl_t>> cols; cols.reserve(2 + NDB2);
-        cols.push_back(beq(zB));
-        cols.push_back(wt.empc);
-        for (int c = 0; c < NDB2; c++) cols.push_back(wt.db[c]);
+        cols.push_back(beq(p3zkc::zpt(zB)));
+        if (zk) { auto ez = wt.empc; ez.resize(CDb[0].v.size(), 0); cols.push_back(std::move(ez)); }
+        else cols.push_back(wt.empc);
+        for (int c = 0; c < NDB2; c++) cols.push_back(CDb[c].v);
         gl_t EMINc = (gl_t)a.sm_emin;
         CFn F = [&](const gl_t* v) { return F_db(v, lamBv, EMINc); };
-        std::vector<gl_t> rB = sc5_prove(tr, "smx-scB", std::move(cols), F, pf.mDb);
+        std::vector<gl_t> rB = p3hwl::sc5z(tr, "smx-scB", dm.lb, std::move(cols), F, pf.mDb,
+                                           0, R, lg, lucols, pf.zbl[1]);
         for (int c = 0; c < NDB2; c++) pf.yDb[c] = claimc(tr, lg, CDb[c], rB);
     }
 
     // -- row binding: sum SEL1 = 1-EMP, sum SEL2 = 1-FSEL, sum Q2 = S --
     std::vector<gl_t> z2 = chal_vec(tr, dm.lb);
-    pf.yBF = claimc(tr, lg, CDb[B_FSEL], z2);
-    pf.yBS = claimc(tr, lg, CDb[B_S], z2);
+    gl_t zexs = zk ? chal(tr) : 0;
+    pf.yBF = claimc(tr, lg, CDb[B_FSEL], p3zkc::xpt(z2, zexs));
+    pf.yBS = claimc(tr, lg, CDb[B_S], p3zkc::xpt(z2, zexs));
     gl_t lam1 = chal(tr), lam2 = chal(tr), lam3 = chal(tr);
     {
-        std::vector<gl_t> eqb = beq(z2);
-        std::vector<gl_t> EQb(dm.Ne);
-        for (size_t e = 0; e < dm.Ne; e++) EQb[e] = eqb[e >> dm.ln];
+        uint32_t e_e = p3zkc::e_of(dm.le);
+        std::vector<gl_t> ptb = z2;
+        if (zk) { ptb.push_back(zexs); ptb.resize(dm.lb + e_e, 0); }
+        std::vector<gl_t> eqb = beq(ptb);
+        size_t NeA = CDe[SM_SEL1].v.size();
+        std::vector<gl_t> EQb(NeA);
+        for (size_t q = 0; q < NeA; q++) {
+            size_t ex = q >> dm.le, e = q & (dm.Ne - 1);
+            EQb[q] = eqb[(ex << dm.lb) | (e >> dm.ln)];
+        }
         std::vector<std::vector<gl_t>> cols;
         cols.push_back(std::move(EQb));
-        cols.push_back(wt.de[SM_SEL1]); cols.push_back(wt.de[SM_SEL2]);
-        cols.push_back(wt.de[SM_Q2]);
+        cols.push_back(CDe[SM_SEL1].v); cols.push_back(CDe[SM_SEL2].v);
+        cols.push_back(CDe[SM_Q2].v);
         gl_t lam[3] = {lam1, lam2, lam3};
         CFn F = [&](const gl_t* v) { return F_bind(v, lam); };
-        std::vector<gl_t> rS = sc5_prove(tr, "smx-scS", std::move(cols), F, pf.mBind);
+        gl_t yEMPa = mle_eval(wt.empc, z2);
+        if (zk) yEMPa = gl_mul(gl_sub(1ULL, zexs), yEMPa);
+        gl_t base0 = gl_add(gl_add(gl_mul(lam1, gl_sub(1ULL, yEMPa)),
+                                   gl_mul(lam2, gl_sub(1ULL, pf.yBF))),
+                            gl_mul(lam3, pf.yBS));
+        std::vector<gl_t> rS = p3hwl::sc5z(tr, "smx-scS", dm.le, std::move(cols), F, pf.mBind,
+                                           base0, R, lg, lucols, pf.zbl[2]);
         pf.yBSEL1 = claimc(tr, lg, CDe[SM_SEL1], rS);
         pf.yBSEL2 = claimc(tr, lg, CDe[SM_SEL2], rS);
         pf.yBQ2 = claimc(tr, lg, CDe[SM_Q2], rS);
     }
 
-    for (size_t i = 0; i < lg.cls.size(); i++)
-        pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
-                                               "smx-bo" + std::to_string(i)));
+    if (!xc) {
+        pf.lug = p3lu::lu_flush(tr, XC, R, Q, strict);
+        for (size_t i = 0; i < lg.cls.size(); i++)
+            pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
+                                                   "smx-bo" + std::to_string(i)));
+    }
     return pf;
 }
 
@@ -637,16 +716,20 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
                           const SmxProof& pf, const std::vector<uint8_t>& mask,
                           const p3fri::Hash& rS, const p3fri::Hash& rP,
                           uint32_t B, uint32_t n,
-                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr) {
+                          uint32_t Q_pub, uint32_t R_pub, const char** why = nullptr,
+                          p3lu::VCtx* xv = nullptr) {
     auto fail = [&](const char* m) { if (why) *why = m; return false; };
     if (Q_pub < 20 || R_pub < 1) return fail("insecure params");
     uint32_t ln = ilog2(n);
     if ((1u << ln) != n) return fail("n must be pow2");
     if (pf.B != B || pf.ln != ln) return fail("dims mismatch");
+    if (16 + ln > T.wmax) return fail("smx tables too small (wmax)");
     if (mask.size() != (size_t)B * n) return fail("mask size");
     if (pf.yDe.size() != NDE2) return fail("yDe count");
     Dims dm = make_dims(B, ln);
-    p3bo::VLedger vlg;
+    p3lu::VCtx vc_loc;
+    p3lu::VCtx& VC = xv ? *xv : vc_loc;
+    p3bo::VLedger& vlg = VC.vlg;
 
     // rebuild the public mask / empty-row columns (padding rows all-masked)
     std::vector<gl_t> mskc(dm.Ne, 0), empc(dm.Bpad, 1);
@@ -675,25 +758,30 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
     auto LD = lu_defs();
     for (int i = 0; i < NLSM; i++) {
         uint32_t explog = LD[i].dom == 0 ? dm.le : dm.lb;
-        if (pf.lu[i].n != explog) return fail("lookup domain");
         std::vector<const p3fri::Hash*> roots;
         for (int cid : LD[i].cols) {
             if (cid < 0) roots.push_back(nullptr);
             else roots.push_back(LD[i].dom == 0 ? &pf.rde[cid] : &pf.rdb[cid]);
         }
-        std::vector<gl_t> rA, yv;
-        if (!p3lu::verify_v(tr, roots, tab_of(T, LD[i].tab), pf.lu[i], Q_pub, R_pub,
-                            "smxLU" + std::to_string(i), why,
-                            i == LSM_M3 ? &rA : nullptr, i == LSM_M3 ? &yv : nullptr,
-                            nullptr, &vlg)) return false;
+        p3lu::VBind bind;
         if (i == LSM_M3) {
-            if (yv.size() != 2) return fail("M3 y_virt count");
-            gl_t yemb = claimv(tr, vlg, pf.rde[SM_EMB], rA, pf.yM3emb);
-            std::vector<gl_t> rb(rA.begin() + ln, rA.end());
-            gl_t ymrc = claimv(tr, vlg, pf.rdb[B_MRC], rb, pf.yM3mrc);
-            if (yv[0] != gl_add(128ULL, yemb)) return fail("M3 emf binding");
-            if (yv[1] != ymrc) return fail("M3 mrcf binding");
+            p3fri::Hash he = pf.rde[SM_EMB], hm = pf.rdb[B_MRC]; Dims dmc = dm;
+            bind = [he, hm, dmc](fs::Transcript& trb, p3lu::VCtx& vc,
+                                 const std::vector<gl_t>& pm, const std::vector<gl_t>& yv,
+                                 const std::vector<gl_t>& ex, const char** wy) {
+                auto f = [&](const char* m) { if (wy) *wy = m; return false; };
+                if (yv.size() != 2) return f("M3 y_virt count");
+                if (ex.size() != 2) return f("M3 extra count");
+                gl_t yemb = claimv(trb, vc.vlg, he, pm, ex[0]);
+                std::vector<gl_t> rb(pm.begin() + dmc.ln, pm.begin() + dmc.le);
+                gl_t ymrc = claimv(trb, vc.vlg, hm, p3zkc::expt(rb, pm, dmc.le), ex[1]);
+                if (yv[0] != gl_add(128ULL, yemb)) return f("M3 emf binding");
+                if (yv[1] != ymrc) return f("M3 mrcf binding");
+                return true;
+            };
         }
+        p3lu::vdefer_v(VC, std::move(roots), tab_of(T, LD[i].tab), explog,
+                       "smxLU" + std::to_string(i), std::move(bind));
     }
 
     // -- De zero-check --
@@ -702,20 +790,28 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
     std::vector<gl_t> lamEv(N_SM_DE); lamEv[0] = 1;
     for (int j = 1; j < N_SM_DE; j++) lamEv[j] = gl_mul(lamEv[j-1], lamE);
     {
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[0]);
         std::vector<gl_t> rE; gl_t claim;
-        if (!sc5_verify(pf.mDe, dm.le, 0, tr, "smx-scE", rE, claim)) return fail("De sumcheck");
+        if (!sc5_verify(pf.mDe, p3zkc::vfull(dm.le), gl_mul(rho, pf.zbl[0].H),
+                        tr, "smx-scE", rE, claim)) return fail("De sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
         std::vector<gl_t> v(8 + NDE2);
-        v[0] = p3bf::eq_point(rE, zE);
+        v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
         v[1] = claimv(tr, vlg, rS, rE, pf.yDeS);
         v[2] = claimv(tr, vlg, rP, rE, pf.yDeP);
-        v[3] = mle_eval(mskc, rE);
+        std::vector<gl_t> rEl(rE.begin(), rE.begin() + dm.le);
+        gl_t exf = 1ULL;                          // zk: public mask zero-extended
+        for (size_t ii = dm.le; ii < rE.size(); ii++) exf = gl_mul(exf, gl_sub(1ULL, rE[ii]));
+        v[3] = gl_mul(mle_eval(mskc, rEl), exf);
         for (int c = 0; c < NDE2; c++) v[4 + c] = claimv(tr, vlg, pf.rde[c], rE, pf.yDe[c]);
-        std::vector<gl_t> rb(rE.begin() + ln, rE.end());
-        v[4 + NDE2] = claimv(tr, vlg, pf.rdb[B_KMAX], rb, pf.yDeKM);
-        v[5 + NDE2] = claimv(tr, vlg, pf.rdb[B_MXP], rb, pf.yDeMX);
-        v[6 + NDE2] = claimv(tr, vlg, pf.rdb[B_E], rb, pf.yDeE);
-        v[7 + NDE2] = claimv(tr, vlg, pf.rdb[B_REB], rb, pf.yDeRB);
-        if (F_de(v.data(), lamEv.data()) != claim) return fail("De terminal");
+        std::vector<gl_t> rb(rE.begin() + ln, rE.begin() + dm.le);
+        v[4 + NDE2] = claimv(tr, vlg, pf.rdb[B_KMAX], p3zkc::expt(rb, rE, dm.le), pf.yDeKM);
+        v[5 + NDE2] = claimv(tr, vlg, pf.rdb[B_MXP], p3zkc::expt(rb, rE, dm.le), pf.yDeMX);
+        v[6 + NDE2] = claimv(tr, vlg, pf.rdb[B_E], p3zkc::expt(rb, rE, dm.le), pf.yDeE);
+        v[7 + NDE2] = claimv(tr, vlg, pf.rdb[B_REB], p3zkc::expt(rb, rE, dm.le), pf.yDeRB);
+        gl_t end = gl_add(F_de(v.data(), lamEv.data()),
+                          p3hwl::sc5_blindterm(pf.zbl[0], rho, v[0]));
+        if (end != claim) return fail("De terminal");
     }
 
     // -- Db zero-check --
@@ -723,42 +819,63 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
     gl_t lamB = chal(tr), lamBv[N_SM_DB]; lamBv[0] = 1;
     for (int j = 1; j < N_SM_DB; j++) lamBv[j] = gl_mul(lamBv[j-1], lamB);
     {
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[1]);
         std::vector<gl_t> rB; gl_t claim;
-        if (!sc5_verify(pf.mDb, dm.lb, 0, tr, "smx-scB", rB, claim)) return fail("Db sumcheck");
+        if (!sc5_verify(pf.mDb, p3zkc::vfull(dm.lb), gl_mul(rho, pf.zbl[1].H),
+                        tr, "smx-scB", rB, claim)) return fail("Db sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[1], rB);
         std::vector<gl_t> v(2 + NDB2);
-        v[0] = p3bf::eq_point(rB, zB);
-        v[1] = mle_eval(empc, rB);
+        v[0] = p3bf::eq_point(rB, p3zkc::zpt(zB));
+        std::vector<gl_t> rBl(rB.begin(), rB.begin() + dm.lb);
+        gl_t exf = 1ULL;
+        for (size_t ii = dm.lb; ii < rB.size(); ii++) exf = gl_mul(exf, gl_sub(1ULL, rB[ii]));
+        v[1] = gl_mul(mle_eval(empc, rBl), exf);
         for (int c = 0; c < NDB2; c++) v[2 + c] = claimv(tr, vlg, pf.rdb[c], rB, pf.yDb[c]);
-        if (F_db(v.data(), lamBv, (gl_t)a.sm_emin) != claim) return fail("Db terminal");
+        gl_t end = gl_add(F_db(v.data(), lamBv, (gl_t)a.sm_emin),
+                          p3hwl::sc5_blindterm(pf.zbl[1], rho, v[0]));
+        if (end != claim) return fail("Db terminal");
     }
 
     // -- row binding --
     std::vector<gl_t> z2 = chal_vec(tr, dm.lb);
     {
-        gl_t yF = claimv(tr, vlg, pf.rdb[B_FSEL], z2, pf.yBF);
-        gl_t yS = claimv(tr, vlg, pf.rdb[B_S], z2, pf.yBS);
+        const bool zk = p3zkc::G.on;
+        gl_t zexs = zk ? chal(tr) : 0;
+        gl_t yF = claimv(tr, vlg, pf.rdb[B_FSEL], p3zkc::xpt(z2, zexs), pf.yBF);
+        gl_t yS = claimv(tr, vlg, pf.rdb[B_S], p3zkc::xpt(z2, zexs), pf.yBS);
         gl_t lam1 = chal(tr), lam2 = chal(tr), lam3 = chal(tr);
         gl_t yEMP = mle_eval(empc, z2);
+        if (zk) yEMP = gl_mul(gl_sub(1ULL, zexs), yEMP);
         gl_t claim0 = gl_add(gl_add(gl_mul(lam1, gl_sub(1ULL, yEMP)),
                                     gl_mul(lam2, gl_sub(1ULL, yF))),
                              gl_mul(lam3, yS));
+        gl_t rho = p3hwl::sc5vz_pre(tr, pf.zbl[2]);
+        claim0 = gl_add(claim0, gl_mul(rho, pf.zbl[2].H));
         std::vector<gl_t> rSc; gl_t claim;
-        if (!sc5_verify(pf.mBind, dm.le, claim0, tr, "smx-scS", rSc, claim))
+        if (!sc5_verify(pf.mBind, p3zkc::vfull(dm.le), claim0, tr, "smx-scS", rSc, claim))
             return fail("bind sumcheck");
+        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[2], rSc);
         gl_t y1 = claimv(tr, vlg, pf.rde[SM_SEL1], rSc, pf.yBSEL1);
         gl_t y2 = claimv(tr, vlg, pf.rde[SM_SEL2], rSc, pf.yBSEL2);
         gl_t y3 = claimv(tr, vlg, pf.rde[SM_Q2], rSc, pf.yBQ2);
-        std::vector<gl_t> rSb(rSc.begin() + ln, rSc.end());
-        gl_t end = gl_mul(p3bf::eq_point(rSb, z2),
-                          gl_add(gl_add(gl_mul(lam1, y1), gl_mul(lam2, y2)),
-                                 gl_mul(lam3, y3)));
+        std::vector<gl_t> rSb(rSc.begin() + ln, rSc.begin() + dm.le);
+        rSb.insert(rSb.end(), rSc.begin() + dm.le, rSc.end());
+        std::vector<gl_t> ptb = z2;
+        if (zk) { ptb.push_back(zexs); ptb.resize(dm.lb + p3zkc::e_of(dm.le), 0); }
+        gl_t w = p3bf::eq_point(rSb, ptb);
+        gl_t end = gl_mul(w, gl_add(gl_add(gl_mul(lam1, y1), gl_mul(lam2, y2)),
+                                    gl_mul(lam3, y3)));
+        end = gl_add(end, p3hwl::sc5_blindterm(pf.zbl[2], rho, w));
         if (end != claim) return fail("bind terminal");
     }
 
-    if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
-    for (size_t i = 0; i < vlg.cls.size(); i++)
-        if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
-                                "smx-bo" + std::to_string(i), why)) return false;
+    if (!xv) {
+        if (!p3lu::lu_verify_flush(tr, VC, pf.lug, Q_pub, R_pub, why)) return false;
+        if (pf.batches.size() != vlg.cls.size()) return fail("batch count");
+        for (size_t i = 0; i < vlg.cls.size(); i++)
+            if (!p3bo::verify_class(tr, vlg.cls[i], pf.batches[i], Q_pub, R_pub,
+                                    "smx-bo" + std::to_string(i), why)) return false;
+    } else if (!pf.batches.empty() || !pf.lug.empty()) return fail("unexpected batches");
 
     if (why) *why = "ok";
     return true;
@@ -766,7 +883,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
 
 static inline size_t proof_size(const SmxProof& pf) {
     size_t s = 8 + (NDE2 + NDB2) * 32;
-    for (int i = 0; i < NLSM; i++) s += p3hwl::sz_lu(pf.lu[i]);
+    for (auto& g : pf.lug) s += p3lu::sz_group(g);
     auto msgs = [&](const std::vector<Msg5>& m) { return m.size() * 40; };
     s += msgs(pf.mDe) + msgs(pf.mDb) + msgs(pf.mBind);
     s += 8 * (NDE2 + 8 + NDB2 + 2 + 3 + 2);
