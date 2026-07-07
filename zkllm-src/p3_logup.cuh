@@ -121,7 +121,19 @@ static inline Col commit_col_nc(std::vector<gl_t> vals, uint32_t R,
         c.vreal = vr;
         {
             p3zp::T zt(p3zp::g.mask_gen);
-            c.v = p3zkc::augment(vals, zkmask ? *zkmask : p3zkc::fresh_mask(vr));
+            if (zkmask) {
+                c.v = p3zkc::augment(vals, *zkmask);
+            } else {
+                // in-place augment: identical bytes to augment(vals,
+                // fresh_mask(vr)) -- the mask region starts at vals.size()
+                // and fills from the same next_seed() chain -- without the
+                // separate mask vector + concat copy
+                size_t Nr = vals.size();
+                size_t ml = ((size_t)1 << p3zkc::vfull(vr)) - ((size_t)1 << vr);
+                c.v = std::move(vals);
+                c.v.resize(Nr + ml, 0);
+                p3zkc::fresh_mask_into(c.v.data() + Nr, ml);
+            }
         }
         c.sseed = p3zkc::next_seed();
         {

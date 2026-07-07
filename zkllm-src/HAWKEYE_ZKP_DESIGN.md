@@ -1232,3 +1232,19 @@ After the fix at d=1024 zk (359.3 s): mm=123 (matmul zero-checks/sumchecks), lug
   kernel), eliminating host materialization + upload entirely for dropped columns.
 * Bit-packing small witness fields (section 16.2) remains unbuilt; it shrinks committed
   data (mm + commit_salt side), orthogonal to the opening side.
+
+### 19.5 Second lever landed: in-place blind/mask construction [VERIFIED]
+
+The 19.4-scoped alloc-churn fix for the COMMIT side: `blind_col_aug` builds the
+augmented blind in ONE pass (the augmented column is one contiguous zprng chain --
+no separate c/mask vectors + augment copy), and `commit_col_nc`'s fresh-mask path
+augments IN PLACE (`fresh_mask_into` fills the mask region of the moved vals vector
+from the same next_seed() chain; the linked-zkmask path is unchanged).  Byte-identical
+columns, roots and transcripts (non-pow2 vals keep the mask region at vals.size(),
+exactly like augment).
+
+    d=1024 zk: prove 359.3 -> 343.1 s   (sc5z/blind 45.2 -> 35.0, mask_gen 20.8 ->
+               16.2, mm 123 -> 108; cumulative session total 486.6 -> 343.1 = 1.42x)
+    ALL 17 batteries green after the change (composed layer 30/30, model 26/26,
+    zk smokes 15/15 + 16/16, hiding 16/16 + 11/11 + 19/19, 7 gadget selftests,
+    logup 13/13, GKR 88/88, zk-gadget-smoke 8/8).

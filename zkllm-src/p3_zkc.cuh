@@ -133,6 +133,11 @@ static inline std::vector<gl_t> fresh_mask(uint32_t v) {
     if (G.mask_on) { uint64_t s = next_seed(); for (auto& x : m) x = zprng(s); }
     return m;
 }
+// fresh_mask written into a caller-provided (already zeroed) region -- same
+// seed draw + values, none of the mask-vector + augment-copy churn
+static inline void fresh_mask_into(gl_t* out, size_t n) {
+    if (G.mask_on) { uint64_t s = next_seed(); for (size_t i = 0; i < n; i++) out[i] = zprng(s); }
+}
 // [real | mask]: mask slices at the HIGH addresses (ex = high variables)
 static inline std::vector<gl_t> augment(const std::vector<gl_t>& vals, std::vector<gl_t> mask) {
     std::vector<gl_t> a(vals.size() + mask.size());
@@ -384,9 +389,12 @@ static inline std::vector<gl_t> blind_col(uint32_t v, std::vector<gl_t>& mask_ou
 // them after their claims and rebuild them transiently at opening time instead
 // of holding tens of GB of random columns for the whole proof.
 static inline std::vector<gl_t> blind_col_aug(uint32_t v, uint64_t s) {
-    std::vector<gl_t> m;
-    std::vector<gl_t> c = blind_col_seeded(v, s, m);
-    return augment(c, std::move(m));
+    // single pass: the augmented blind IS one contiguous zprng chain (real
+    // region first, mask region continuing the same stream) -- identical
+    // values to blind_col_seeded + augment without the extra alloc + copies
+    std::vector<gl_t> a((size_t)1 << vfull(v), 0);
+    if (G.blind_on) { uint64_t ss = s; for (auto& x : a) x = zprng(ss); }
+    return a;
 }
 // blind_col_aug written into a caller-provided buffer of n = 2^vfull(v) slots
 // (the augmented column IS one contiguous zprng chain: real region first, mask
