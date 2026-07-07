@@ -880,3 +880,184 @@ recovery 0 bits, HVZK simulator accept).  bench verify_ok=1 in all runs.
 Remaining levers (untried): GKR-logUp for the remaining lug (1.15 s), folding the batch phase's
 per-class reductions (1.3 s), GPU-porting the remaining host mm sumcheck epilogue (mm zk-side
 1.25 s vs 0.40 s non-zk is mostly Libra-blind host work), bit-packed small-value columns.
+
+## 16. GKR-logUp, opening folding, and ZK at llama-68m scale (2026-07-07) [VERIFIED unless marked]
+
+This pass implemented four of the five planned levers on top of the section-15 tree, and in
+the process found and fixed a LATENT COMPLETENESS BUG that made every honest zk proof at
+d >= 128 REJECT (see 16.4 -- the section-15 tree was verified only at d=64, where the broken
+path never triggers).  All numbers measured on this machine (RTX 4090, nvcc 12.4, sm_89),
+bench `p3_transformer_bench <seq> <d> <nh> <dh> <dff> 1 {zk} tables_ld{6,7,9,10}.bin`.
+
+### 16.1 Lever 1 -- GKR-logUp (p3_gkr.cuh, p3_logup.cuh v3)
+
+The v2 supergroup lookup argument committed, per (table, log-rows) subgroup, a helper-inverse
+column hA over the stacked domain plus 3 Libra blind columns, and per table an hT + cnt + 3
+T-blinds; each cost a salted commit AND a batched-opening ledger entry.  v3 replaces the
+committed helpers and their blinds with COMMIT-FREE GKR fractional-sum trees:
+
+  * leaves (zk, A side, x = i|(j<<n)|(ex<<(n+g)) over 2^(n+g+E)):
+      leaf(2x)   = ( ex==0 ? 1 : 0 ,  Am(x)+beta )    real / witness-mask rows
+      leaf(2x+1) = ( pm(x), qm(x) )                   committed uniform mask streams
+    T side: leaf(2x) = ( cnt_aug(x), ex==0 ? Tc_j+beta : 1 ), leaf(2x+1) = (pmT,qmT).
+  * the tree combines (p,q) (+) (p',q') = (pq'+p'q, qq'); the root (P,Q) is published and a
+    chain of cubic layer sumchecks (one per level, p3_gkr.cuh) reduces it to leaf claims;
+    the verifier checks the multiset identity on the roots: sum_s P_s/Q_s == P_T/Q_T.
+  * leaf-claim binding preserves the v2 member interface EXACTLY: the even-q claim equals
+    A_r + beta with A_r the same gamma-combined member/eq_bits/pad aggregation at
+    pm = (rA[0..n) || rA[n+g..)), so all per-gadget bind callbacks are untouched.  The
+    even-p claim is chi[ex=0]~ (public); cnt's claim is the mechanism-1-blinded augmented
+    eval at rT (the T tree spans cnt's mask rows as q=1 leaves whose junk is beta-INDEPENDENT).
+  * zk: every real leaf gets a fresh uniform committed sibling (multiplicative masks
+    pm = sm*qm, so mask fraction sums are PLAIN SUMS of the sm stream -- no inversions);
+    every height-1 node is then a uniform (p,q) pair (bijective in (sm,qm) given q_real != 0),
+    so the ENTIRE chain above the leaves is a deterministic function of a uniform vector and
+    is simulatable; all mask columns commit BEFORE gamma/beta (the Schwartz-Zippel argument
+    needs the junk fixed pre-beta), and the T-side fixup cancels it exactly:
+    SmT = sum_s SmA_s - Sm_cnt.  Mask columns are pure zprng_at streams: root-only salted
+    commits, values regenerated at leaf build and by the opening ledger (never resident
+    across subgroups).
+  * prover: host chains for small layers, fused 2-launch-per-round device rounds above 2^13,
+    device-resident tree above 2^17 leaves (p3gkr devtree; byte-identical messages -- exact
+    field sums).  Standalone battery p3_gkr_selftest 88/88 (root == direct rational sum,
+    leaf claims == true MLEs at rfin, tampered root/message/terminal/truncation reject,
+    wrong-leaf forgery shifts the bound claim).
+  * hiding battery extended with GKR teeth (section 7 of p3_transformer_zk_test): root
+    (P,Q), mid-layer messages, terminal mask claims all chi-sq < 400 over 12000 mask draws;
+    with masks OFF the root Q collapses to 1 distinct value across draws and distinguishes
+    two witnesses; with masks on both witnesses' laws are uniform (posterior flat).  16/16.
+
+Effect: ~350 fewer committed columns per layer proof, no helper retention/regen in the
+ledger, zk soundness smoke now rejects rsqrt/silu forges via "group multiset".
+
+### 16.2 Levers 2+3 -- opening-reduction folding, merged sc5z blinds, fused GPU binds
+
+  * p3_batchopen prove_class (resident classes): per-point G_t columns, eq columns, round
+    messages and binds all run over STACKED (T x L) device buffers -- one launch per
+    operation instead of one per (point, round); a CSR of ledger entries feeds one G-build
+    kernel (was one axpy launch per entry, up to ~2300/class).  bo/red 0.22 -> 0.007 s,
+    bo/G 0.13 -> 0.05 s at d=64.
+  * sc5z Libra blinds: the 4 per-zero-check blind columns commit as ONE merged column
+    (leaf j*NA+x = B_j[x]); the four published terminal evals yB[j] are bound by ONE opening
+    at (r || tau0 || tau1) with tau drawn after the yB absorbs (degree-1 in each slice
+    coordinate => SZ binds all four).  536 -> 134 blind commits, 402 fewer distinct opening
+    columns, ONE ledger point per zero-check (T stays small in the fat classes).  HUGE
+    domains (vfull+2 > 26) fall back to four separate commits (the merged codeword would be
+    2^30 leaves, beyond the NTT/Merkle stack's proven range); the layout is tagged in bl.nb
+    (4=merged / 5=separate) -- both layouts bind the yB evals to pre-rho commitments, so a
+    dishonest tag costs nothing.
+  * p3_scgpu sc_prove_gpu: per-round binds of all nc columns fused into one
+    p3sg_bindn_kernel launch (was nc launches per round).
+  * NOT DONE (scoped, remaining): bit-packing the small witness fields (sg/pr/eb/sh; q,r)
+    with unpack lookups -- would cut the committed bytes of the fat matmul classes ~4x and
+    attack commit_salt (0.64 s), q0-subset (0.55 s) and proof size together.
+
+### 16.3 d=64 per-lever STAGES (zk=1, `8 64 2 32 128 1 1 tables_ld6.bin`, seconds)
+
+  state                          prove   mm    lug   batch  proof_mb  verify
+  section-15 baseline             4.18  1.26   1.17   1.36    41.5     0.55
+  + L1 GKR-logUp                  4.05  1.27   1.26   1.08    38.2     0.55
+  + L2 fused batch reduction      3.80  1.26   1.25   0.87    38.2     0.54
+  + L3 merged blinds+fused binds  3.84  1.30   1.27   0.82    33.9     0.49
+  (final, median of 3; non-zk: prove 1.46 -> 1.16 s, proof 13.6 -> 11.7 MB)
+
+  Final d=64 ZK/non-ZK prove ratio: 3.84 / 1.16 = 3.3x (was 2.8x on a faster baseline --
+  the ratio worsened slightly because non-zk gained MORE from GKR than zk did).
+  Residual d=64 zk profile: commit_salt 0.64 s x2245, sc5z blind-gen 0.25 + host chains
+  0.29, gkr scA 0.60, q0-subset 0.55, mask commits 0.37.
+
+### 16.4 The latent >= d=128 zk rejection bug (FIXED) and first zk proofs at scale
+
+Every honest zk layer proof at d >= 128 was REJECTED with "Dg sumcheck": the section-15 pass
+added a GPU dispatch to sc5rz, but the Dg zero-check has 1 + NDG = 30 columns and the zk
+path appends 4 Libra blinds = 34 > MAXC = 32, silently overflowing p3sg_msg_kernel's fixed
+cur[32]/dd[32] register arrays.  At d=64 every Dg domain is < 2^14 (host chain), so the
+entire battery was blind to it; the section-14.5 d=1024 zk run predates the sc5rz dispatch.
+Diagnosed with a new env-gated transcript absorb trace (fs_transcript, P3_ABLOG: the
+verifier's absorbed bytes MATCHED the prover through the failure point, isolating a prover
+self-inconsistency, not a desync) and a host-vs-GPU A/B of the chain messages.  Fix: Msg5
+GPU instantiations bumped to MAXC=40 plus explicit column-count guards on EVERY sc5 GPU
+dispatch (host fallback).  Regression cover: d=128 and d=512 zk now prove AND verify.
+
+Scale results (all verify_ok=1, host cap 41 GB):
+  d=512  seq=8 zk:  prove 287.3 s, verify 1.1 s, proof  83.4 MB, RSS 28.4 GB  [FIRST ever]
+  d=1024 seq=4 zk:  prove 487.7 s, verify 1.9 s, proof 134.4 MB, RSS 36.1 GB
+         (section-14.5: 750.9 s / 5.6 s / 167.8 MB / 36.1 GB  => 1.54x prove, 2.9x verify)
+  d=1024 seq=4 non-zk: prove 71.4 s, proof 42.5 MB, RSS 17.0 GB
+         (section-14.5: 154.7 s / 47.5 MB / 18.6 GB => 2.2x prove)
+  d=1024 zk/non-zk ratio: 6.8x.  STAGES zk: mm=123 lug=102 batch=257 (the batch phase's
+  strCol/strG streaming classes now dominate at scale -- the fused stacked path applies only
+  to resident classes; folding the streamed classes is the next opening-side lever).
+What it took at d=1024 beyond 16.1-16.2: LU_GCAP 26 -> 25 (keeps mask-stream codewords
+within the proven 2^28-leaf range), the sc5z separate-blind fallback (16.2), and a dynamic
+strGdev budget (actual free device memory + the async mempool's reusable slack, 0.92 margin
+-- the fat v=26 class grew to T=31 points with the GKR mask claims = 16.5 GB of G_t parking
+that a fixed 12 GB budget pushed onto the host, breaching the cgroup cap).
+
+Verification of the final state (this machine, this session): all batteries green --
+hawkeye/matmul 35/35, rmsnorm 25/25, swiglu 16/16, quant 26/26, bfadd 22/22, rope 17/17,
+softmax 19/19, logup 13/13, gkr 88/88, composed layer 30/30 with every chained intermediate
+bitwise == transformer_layer.bin, full-layer hiding 16/16 (incl. the new GKR teeth), zk
+soundness smoke 15/15; bench verify_ok=1 at d=64/128/512/1024 in both modes.
+
+Residuals / known limitations:
+  * sc5rz GPU dispatch below 2^14 is guarded OFF pending the small-domain FF-vs-host check
+    (the MAXC fix makes 2^12..2^14 safe in principle; re-enable after an A/B sweep).
+  * bit-packing (16.2) not implemented; commit_salt and q0-subset remain the d=64 residual.
+  * the GKR devtree holds the whole tree on device (~8.6 GB at 2^28 leaves); a d=2048 zk
+    point would need level-windowed rebuilds.
+  * monolithic wiring (section 10) unchanged.
+
+## 17. Binius (binary-tower) scoping note [REASONED -- design only, nothing built]
+
+What it would replace.  The dominant committed data is per-product BIT-width witness:
+fp8 codes (8 bits), sign/parity/exponent-bit/shift fields (1-5 bits), quotient/remainder
+limbs (<= 10 bits) -- all embedded today as 64-bit Goldilocks elements and RS-encoded at
+rate 1/4 into 64-byte-leaf Merkle trees.  In a binary-tower stack (Binius, Diamond-Posen
+2023/1784), a column of b-bit values commits as b F_2 "bit-slices" (or one F_{2^b} column),
+and the PCS cost scales with the ACTUAL bit content: the 2^26-element fp8-code column costs
+8 x 2^26 BITS (~67 MB of field data as F_2, vs 512 MB as Goldilocks) -- a 8-64x committed-
+data reduction depending on the column (est. ~10-20x across the matmul witness mix).  The
+constraint side keeps working: sumchecks run with witness factors in tiny subfields and
+challenges in F_{2^128} (small-by-large tower multiplication is cheap), and BOTH of this
+codebase's load-bearing arguments port: logUp needs only field inverses (works over towers;
+Tc+beta != 0 whp), and the GKR fractional-sum tree of section 16.1 is field-agnostic --
+its commit-free structure would carry over unchanged.
+
+What it requires (the honest bill):
+  1. Tower field arithmetic F_2 .. F_{2^128} (Fan-Paar towers), host + CUDA.  GPU GF(2)
+     arithmetic is bitwise (XOR/AND/CLMUL-style), not int64 muls: RTX-4090 LOP3/XOR
+     throughput makes this feasible but it is a NEW kernel family, not a port.
+  2. A binary PCS.  The modern route is FRI-Binius (ring-switching into the novel
+     Lin-Chung-Han additive-NTT basis): additive NTT, ring-switching gadget, packed
+     small-field leaves; roughly the scope of p3_ntt + p3_basefold + p3_fri + p3_merkle
+     rewritten (~2-3 kloc of new math kernels plus proofs-of-equivalence tests).
+  3. Small-field sumcheck plumbing: mixed-field columns, eq tables over F_{2^128}, and the
+     Libra-style blinds/mask machinery re-derived over characteristic 2 (the mechanisms are
+     field-generic, but every "uniform in F_p" hiding argument and chi-sq battery needs
+     re-validation over tower elements).
+  4. Table/lookup re-encoding: dyadic table domains stay; multiplicities cnt live in the
+     big field (counts), fine.
+  5. The nonlinear gadgets (rmsnorm rsqrt windows, softmax exp tables) are lookup-based and
+     port; the bfadd/quantize arithmetic identities need re-derivation mod-2 (carry logic
+     differs: today's base-2^k limb identities use integer adds in F_p -- in F_2^k towers,
+     integer addition is NOT field addition, so range/carry gadgets must become explicit
+     bit-decompositions... which towers make cheap, but the constraint set changes).
+Item 5 is the subtle one: Goldilocks currently gives INTEGER arithmetic for free below 2^64;
+binary towers do not.  The per-product dot-product accumulation (sum of q*2^s style terms)
+would need a redesign around bit-sliced adders or a hybrid (keep a small-prime field for the
+integer-sum side, Binius for the bit-heavy side -- at the cost of cross-field consistency
+arguments, which is where most of the risk lives).
+
+Expected win, where it lands: commit + Merkle + opening data ~10-20x on the matmul witness
+(the current d=1024 zk profile spends ~75% of prove in commit/lookup/opening machinery whose
+cost is proportional to committed bytes); sumcheck arithmetic roughly neutral; verifier
+smaller.  End-to-end at d=1024 zk a 3-6x prove-time win is a defensible estimate, with the
+integer-carry redesign (item 5) the main risk to both the estimate and the schedule.
+
+Effort: the field+NTT+PCS core alone is several sessions of new code with its own selftest
+pyramid before the first gadget moves; the integer-arithmetic redesign is a design-doc-first
+effort.  Recommended smallest prototype: standalone tower-field lib + additive-NTT selftest,
+then a bit-sliced commit of a real fp8-code column A/B'd against the Goldilocks commit for
+size/time.  NOT built this session (honesty over completeness: levers 1-4 plus the latent
+rejection-bug fix consumed it); nothing in the working tree depends on this section.
