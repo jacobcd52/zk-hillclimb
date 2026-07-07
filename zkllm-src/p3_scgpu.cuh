@@ -33,6 +33,16 @@ __global__ void p3sg_bind_kernel(const gl_t* in, gl_t* out, uint32_t half, gl_t 
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= half) return;
     out[i] = gl_add(in[2 * i], gl_mul(a, gl_sub(in[2 * i + 1], in[2 * i])));
 }
+// fused bind of ALL nc columns in one launch (same element math as
+// p3sg_bind_kernel; the per-column launch train dominated small chains)
+__global__ void p3sg_bindn_kernel(gl_t* const* in, gl_t* const* out, uint32_t nc,
+                                  uint32_t half, gl_t a) {
+    uint32_t j = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t k = j / half, i = j % half;
+    if (k >= nc) return;
+    const gl_t* src = in[k]; gl_t* dst = out[k];
+    dst[i] = gl_add(src[2 * i], gl_mul(a, gl_sub(src[2 * i + 1], src[2 * i])));
+}
 
 template <typename FF, int NT, int MAXC>
 __global__ void p3sg_msg_kernel(gl_t* const* cols, uint32_t nc, const gl_t* par,
@@ -76,8 +86,10 @@ static inline std::vector<gl_t> sc_prove_gpu(fs::Transcript& tr, const char* tag
     gl_t* d_par; cudaMallocAsync(&d_par, (size_t)(npar ? npar : 1) * 8, 0);
     if (npar) cudaMemcpy(d_par, par, (size_t)npar * 8, cudaMemcpyHostToDevice);
     gl_t** d_ptrs; cudaMallocAsync(&d_ptrs, (size_t)nc * sizeof(gl_t*), 0);
+    gl_t** d_optrs; cudaMallocAsync(&d_optrs, (size_t)nc * sizeof(gl_t*), 0);
     gl_t* d_out; cudaMallocAsync(&d_out, (size_t)NT * NB * 8, 0);
     std::vector<gl_t> hout((size_t)NT * NB);
+    std::vector<gl_t*> ncols(nc);
     std::vector<gl_t> r; r.reserve(v);
     uint32_t n = N;
     for (uint32_t rd = 0; rd < v; rd++) {
@@ -93,14 +105,14 @@ static inline std::vector<gl_t> sc_prove_gpu(fs::Transcript& tr, const char* tag
         memcpy(&m, s, sizeof m);
         msgs.push_back(m); tr.absorb(tag, &m, sizeof m);
         gl_t a = chal(tr); r.push_back(a);
-        for (uint32_t k = 0; k < nc; k++) {
-            gl_t* nb; cudaMallocAsync(&nb, (size_t)half * 8, 0);
-            p3sg_bind_kernel<<<(half + 255) / 256, 256>>>(dcols[k], nb, half, a);
-            cudaFreeAsync(dcols[k], 0); dcols[k] = nb;
-        }
+        for (uint32_t k = 0; k < nc; k++) cudaMallocAsync(&ncols[k], (size_t)half * 8, 0);
+        cudaMemcpy(d_optrs, ncols.data(), (size_t)nc * sizeof(gl_t*), cudaMemcpyHostToDevice);
+        p3sg_bindn_kernel<<<((size_t)nc * half + 255) / 256, 256>>>(d_ptrs, d_optrs, nc, half, a);
+        for (uint32_t k = 0; k < nc; k++) { cudaFreeAsync(dcols[k], 0); dcols[k] = ncols[k]; }
         n = half;
     }
-    cudaFreeAsync(d_par, 0); cudaFreeAsync(d_ptrs, 0); cudaFreeAsync(d_out, 0);
+    cudaFreeAsync(d_par, 0); cudaFreeAsync(d_ptrs, 0); cudaFreeAsync(d_optrs, 0);
+    cudaFreeAsync(d_out, 0);
     return r;
 }
 
