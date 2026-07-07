@@ -1089,7 +1089,12 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
     // ---- zk: commit ALL mask-leaf stream columns BEFORE gamma/beta ----
     // (their fraction sums are the blinding junk; committing them pre-beta is
     // what keeps the mask-cancelled logUp identity sound under Schwartz-Zippel)
-    struct AMask { uint64_t pseed = 0, qseed = 0; Col PM, QM; gl_t Sm = 0; };
+    // per-subgroup mask streams: only seeds/roots are retained -- values are
+    // regenerated on the fly at leaf build and by the opening ledger (at
+    // d=1024 the resident pm/qm host columns of all subgroups would be tens
+    // of GB)
+    struct AMask { uint64_t pseed = 0, qseed = 0, sP = 0, sQ = 0;
+                   p3fri::Hash rtP, rtQ; gl_t Sm = 0; };
     std::vector<AMask> am(ns);
     Col PMT, QMT;
     if (zk) {
@@ -1106,21 +1111,32 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             // sm, qm -- pm/qm = sm, so the mask fraction sum is a PLAIN SUM of
             // the sm stream (no inversions), and (pm,qm) stays a uniform pair
             a.pseed = p3zkc::next_seed(); a.qseed = p3zkc::next_seed();
-            a.PM.v.resize(NM); a.QM.v.resize(NM);
-            gl_t sm = 0;
-            for (size_t i = 0; i < NM; i++) {
-                gl_t smv = mo ? p3zkc::zprng_at(a.pseed, i) : 0ULL;
-                a.QM.v[i] = mo ? p3zkc::zprng_at(a.qseed, i) : 1ULL;
-                a.PM.v[i] = gl_mul(smv, a.QM.v[i]);
-                sm = gl_add(sm, smv);
+            std::vector<gl_t> pmv(NM), qmv(NM);
+            const int P = NM >= 65536 ? 64 : 1;
+            std::vector<gl_t> part(P, 0);
+            #pragma omp parallel for schedule(static) if (P > 1) num_threads(p3bf::nthr(NM))
+            for (int p = 0; p < P; p++) {
+                size_t lo = NM * p / P, hi = NM * (p + 1) / P;
+                gl_t acc = 0;
+                for (size_t i = lo; i < hi; i++) {
+                    gl_t smv = mo ? p3zkc::zprng_at(a.pseed, i) : 0ULL;
+                    qmv[i] = mo ? p3zkc::zprng_at(a.qseed, i) : 1ULL;
+                    pmv[i] = gl_mul(smv, qmv[i]);
+                    acc = gl_add(acc, smv);
+                }
+                part[p] = acc;
             }
-            a.PM.vreal = n + g + E; a.PM.sseed = p3zkc::next_seed();
-            a.PM.root = p3zkc::salted_commit_root(a.PM.v, R, a.PM.sseed);
-            a.QM.vreal = n + g + E; a.QM.sseed = p3zkc::next_seed();
-            a.QM.root = p3zkc::salted_commit_root(a.QM.v, R, a.QM.sseed);
-            pf.sub[s].rt_pm = a.PM.root; pf.sub[s].rt_qm = a.QM.root;
-            tr.absorb("lug-pm", a.PM.root.data(), 32);
-            tr.absorb("lug-qm", a.QM.root.data(), 32);
+            gl_t sm = 0;
+            for (int p = 0; p < P; p++) sm = gl_add(sm, part[p]);
+            a.sP = p3zkc::next_seed();
+            a.rtP = p3zkc::salted_commit_root(pmv, R, a.sP);
+            std::vector<gl_t>().swap(pmv);
+            a.sQ = p3zkc::next_seed();
+            a.rtQ = p3zkc::salted_commit_root(qmv, R, a.sQ);
+            std::vector<gl_t>().swap(qmv);
+            pf.sub[s].rt_pm = a.rtP; pf.sub[s].rt_qm = a.rtQ;
+            tr.absorb("lug-pm", a.rtP.data(), 32);
+            tr.absorb("lug-qm", a.rtQ.data(), 32);
             a.Sm = sm; SmA = gl_add(SmA, sm);
         }
         // T side: qmT stream; pmT stream with the LAST entry fixed so the total
@@ -1210,13 +1226,15 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         std::vector<gl_t> LP, LQ;
         if (zk) {
             AMask& a = am[s];
+            const bool mo = p3zkc::G.mask_on;
             LP.resize(2 * NM); LQ.resize(2 * NM);
             #pragma omp parallel for schedule(static) if (NM >= 65536) num_threads(p3bf::nthr(NM))
             for (size_t x = 0; x < NM; x++) {
                 LP[2*x]   = x < NR ? 1ULL : 0ULL;
                 LQ[2*x]   = gl_add(Am[x], beta);
-                LP[2*x+1] = a.PM.v[x];
-                LQ[2*x+1] = a.QM.v[x];
+                gl_t qm = mo ? p3zkc::zprng_at(a.qseed, x) : 1ULL;
+                LP[2*x+1] = mo ? gl_mul(p3zkc::zprng_at(a.pseed, x), qm) : 0ULL;
+                LQ[2*x+1] = qm;
             }
         } else {
             LP.assign(NR, 1ULL); LQ.resize(NR);
@@ -1244,31 +1262,29 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         if (zk) {
             AMask& a = am[s];
             const p3gkr::Lay& lyA = sp.gk.lay.back();
+            size_t NM3 = NM; bool mo2 = p3zkc::G.mask_on;
             {
-                uint64_t ss = a.PM.sseed;
-                size_t NM3 = NM; uint64_t sd = a.pseed; bool mo2 = p3zkc::G.mask_on;
-                xc.keep.push_back(std::move(a.PM));
-                uint64_t sq = a.qseed;
-                xc.lg.add(&xc.keep.back().v, sp.rt_pm, rA, lyA.p1, ss, [NM3, sd, sq, mo2] {
+                Col pc; pc.root = a.rtP; pc.vreal = n + g + E; pc.sseed = a.sP;
+                uint64_t sd = a.pseed, sq = a.qseed;
+                xc.keep.push_back(std::move(pc));
+                xc.lg.add(&xc.keep.back().v, sp.rt_pm, rA, lyA.p1, a.sP, [NM3, sd, sq, mo2] {
                     std::vector<gl_t> b(NM3);
                     #pragma omp parallel for schedule(static) if (NM3 >= 65536) num_threads(p3bf::nthr(NM3))
                     for (size_t i = 0; i < NM3; i++)
                         b[i] = mo2 ? gl_mul(p3zkc::zprng_at(sd, i), p3zkc::zprng_at(sq, i)) : 0ULL;
                     return b;
                 });
-                if (NM >= ((size_t)1 << 20)) { xc.keep.back().v.clear(); xc.keep.back().v.shrink_to_fit(); }
             }
             {
-                uint64_t ss = a.QM.sseed;
-                size_t NM3 = NM; uint64_t sd = a.qseed; bool mo2 = p3zkc::G.mask_on;
-                xc.keep.push_back(std::move(a.QM));
-                xc.lg.add(&xc.keep.back().v, sp.rt_qm, rA, lyA.q1, ss, [NM3, sd, mo2] {
+                Col qc; qc.root = a.rtQ; qc.vreal = n + g + E; qc.sseed = a.sQ;
+                uint64_t sd = a.qseed;
+                xc.keep.push_back(std::move(qc));
+                xc.lg.add(&xc.keep.back().v, sp.rt_qm, rA, lyA.q1, a.sQ, [NM3, sd, mo2] {
                     std::vector<gl_t> b(NM3);
                     #pragma omp parallel for schedule(static) if (NM3 >= 65536) num_threads(p3bf::nthr(NM3))
                     for (size_t i = 0; i < NM3; i++) b[i] = mo2 ? p3zkc::zprng_at(sd, i) : 1ULL;
                     return b;
                 });
-                if (NM >= ((size_t)1 << 20)) { xc.keep.back().v.clear(); xc.keep.back().v.shrink_to_fit(); }
             }
         }
         // per-member witness claims at pm (+ the member's bind callback).

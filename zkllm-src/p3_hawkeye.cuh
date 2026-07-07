@@ -673,14 +673,14 @@ static inline std::vector<gl_t> sc5_run_srcs(fs::Transcript& tr, const char* tag
         std::vector<ColSrc>&& cols, const gl_t* lam, uint32_t nlam,
         const CFn& Fhost, std::vector<Msg5>& msgs) {
     size_t N = cols[0].get().size();
-    if (p3fri::g_gpu_merkle && N >= (1u << 16)) {
+    if (p3fri::g_gpu_merkle && cols.size() <= 40 && N >= (1u << 16)) {
         std::vector<gl_t*> dc(cols.size());
         for (size_t i = 0; i < cols.size(); i++) {
             dc[i] = p3bf::dmalloc(N, "sc5:col");
             cudaMemcpy(dc[i], cols[i].get().data(), N * 8, cudaMemcpyHostToDevice);
             std::vector<gl_t>().swap(cols[i].own); cols[i].bor = nullptr;
         }
-        std::vector<gl_t> r = p3sg::sc_prove_gpu<FF, Msg5, 5, 32>(
+        std::vector<gl_t> r = p3sg::sc_prove_gpu<FF, Msg5, 5, 40>(
             tr, tag, dc, (uint32_t)N, lam, nlam, msgs);
         for (auto p : dc) cudaFreeAsync(p, 0);
         return r;
@@ -899,13 +899,13 @@ static inline std::vector<gl_t> sc5_run(fs::Transcript& tr, const char* tag,
         std::vector<std::vector<gl_t>>&& cols, const gl_t* lam, uint32_t nlam,
         const CFn& Fhost, std::vector<Msg5>& msgs) {
     size_t N = cols[0].size();
-    if (p3fri::g_gpu_merkle && N >= (1u << 16)) {
+    if (p3fri::g_gpu_merkle && cols.size() <= 40 && N >= (1u << 16)) {
         std::vector<gl_t*> dc(cols.size());
         for (size_t i = 0; i < cols.size(); i++) {
             cudaMallocAsync(&dc[i], N * 8, 0);
             cudaMemcpy(dc[i], cols[i].data(), N * 8, cudaMemcpyHostToDevice);
         }
-        std::vector<gl_t> r = p3sg::sc_prove_gpu<FF, Msg5, 5, 32>(
+        std::vector<gl_t> r = p3sg::sc_prove_gpu<FF, Msg5, 5, 40>(
             tr, tag, dc, (uint32_t)N, lam, nlam, msgs);
         for (auto p : dc) cudaFreeAsync(p, 0);
         return r;
@@ -974,13 +974,17 @@ static inline void mblind_claims(fs::Transcript& tr, MBlind&& mb,
         }
         return out;
     };
-    for (int j = 0; j < 4; j++) {
-        tr.absorb("sc5-yB", &bl.yB[j], 8);
-        std::vector<gl_t> pj = r;
-        pj.push_back((j & 1) ? 1ULL : 0ULL);
-        pj.push_back((j >> 1) ? 1ULL : 0ULL);
-        lg.add(&keep.back().v, bl.rt[0], pj, bl.yB[j], ss, regen);
-    }
+    for (int j = 0; j < 4; j++) tr.absorb("sc5-yB", &bl.yB[j], 8);
+    // bind all four published slice evals with ONE opening at (r || tau):
+    // the merged column is degree-1 in each slice coordinate, so agreement at
+    // a random tau (drawn AFTER the yB absorbs) binds every yB[j] (SZ).  One
+    // ledger point per zero-check keeps the big batch classes' T small.
+    gl_t t0 = p3lu::chal(tr), t1 = p3lu::chal(tr);
+    gl_t y01 = gl_add(bl.yB[0], gl_mul(t0, gl_sub(bl.yB[1], bl.yB[0])));
+    gl_t y23 = gl_add(bl.yB[2], gl_mul(t0, gl_sub(bl.yB[3], bl.yB[2])));
+    gl_t ystar = gl_add(y01, gl_mul(t1, gl_sub(y23, y01)));
+    std::vector<gl_t> pt = r; pt.push_back(t0); pt.push_back(t1);
+    lg.add(&keep.back().v, bl.rt[0], pt, ystar, ss, regen);
     if (N >= ((size_t)1 << 20)) { keep.back().v.clear(); keep.back().v.shrink_to_fit(); }
 }
 static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32_t vreal,
@@ -1017,6 +1021,17 @@ static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32
             part[p] = acc;
         }
         for (int p = 0; p < P; p++) H = gl_add(H, part[p]);
+    }
+    if (getenv("P3_SC5DBG")) {
+        gl_t Sact = 0;
+        { size_t nc = cols.size(); std::vector<gl_t> vv(nc);
+          for (size_t b = 0; b < N; b++) {
+              for (size_t k2 = 0; k2 < nc; k2++) vv[k2] = cols[k2][b];
+              Sact = gl_add(Sact, F(vv.data()));
+          } }
+        if (Sact != base_claim)
+            fprintf(stderr, "# SC5DBG %s N=2^%u base_claim=%llu ACTUAL=%llu MISMATCH\n",
+                    tag, ilog2(N), (unsigned long long)base_claim, (unsigned long long)Sact);
     }
     if (p3zkc::G.sim && fs::g_tape && !fs::g_tape->record) {
         gl_t Sact = 0;
@@ -1070,11 +1085,13 @@ static inline void sc5vz_claims(fs::Transcript& tr, p3bo::VLedger& vlg,
     for (int j = 0; j < 4; j++) {
         gl_t yb = bl.yB[j];
         tr.absorb("sc5-yB", &yb, 8);
-        std::vector<gl_t> pj = r;                // sliced claim on the merged column
-        pj.push_back((j & 1) ? 1ULL : 0ULL);
-        pj.push_back((j >> 1) ? 1ULL : 0ULL);
-        vlg.add(bl.rt[0], pj, yb);
     }
+    gl_t t0 = p3lu::chal(tr), t1 = p3lu::chal(tr);   // binds the four slice evals
+    gl_t y01 = gl_add(bl.yB[0], gl_mul(t0, gl_sub(bl.yB[1], bl.yB[0])));
+    gl_t y23 = gl_add(bl.yB[2], gl_mul(t0, gl_sub(bl.yB[3], bl.yB[2])));
+    gl_t ystar = gl_add(y01, gl_mul(t1, gl_sub(y23, y01)));
+    std::vector<gl_t> pt = r; pt.push_back(t0); pt.push_back(t1);
+    vlg.add(bl.rt[0], pt, ystar);
 }
 // terminal add-on rho*(yB0 + w*yB1 + w^2*yB2 + w^3*yB3), w = the terminal weight
 // value (verifier-computed value of cols[0] at r) -- pure arithmetic, no absorb
@@ -1096,7 +1113,8 @@ static inline std::vector<gl_t> sc5rz(fs::Transcript& tr, const char* tag, uint3
         const CFn& F, std::vector<Msg5>& msgs, gl_t base_claim, uint32_t R,
         p3bo::PLedger& lg, std::deque<Col>& keep, p3zkc::Blind& bl) {
     if (!p3zkc::G.on) return sc5_run<FF>(tr, tag, std::move(cols), lam, nlam, F, msgs);
-    if (p3fri::g_gpu_merkle && cols[0].size() >= (1u << 14) && !p3zkc::G.sim) {
+    if (!getenv("P3_NOGPU5") && cols.size() + 4 <= 40 &&
+        p3fri::g_gpu_merkle && cols[0].size() >= (1u << 14) && !p3zkc::G.sim) {
         std::vector<ColSrc> srcs; srcs.reserve(cols.size());
         for (auto& c : cols) srcs.emplace_back(std::move(c));
         return sc5z_gpu<FF>(tr, tag, vreal, std::move(srcs), lam, nlam, msgs,
@@ -1251,7 +1269,7 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
     std::vector<gl_t> par(2 + nlam);
     par[0] = rho; par[1] = (gl_t)ncb;
     for (uint32_t i = 0; i < nlam; i++) par[2 + i] = lam[i];
-    std::vector<gl_t> r = p3sg::sc_prove_gpu<FF5Zk<FF>, Msg5, 5, 32>(
+    std::vector<gl_t> r = p3sg::sc_prove_gpu<FF5Zk<FF>, Msg5, 5, 40>(
         tr, tag, dc, (uint32_t)N, par.data(), 2 + nlam, msgs);
     if (p3zp::on()) { p3zp::g.sc5_chain.ms += p3zp::nowms() - zt_ch0; p3zp::g.sc5_chain.n++; }
     p3zp::T zt_yb(p3zp::g.sc5_yB);
@@ -1269,7 +1287,8 @@ static inline std::vector<gl_t> sc5rz_srcs(fs::Transcript& tr, const char* tag, 
         const CFn& F, std::vector<Msg5>& msgs, gl_t base_claim, uint32_t R,
         p3bo::PLedger& lg, std::deque<Col>& keep, p3zkc::Blind& bl) {
     if (!p3zkc::G.on) return sc5_run_srcs<FF>(tr, tag, std::move(cols), lam, nlam, F, msgs);
-    if (p3fri::g_gpu_merkle && cols[0].get().size() >= (1u << 14) && !p3zkc::G.sim)
+    if (p3fri::g_gpu_merkle && cols.size() + 4 <= 40 &&
+        cols[0].get().size() >= (1u << 14) && !p3zkc::G.sim)
         return sc5z_gpu<FF>(tr, tag, vreal, std::move(cols), lam, nlam, msgs,
                             base_claim, R, lg, keep, bl);
     return sc5z_srcs(tr, tag, vreal, std::move(cols), F, msgs, base_claim, R, lg, keep, bl);

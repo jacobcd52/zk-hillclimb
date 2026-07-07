@@ -13,6 +13,8 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -128,6 +130,21 @@ struct Transcript {
         sha256_update(c, dlb, 8);
         sha256_update(c, data, len);
         sha256_final(c, state);
+        ablog(label.c_str(), len);
+    }
+    // env-gated absorb trace (P3_ABLOG=path): label, length and the running
+    // state prefix -- diffing the prover and verifier halves pinpoints the
+    // first diverging absorb.  Debug-only; no protocol effect.
+    void ablog(const char* label, size_t len) {
+        static FILE* f = [] {
+            const char* p = getenv("P3_ABLOG");
+            return p ? fopen(p, "w") : nullptr;
+        }();
+        if (!f) return;
+        fprintf(f, "%s %zu %02x%02x%02x%02x%02x%02x%02x%02x\n", label, len,
+                state[0], state[1], state[2], state[3],
+                state[4], state[5], state[6], state[7]);
+        fflush(f);
     }
     void challenge_bytes(uint8_t out[32]) {
         if (g_tape && !g_tape->record) {
