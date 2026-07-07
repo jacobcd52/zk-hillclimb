@@ -153,6 +153,7 @@ int main(int argc, char** argv) {
     fs::Transcript tp("tf-layer");
     TfProof pf = prove(tp, w, o, T, A, R, Q, /*strict=*/true, &prof);
     double t2 = p3hwl::now_ms();
+    if (p3zp::on()) p3zp::report(stdout);
     const char* why = nullptr;
     fs::Transcript tv("tf-layer");
     bool vok = verify(tv, pf, T, A, cfg, w.x0, RX0, WR, W.cos, W.sin,

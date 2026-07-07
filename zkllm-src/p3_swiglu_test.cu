@@ -169,13 +169,13 @@ int main() {
           bool ok = verify(tv, T, p2, ops0.GATE.root, ops0.UP.root, ops0.M.root,
                            L0.n, Q, R, &why);
           ck("tampered claimed M evaluation rejects", !ok, why); }
-        { auto p2 = pf; p2.lug[0].S = gl_add(p2.lug[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
           fs::Transcript tv("swg");
           bool ok = verify(tv, T, p2, ops0.GATE.root, ops0.UP.root, ops0.M.root,
                            L0.n, Q, R, &why);
           ck("tampered SILU lookup sum rejects", !ok, why); }
         { auto p2 = pf;
-          for (auto& g : p2.lug) { for (auto& m : g.mem) if (!m.extra.empty()) { m.extra.back() = gl_add(m.extra.back(), 1ULL); goto swgdone; } } swgdone:;
+          for (auto& g : p2.lug) { for (auto& sb : g.sub) for (auto& m : sb.mem) if (!m.extra.empty()) { m.extra.back() = gl_add(m.extra.back(), 1ULL); goto swgdone; } } swgdone:;
           fs::Transcript tv("swg");
           bool ok = verify(tv, T, p2, ops0.GATE.root, ops0.UP.root, ops0.M.root,
                            L0.n, Q, R, &why);

@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);
           ck("tampered claimed Y evaluation rejects", !ok, why); }
-        { auto p2 = pf; p2.lug[0].S = gl_add(p2.lug[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
           fs::Transcript tv("rms");
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);
@@ -264,7 +264,7 @@ int main(int argc, char** argv) {
                            L0.B, ld, Q, R, &why);
           ck("swapped witness column root rejects", !ok, why); }
         { auto p2 = pf;
-          for (auto& g : p2.lug) { for (auto& m : g.mem) if (!m.extra.empty()) { m.extra.back() = gl_add(m.extra.back(), 1ULL); goto rmsdone; } } rmsdone:;
+          for (auto& g : p2.lug) { for (auto& sb : g.sub) for (auto& m : sb.mem) if (!m.extra.empty()) { m.extra.back() = gl_add(m.extra.back(), 1ULL); goto rmsdone; } } rmsdone:;
           fs::Transcript tv("rms");
           bool ok = verify(tv, T, A, p2, ops0.X.root, ops0.G.root, ops0.Y.root,
                            L0.B, ld, Q, R, &why);

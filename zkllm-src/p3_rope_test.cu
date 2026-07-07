@@ -177,10 +177,10 @@ int main() {
           bool rj = !vfy(p2, Q);
           ck("tampered Q half-slice claim rejects", rj, why); }
         { auto p2 = pf;
-          for (auto& g : p2.lug) { for (auto& m : g.mem) if (!m.extra.empty()) { m.extra[0] = gl_add(m.extra[0], 1ULL); goto ropedone; } } ropedone:;
+          for (auto& g : p2.lug) { for (auto& sb : g.sub) for (auto& m : sb.mem) if (!m.extra.empty()) { m.extra[0] = gl_add(m.extra[0], 1ULL); goto ropedone; } } ropedone:;
           bool rj = !vfy(p2, Q);
           ck("tampered MUL7 key binding rejects", rj, why); }
-        { auto p2 = pf; p2.lug[0].S = gl_add(p2.lug[0].S, 1ULL);
+        { auto p2 = pf; p2.lug[0].sub[0].S = gl_add(p2.lug[0].sub[0].S, 1ULL);
           bool rj = !vfy(p2, Q);
           ck("tampered combine RNE lookup sum rejects", rj, why); }
     }
