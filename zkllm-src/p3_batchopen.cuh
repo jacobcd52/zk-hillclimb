@@ -365,12 +365,28 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     const bool strG   = (size_t)2 * T * colbytes > ((size_t)3 << 30);
     // strG sub-mode: park the G_t on DEVICE when they fit (only T columns --
     // the eq columns are rebuilt per round); fall back to host parking (with
-    // per-round round-trips) only when even that exceeds the card.
-    const bool strGdev = strG && (size_t)(T + 2) * colbytes <= ((size_t)12 << 30);
+    // per-round round-trips) only when even that exceeds the card.  The
+    // budget is ACTUAL free device memory (the card is nearly idle in the
+    // batch phase; a fixed 12 GB left a 16 GB class parking on the host and
+    // breached the 41 GB cgroup cap at d=1024 zk).
+    size_t devfree = 0, devtot = 0;
+    if (strG) {
+        cudaMemGetInfo(&devfree, &devtot);
+        // the async mempool retains freed blocks (release threshold inf), so
+        // driver-free understates: add the pool's reusable slack
+        cudaMemPool_t pool; cudaDeviceGetDefaultMemPool(&pool, 0);
+        unsigned long long resv = 0, used = 0;
+        cudaMemPoolGetAttribute(pool, cudaMemPoolAttrReservedMemCurrent, &resv);
+        cudaMemPoolGetAttribute(pool, cudaMemPoolAttrUsedMemCurrent, &used);
+        devfree += (size_t)(resv > used ? resv - used : 0);
+    }
+    const bool strGdev = strG &&
+        (size_t)(T + 2) * colbytes <= (size_t)(devfree * 0.92);
     if (p3bf::memlog())
-        fprintf(stderr, "# bo class %s: v=%u nc=%u k=%zu T=%u colMB=%.1f strCol=%d strG=%d strGdev=%d\n",
+        fprintf(stderr, "# bo class %s: v=%u nc=%u k=%zu T=%u colMB=%.1f strCol=%d strG=%d strGdev=%d devfreeGB=%.1f needGB=%.1f\n",
                 label.c_str(), v, nc, k, T, colbytes / 1048576.0, strCol ? 1 : 0, strG ? 1 : 0,
-                strGdev ? 1 : 0);
+                strGdev ? 1 : 0, devfree / 1073741824.0,
+                (double)(T + 2) * colbytes / 1073741824.0);
 
     auto bo_now = [] { using namespace std::chrono;
         return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count(); };

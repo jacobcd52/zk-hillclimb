@@ -1401,7 +1401,8 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
 // with n >= LU_GCAP members proving as singletons.  Public protocol constant:
 // prover and verifier derive the same split.  Inactive at the tiny-layer dims
 // (all n + g <= 26 there), so historical transcripts are unchanged.
-static const uint32_t LU_GCAP = 26;
+static const uint32_t LU_GCAP = 25;   // v3: caps NM=2^(GCAP+E) so the mask-
+// stream commits stay within the proven 2^28-leaf codeword territory
 template <typename OBL>
 static inline void lu_groups(const std::vector<OBL>& q,
                              std::function<uint32_t(const OBL&)> n_of,

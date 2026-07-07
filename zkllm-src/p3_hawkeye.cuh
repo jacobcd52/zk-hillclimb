@@ -933,25 +933,46 @@ static inline std::vector<gl_t> sc5_run(fs::Transcript& tr, const char* tag,
 // the commitment layout (and so the transcript) differs.  bl.rt[0] holds the
 // merged root; nb stays 4 (the yB count).
 
-// build + commit the merged blind column; slices in mb.Bv feed H / the chain
+// build + commit the merged blind column; slices in mb.Bv feed H / the chain.
+// HUGE domains fall back to four separate commits (the merged column's
+// codeword would be 4x the largest the NTT/Merkle stack runs); the honest
+// layout rule is public (a function of the chain's variable count), and the
+// proof tags it in bl.nb (4 = merged, 5 = separate; both layouts bind the
+// four published yB evals to pre-rho commitments, so a dishonest tag choice
+// costs nothing).
+static inline bool mblind_merged(uint32_t vreal) {
+    return p3zkc::vfull(vreal) + 2 <= 26;
+}
 struct MBlind { std::vector<std::vector<gl_t>> Bv; p3lu::Col MB;
-                uint64_t bseed[4]; uint32_t vreal = 0; };
+                p3fri::Hash rts[4]; uint64_t sseeds[4] = {0, 0, 0, 0};
+                uint64_t bseed[4]; uint32_t vreal = 0; bool merged = true; };
 static inline MBlind mblind_commit(fs::Transcript& tr, uint32_t vreal, uint32_t R,
                                    p3zkc::Blind& bl) {
     MBlind mb; mb.Bv.resize(4); mb.vreal = vreal;
+    mb.merged = mblind_merged(vreal);
     for (int j = 0; j < 4; j++) {
         mb.bseed[j] = p3zkc::G.blind_on ? p3zkc::next_seed() : 0;
         mb.Bv[j] = p3zkc::blind_col_aug(vreal, mb.bseed[j]);
     }
-    const size_t NA = mb.Bv[0].size();
-    mb.MB.v.resize(4 * NA);
-    for (int j = 0; j < 4; j++)
-        memcpy(mb.MB.v.data() + (size_t)j * NA, mb.Bv[j].data(), NA * 8);
-    mb.MB.vreal = ilog2(NA) + 2;
-    mb.MB.sseed = p3zkc::next_seed();
-    mb.MB.root = p3zkc::salted_commit_root(mb.MB.v, R, mb.MB.sseed);
-    bl.rt[0] = mb.MB.root; bl.nb = 4;
-    tr.absorb("sc5-bl", mb.MB.root.data(), 32);
+    if (mb.merged) {
+        const size_t NA = mb.Bv[0].size();
+        mb.MB.v.resize(4 * NA);
+        for (int j = 0; j < 4; j++)
+            memcpy(mb.MB.v.data() + (size_t)j * NA, mb.Bv[j].data(), NA * 8);
+        mb.MB.vreal = ilog2(NA) + 2;
+        mb.MB.sseed = p3zkc::next_seed();
+        mb.MB.root = p3zkc::salted_commit_root(mb.MB.v, R, mb.MB.sseed);
+        bl.rt[0] = mb.MB.root; bl.nb = 4;
+        tr.absorb("sc5-bl", mb.MB.root.data(), 32);
+    } else {
+        for (int j = 0; j < 4; j++) {
+            mb.sseeds[j] = p3zkc::next_seed();
+            mb.rts[j] = p3zkc::salted_commit_root(mb.Bv[j], R, mb.sseeds[j]);
+            bl.rt[j] = mb.rts[j];
+            tr.absorb("sc5-bl", mb.rts[j].data(), 32);
+        }
+        bl.nb = 5;
+    }
     return mb;
 }
 // absorb the four terminal blind evals (already in bl.yB) and register their
@@ -960,8 +981,20 @@ static inline void mblind_claims(fs::Transcript& tr, MBlind&& mb,
                                  const std::vector<gl_t>& r, p3zkc::Blind& bl,
                                  p3bo::PLedger& lg, std::deque<p3lu::Col>& keep,
                                  size_t N) {
-    uint64_t ss = mb.MB.sseed;
     uint32_t vr = mb.vreal;
+    if (!mb.merged) {                          // per-blind layout (huge domains)
+        for (int j = 0; j < 4; j++) {
+            tr.absorb("sc5-yB", &bl.yB[j], 8);
+            p3lu::Col bc; bc.root = mb.rts[j]; bc.vreal = p3zkc::vfull(vr);
+            bc.sseed = mb.sseeds[j];
+            keep.push_back(std::move(bc));     // values dropped: pure PRNG stream
+            uint64_t bs = mb.bseed[j];
+            lg.add(&keep.back().v, bl.rt[j], r, bl.yB[j], mb.sseeds[j],
+                   [vr, bs] { return p3zkc::blind_col_aug(vr, bs); });
+        }
+        return;
+    }
+    uint64_t ss = mb.MB.sseed;
     uint64_t b0 = mb.bseed[0], b1 = mb.bseed[1], b2 = mb.bseed[2], b3 = mb.bseed[3];
     keep.push_back(std::move(mb.MB));
     p3bo::PLedger::Gen regen = [vr, b0, b1, b2, b3] {
@@ -1071,7 +1104,10 @@ static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32
 // verifier mirror, phase 1: absorb blind roots + H, draw rho (0 when zk off)
 static inline gl_t sc5vz_pre(fs::Transcript& tr, const p3zkc::Blind& bl) {
     if (!p3zkc::G.on) return 0;
-    tr.absorb("sc5-bl", bl.rt[0].data(), 32);   // ONE merged blind commitment
+    if (bl.nb == 5)                             // separate layout (huge domains)
+        for (int j = 0; j < 4; j++) tr.absorb("sc5-bl", bl.rt[j].data(), 32);
+    else
+        tr.absorb("sc5-bl", bl.rt[0].data(), 32);   // ONE merged blind commitment
     gl_t H = bl.H; tr.absorb("sc5-H", &H, 8);
     return chal(tr);
 }
@@ -1082,6 +1118,14 @@ static inline gl_t sc5vz_pre(fs::Transcript& tr, const p3zkc::Blind& bl) {
 static inline void sc5vz_claims(fs::Transcript& tr, p3bo::VLedger& vlg,
                                 const p3zkc::Blind& bl, const std::vector<gl_t>& r) {
     if (!p3zkc::G.on) return;
+    if (bl.nb == 5) {                           // separate layout (huge domains)
+        for (int j = 0; j < 4; j++) {
+            gl_t yb = bl.yB[j];
+            tr.absorb("sc5-yB", &yb, 8);
+            vlg.add(bl.rt[j], r, yb);
+        }
+        return;
+    }
     for (int j = 0; j < 4; j++) {
         gl_t yb = bl.yB[j];
         tr.absorb("sc5-yB", &yb, 8);
