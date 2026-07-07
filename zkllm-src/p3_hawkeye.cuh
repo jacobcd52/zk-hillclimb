@@ -990,22 +990,18 @@ static inline void mblind_claims(fs::Transcript& tr, MBlind&& mb,
             keep.push_back(std::move(bc));     // values dropped: pure PRNG stream
             uint64_t bs = mb.bseed[j];
             lg.add(&keep.back().v, bl.rt[j], r, bl.yB[j], mb.sseeds[j],
-                   [vr, bs] { return p3zkc::blind_col_aug(vr, bs); });
+                   [vr, bs](gl_t* o, size_t n) { p3zkc::blind_col_aug_into(vr, bs, o, n); });
         }
         return;
     }
     uint64_t ss = mb.MB.sseed;
     uint64_t b0 = mb.bseed[0], b1 = mb.bseed[1], b2 = mb.bseed[2], b3 = mb.bseed[3];
     keep.push_back(std::move(mb.MB));
-    p3bo::PLedger::Gen regen = [vr, b0, b1, b2, b3] {
+    p3bo::PLedger::Gen regen = [vr, b0, b1, b2, b3](gl_t* o, size_t n) {
         uint64_t bs[4] = {b0, b1, b2, b3};
-        std::vector<gl_t> out;
-        for (int j = 0; j < 4; j++) {
-            std::vector<gl_t> c = p3zkc::blind_col_aug(vr, bs[j]);
-            if (out.empty()) out.reserve(4 * c.size());
-            out.insert(out.end(), c.begin(), c.end());
-        }
-        return out;
+        size_t seg = n / 4;
+        for (int j = 0; j < 4; j++)
+            p3zkc::blind_col_aug_into(vr, bs[j], o + (size_t)j * seg, seg);
     };
     for (int j = 0; j < 4; j++) tr.absorb("sc5-yB", &bl.yB[j], 8);
     // bind all four published slice evals with ONE opening at (r || tau):

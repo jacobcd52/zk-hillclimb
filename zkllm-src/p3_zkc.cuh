@@ -388,6 +388,15 @@ static inline std::vector<gl_t> blind_col_aug(uint32_t v, uint64_t s) {
     std::vector<gl_t> c = blind_col_seeded(v, s, m);
     return augment(c, std::move(m));
 }
+// blind_col_aug written into a caller-provided buffer of n = 2^vfull(v) slots
+// (the augmented column IS one contiguous zprng chain: real region first, mask
+// region continuing the same stream) -- bit-identical to blind_col_aug, no
+// per-use allocation.  Used by the batched-opening ledger's drop-regen path.
+static inline void blind_col_aug_into(uint32_t v, uint64_t s, gl_t* out, size_t n) {
+    (void)v;
+    if (!G.blind_on) { memset(out, 0, n * 8); return; }
+    for (size_t i = 0; i < n; i++) out[i] = zprng(s);
+}
 
 // ---- Libra blind material for one sumcheck instance ----
 // nb committed blind columns (4 for quartic Msg5 chains, 3 for cubic Msg4);

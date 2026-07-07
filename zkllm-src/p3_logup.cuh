@@ -1267,23 +1267,23 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
                 Col pc; pc.root = a.rtP; pc.vreal = n + g + E; pc.sseed = a.sP;
                 uint64_t sd = a.pseed, sq = a.qseed;
                 xc.keep.push_back(std::move(pc));
-                xc.lg.add(&xc.keep.back().v, sp.rt_pm, rA, lyA.p1, a.sP, [NM3, sd, sq, mo2] {
-                    std::vector<gl_t> b(NM3);
-                    #pragma omp parallel for schedule(static) if (NM3 >= 65536) num_threads(p3bf::nthr(NM3))
-                    for (size_t i = 0; i < NM3; i++)
+                xc.lg.add(&xc.keep.back().v, sp.rt_pm, rA, lyA.p1, a.sP,
+                          [NM3, sd, sq, mo2](gl_t* b, size_t n) {
+                    (void)NM3;
+                    #pragma omp parallel for schedule(static) if (n >= 65536) num_threads(p3bf::nthr(n))
+                    for (size_t i = 0; i < n; i++)
                         b[i] = mo2 ? gl_mul(p3zkc::zprng_at(sd, i), p3zkc::zprng_at(sq, i)) : 0ULL;
-                    return b;
                 });
             }
             {
                 Col qc; qc.root = a.rtQ; qc.vreal = n + g + E; qc.sseed = a.sQ;
                 uint64_t sd = a.qseed;
                 xc.keep.push_back(std::move(qc));
-                xc.lg.add(&xc.keep.back().v, sp.rt_qm, rA, lyA.q1, a.sQ, [NM3, sd, mo2] {
-                    std::vector<gl_t> b(NM3);
-                    #pragma omp parallel for schedule(static) if (NM3 >= 65536) num_threads(p3bf::nthr(NM3))
-                    for (size_t i = 0; i < NM3; i++) b[i] = mo2 ? p3zkc::zprng_at(sd, i) : 1ULL;
-                    return b;
+                xc.lg.add(&xc.keep.back().v, sp.rt_qm, rA, lyA.q1, a.sQ,
+                          [NM3, sd, mo2](gl_t* b, size_t n) {
+                    (void)NM3;
+                    #pragma omp parallel for schedule(static) if (n >= 65536) num_threads(p3bf::nthr(n))
+                    for (size_t i = 0; i < n; i++) b[i] = mo2 ? p3zkc::zprng_at(sd, i) : 1ULL;
                 });
             }
         }

@@ -1061,3 +1061,174 @@ effort.  Recommended smallest prototype: standalone tower-field lib + additive-N
 then a bit-sliced commit of a real fp8-code column A/B'd against the Goldilocks commit for
 size/time.  NOT built this session (honesty over completeness: levers 1-4 plus the latent
 rejection-bug fix consumed it); nothing in the working tree depends on this section.
+
+## 18. Multi-layer FULL FORWARD PASS with full ZK (2026-07-07) [VERIFIED]
+
+The composed proof now covers an ENTIRE multi-layer model forward pass -- public token
+ids in, public logits out, EVERY intermediate activation hidden -- as ONE proof over ONE
+Fiat-Shamir transcript, ONE shared opening ledger, ONE model-level merged-lookup flush
+and ONE batched-opening pass.
+
+### 18.1 Canonical reference: TinyModel (transformer_ref.py)
+
+`TinyModel` = embedding lookup (vocab=16, the committed table `emb`) -> N=2 chained
+`TinyLayer`s (d=64, nh=2, dh=32, dff=128, seq=4; independent weights per layer, drawn
+from one seeded rng stream) -> final RMSNorm (gain `gF`) -> LM head Hawkeye matmul
+(`Wh`: vocab x d fp8 codes + fp32 row scales) -> (seq, vocab) bf16 logits.  Canonical
+prompt `MODEL_IDS = [3, 1, 4, 15]`, seed 20260707; fully deterministic.  Dumps:
+`--dump-model-weights transformer_model_weights.bin` ('TFMW') and `--dump-model-trace
+transformer_model.bin` ('TFMT': ids + x0 + every `L<i>.<op>` intermediate + hF + logits).
+The single-layer goldens are UNCHANGED (verified: `--dump-layer` / `--dump-weights`
+md5-identical before/after the edit).
+
+### 18.2 Prover composition (p3_transformer.cuh split + p3_model.cuh)
+
+The single-layer prover/verifier was split into transcript-order-preserving sections:
+`prove_subs` (header absorb + roots + all gadget sub-proofs on a caller-owned XCtx),
+`prove_seams` (all composition seam claims; the public input/output binding claims are
+now toggleable), and mirrors `verify_subs` / `verify_seams` on a caller-owned VCtx.
+`p3tf::prove/verify` re-compose them bit-identically (composed layer battery stayed
+30/30, zk smoke 15/15 after the refactor).  `commit_all` gained an `x0ext` parameter:
+an already-committed input column is SHARED as rms1.X instead of committing fresh.
+
+`p3_model.cuh` (namespace p3mdl) then chains everything:
+
+* INTER-LAYER SEAM = ROOT EQUALITY.  Layer i's committed final-residual column
+  (`res[1].OUT`) IS layer i+1's committed input column (`rms1.X`) -- the same `Col`
+  object (values + zk mask + salt seed) is handed to both layers' gadgets, and the
+  verifier checks `lay[i+1].rX0 == lay[i].rOut`.  Zero extra claims; no evaluation of
+  any hand-off activation is ever revealed.  The head's rmsF.X shares the LAST layer's
+  OUT column the same way.
+* EMBEDDING = GATHER SEAMS at PUBLIC token ids.  E (vocab x d bf16 patterns) is
+  committed once (secret values / public root, part of the model commitment like the
+  weight roots).  For each token slot t: one hiding seam pair
+  X0~(z_d, bits(t)) == E~(z_d, bits(id_t)) at a shared fresh ex-coordinate.  In zk,
+  X0's mask slice 1 is the SAME gather of E's mask slice 1 (`mk_linked`), so the claim
+  algebra holds slice-by-slice while every opened value is uniform.
+* LM HEAD = final rmsnorm (existing gadget, gain gF) -> quantize -> Hawkeye matmul
+  against the committed head matrix (restriction seam on the quantizer codes, identical
+  to the in-layer pattern) -> ONE real-slice claim (clp) binds the committed logits
+  column to the verifier's own MLE of the PUBLIC logits.  Non-zk additionally ships the
+  head's public Y vector (checked bitwise against the statement); zk drops it.
+
+Public statement: dims + nlayers + vocab, token ids, embedding root, per-layer weight
+roots (7 matrices + g1/g2 each), gF root, head code+scale roots, pinned rope/canonical
+tables, Q/R, and the LOGITS.  Everything between ids and logits is witness.
+
+### 18.3 Results (RTX 4090, R=2 rate 1/4, Q=24) [VERIFIED]
+
+    nvcc -arch=sm_89 -std=c++17 -O2 p3_model_test.cu   -> /root/p3_model_test
+    nvcc -arch=sm_89 -std=c++17 -O2 zk_model_smoke.cu  -> /root/zk_model_smoke
+    nvcc -arch=sm_89 -std=c++17 -O2 p3_model_zk_test.cu-> /root/p3_model_zk_test
+
+* COMPOSED-MODEL battery 26/26 [VERIFIED]: honest accept with EVERY chained
+  intermediate of EVERY layer + head bitwise == transformer_model.bin, layer i+1 input
+  commitment IS layer i output commitment, logits bitwise == golden.  Non-zk: witness
+  0.10 s, commits 0.02 s, prove 2.13 s, verify 0.43 s, proof 18.91 MB (12 model seams,
+  15 batch classes).  Teeth (all reject at their own stage): embedding gather tamper,
+  broken layer hand-off ("inter-layer chain root"), final-rms flip, head restriction
+  seam, head matmul teleport, flipped logits claim, in-layer tampers in BOTH layers
+  (rms1 flip / restriction seam / matmul teleport / rope slice in L0; softmax flip /
+  concat seam / swiglu forge / residual flip in L1), statement tampers (logits, token
+  ids, embedding root, L1 weight root, head weight root), proof-object tampers (chain
+  root, embedding seam claim, batch opening, in-layer sumcheck message).
+* ZK-MODEL-SMOKE 16/16 [VERIFIED]: with p3zkc::G.on, honest accept; commit 0.26 s,
+  prove 5.65 s, verify 0.86 s, proof 59.86 MB.  ALL cleartext activation vectors
+  dropped (every layer's per-matmul publics + the head's logits vector -- logits bound
+  by the real-slice claim instead); 10 witness/seam tampers + 3 statement tampers all
+  reject with the right reasons.
+* FULL-MODEL-ZK-HIDING battery 11/11 [VERIFIED] (p3_model_zk_test, 12000 draws at fixed
+  challenges, chi-sq<400 uniform / >5000 leak thresholds): (1) every NEW model column
+  class uniform in every transcript quantity (embedding table, embedded input X0, the
+  inter-layer hand-off L0.out==L1.in, L1 output, pre-head hF, head weight codes, deep
+  L1 swiglu witness); (2) inter-layer hand-off claims uniform over mask draws, agree at
+  the shared ex-coordinate; (3) embedding gather seam uniform + agrees under the mask
+  linkage; (4) witness-recovery attack on the INTER-LAYER ACTIVATION: control (masks
+  off) collapses to 1 distinct functional value /12000 (recoverable), hidden transcript
+  12000/12000 distinct uniform = 0 bits extracted, posterior flat across different
+  activations; (5) same attack on the EMBEDDING TABLE: control 1/12000, hidden
+  12000/12000 = 0 bits.
+
+Regression [VERIFIED, same session]: all 7 gadget selftests green (35/25/16/26/22/17/19),
+GKR 88/88, logup 13/13, hawkeye-zk 19/19, zk-gadget-smoke 8/8, composed layer 30/30,
+zk layer smoke 15/15, layer hiding 16/16.
+
+Committed: hillclimb 627d89e (full tree).
+
+## 19. Batch-opening drop-regen fix: zk 1.35x at d=1024 (2026-07-07) [VERIFIED]
+
+### 19.1 Where the d=1024 zk time ACTUALLY goes (profile, this session)
+
+`P3_ZKPROF=1 P3_MEMLOG=1 p3_transformer_bench 4 1024 16 64 4096 1 1 tables_ld10.bin`
+(RTX 4090, 128 cores, `-Xcompiler -fopenmp`), baseline reproduced at prove=486.6 s
+(section 16.5 recorded 487.7):
+
+    mm=123.2  lug=102.3  batch=256.2      (of 486.6 s prove)
+    batch: ONE class dominates -- tf-bo4, v=26 (512 MB columns), nc=95 distinct
+    columns, k=128 claims, T=31 points, strCol=1 strGdev=1:
+        G=42.4  ys+rlc=83.9  q0-subset=100.0  fold=1.7  red=0.2   (228 of 256 s)
+    other: sc5z/blind=45.2  lug/hcommit=37.4  lug/scA=31.8  commit_salt=29.4
+           lug/claims=22.6  mask_gen=20.8
+
+NOT the folds: bo/fold is 3.4 s.  The section-16.5 guess that "streamed folding"
+dominates was wrong -- the fused/strGdev reduction is already cheap.  The cost was in
+the DROP-REGEN path: every use of a dropped (gen-backed) column called its regenerator,
+which allocated a FRESH 512 MB std::vector (mmap + page-fault + free cycle, ~0.3 s per
+use at v=26) -- and the G build materialized+uploaded once per ENTRY (k=128) instead of
+once per distinct column (nc=95).  ~400 column-uses in tf-bo4 alone.
+
+### 19.2 The lever: writer-style regenerators + column-major G build [VERIFIED]
+
+* `PLedger::Gen` changed from `vector<gl_t>()` to `void(gl_t*, size_t)`: the ledger's
+  `col_host` now keeps ONE per-class scratch allocation and regenerators WRITE into it
+  (p3_hawkeye mblind regens via a new `p3zkc::blind_col_aug_into` -- the augmented blind
+  column is one contiguous zprng chain; p3_logup GKR mask-stream regens fill in place).
+  Zero per-use allocation; values bit-identical.
+* G build in the `!strG || strGdev` modes runs COLUMN-major: each distinct column is
+  materialized + uploaded exactly once and axpy'd into every G_t referencing it.  Only
+  the accumulation order changes (exact field adds; identical sums, transcript,
+  proof bytes).  The host-parked strG fallback keeps the point-major build.
+
+Results (same commands, all verify_ok=1, proof sizes byte-identical):
+
+    d=1024 zk: prove 486.6 -> 359.3 s (1.35x)   batch 256.2 -> 127.8 s
+               bo/G 46.0 -> 13.4   bo/ys+rlc 85.9 -> 23.1   bo/q0 113.3 -> 80.1
+    d=512  zk: prove 239.4 -> 186.0 s (1.29x)   batch 124.6 -> 70.9 s
+    d=64   zk: 3.80 s (unchanged -- small classes never drop columns)
+    zk model (2 layers + head, d=64): prove 4.88 s (was 5.65 pre-session)
+
+Regression: ALL batteries green after the change (7 gadget selftests, GKR 88/88, logup
+13/13, hawkeye-zk 19/19, zk-gadget-smoke 8/8, composed layer 30/30 + zk smoke 15/15 +
+hiding 16/16, composed MODEL 26/26 + zk smoke 16/16 + hiding 11/11).
+
+### 19.3 Failed experiments (measured, reverted) [VERIFIED]
+
+Two "obvious" wins were tried first and made things WORSE in situ; both reverted:
+* OpenMP jump-ahead parallel fill for the sequential zprng chains (LCG skip-ahead,
+  bit-identical, 3.6x faster in a microbenchmark): d=512 zk prove 239 -> 260 s.  The
+  128-thread fork/join cost (~10 ms on this box) at ~3k call sites plus NUMA-remote
+  first-touch outweighed the fill itself (serial fill of 2^25 values is only 47 ms).
+* Pinned-staging uploads (parallel memcpy into a cudaHostAlloc buffer + async H2D):
+  d=512 zk prove -> 290 s.  Pageable H2D already runs at ~19.7 GB/s on this box (the
+  slow path was NEVER PCIe -- it was the allocation churn of 19.2); the extra CPU read
+  pass only added work.
+Microbenchmarks that guided the revert: serial fill 2^25 = 47 ms, parallel = 13 ms;
+pageable H2D 512 MB = 27 ms (19.7 GB/s), cudaHostRegister'd = 25 ms (21 GB/s).
+
+### 19.4 Residual profile + next levers [REASONED, scoped only]
+
+After the fix at d=1024 zk (359.3 s): mm=123 (matmul zero-checks/sumchecks), lug=103
+(hcommit 37 + scA 32 + claims 23), q0-subset=80, sc5z/blind=45, mask_gen=21.
+* q0-subset (80 s): per-column NTT re-encode + full salted-tree SHA rebuild (M0=2^28)
+  for 95 columns, to open Q=24 positions.  Structural fix: retain the tree's TOP levels
+  at commit time (level >= 13: 256 KB/column) and rebuild only the query-touched
+  subtree chunks at opening (~48 x 2^13 leaves vs 2^28) -- ~300x less SHA, est. 80 ->
+  ~15 s.  Touches commit_col_nc/Col/subset_prove plumbing; not attempted this session.
+* sc5z/blind (45 s) + mask_gen (21 s): same alloc-churn class as 19.2 (blind_col_aug
+  allocates c + mask + augment per commit; commit_col_nc's augment copies again) --
+  writer-style in-place construction est. -20 to -30 s combined.
+* GPU-side regen: extend the ledger with a TYPED gen descriptor (chain seeds/segments)
+  so gen-backed columns fill directly on device (zprng chain is jump-ahead capable in a
+  kernel), eliminating host materialization + upload entirely for dropped columns.
+* Bit-packing small witness fields (section 16.2) remains unbuilt; it shrinks committed
+  data (mm + commit_salt side), orthogonal to the opening side.
