@@ -122,6 +122,26 @@ __global__ void p3_merkle_internal_kernel(const uint8_t* in, uint8_t* out, uint3
     p3_sha256_compress64(buf, out + (size_t)i * 32);
 }
 
+// fused DOUBLE level: thread i hashes 4 children into parents 2i,2i+1 (out1)
+// and their grandparent i (out2).  Same hashes as two p3_merkle_internal_kernel
+// calls -- no cross-thread dependence (each grandparent's parents are written
+// by the same thread), so tree bytes are identical with half the launches.
+__global__ void p3_merkle_internal2_kernel(const uint8_t* in, uint8_t* out1,
+                                           uint8_t* out2, uint32_t q) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= q) return;
+    uint8_t buf[64], par[64];
+    #pragma unroll
+    for (int k = 0; k < 64; k++) buf[k] = in[(size_t)(4*i)*32 + k];
+    p3_sha256_compress64(buf, par);
+    #pragma unroll
+    for (int k = 0; k < 64; k++) buf[k] = in[(size_t)(4*i+2)*32 + k];
+    p3_sha256_compress64(buf, par + 32);
+    #pragma unroll
+    for (int k = 0; k < 64; k++) out1[(size_t)(2*i)*32 + k] = par[k];
+    p3_sha256_compress64(par, out2 + (size_t)i * 32);
+}
+
 // Build a Merkle tree over M (power of 2) codeword elements; write 32-byte root.
 // d_scratchA/B are each >= M*32 bytes of device scratch.
 static void p3_merkle_build(const gl_t* d_codeword, uint32_t M,

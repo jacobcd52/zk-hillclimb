@@ -243,15 +243,14 @@ __global__ void p3zkc_salted_leaf_off_kernel(const gl_t* cw_chunk, uint64_t ssee
 struct SaltedDevMerkle {
     std::vector<uint8_t*> dlev; std::vector<uint32_t> sz;
     void build_dev(const gl_t* d_cw, uint32_t M, uint64_t sseed) {
+        // salted leaf level + internal levels via the slab/fused DeviceMerkle
+        // build (identical tree bytes, ~1/4 the GPU API calls)
         uint8_t* d0; cudaMallocAsync(&d0, (size_t)M * 32, 0);
         p3zkc_salted_leaf_kernel<<<(M + 255) / 256, 256>>>(d_cw, sseed, d0, M);
-        dlev.assign(1, d0); sz.assign(1, M);
-        for (uint32_t cnt = M; cnt > 1;) {
-            uint32_t half = cnt / 2; uint8_t* dn; cudaMallocAsync(&dn, (size_t)half * 32, 0);
-            p3_merkle_internal_kernel<<<(half + 255) / 256, 256>>>(dlev.back(), dn, half);
-            dlev.push_back(dn); sz.push_back(half); cnt = half;
-        }
+        p3fri::DeviceMerkle mk; mk.build_leaves(d0, M);
+        dlev = mk.dlev; sz = mk.sz; slab = mk.slab;
     }
+    uint8_t* slab = nullptr;
     Hash root() const { Hash h; cudaMemcpy(h.data(), dlev.back(), 32, cudaMemcpyDeviceToHost); return h; }
     std::vector<std::vector<Hash>> paths_batch(const std::vector<uint32_t>& idxs) const {
         // reuse the p3fri path gather (level layout identical)
@@ -260,7 +259,9 @@ struct SaltedDevMerkle {
         shim.dlev.clear(); shim.sz.clear();      // do NOT free our levels
         return r;
     }
-    void free_() { for (auto p : dlev) cudaFreeAsync(p, 0); dlev.clear(); sz.clear(); }
+    void free_() { if (!dlev.empty()) cudaFreeAsync(dlev[0], 0);
+        if (slab) { cudaFreeAsync(slab, 0); slab = nullptr; }
+        dlev.clear(); sz.clear(); }
 };
 
 // salted commitment root of a coefficient vector (GPU NTT encode + salted tree)
@@ -405,3 +406,62 @@ static inline gl_t blind_term(const Blind& bl, gl_t rho, gl_t w) {
 }
 
 } // namespace p3zkc
+
+// ---- env-gated (P3_ZKPROF=1) sub-phase profiler ----
+// Pure host-side timing accumulators: never absorbs into the transcript, never
+// changes control flow -- transcripts stay byte-identical with it on or off.
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+namespace p3zp {
+struct B { double ms = 0; long n = 0; };
+struct S {
+    // cross-cutting commit costs (every commit_col_nc)
+    B commit_salt, commit_plain, mask_gen;
+    // merged-lookup group prover (p3lu::prove_group)
+    B lug_cnt, lug_am, lug_inv, lug_hcom, lug_blA, lug_blT, lug_blH,
+      lug_scA, lug_claims, lug_scT, lug_tev;
+    // zk quartic zero-checks (p3hwl::sc5z / sc5z_srcs / sc5z_gpu)
+    B sc5_blind, sc5_H, sc5_chain, sc5_yB;
+    // shared batch opener (p3bo::prove_class)
+    B bo_blinder, bo_G, bo_red, bo_ys, bo_fold, bo_qr, bo_q0;
+    // batched q0 sub-steps (encode / forest tree / path+value gather / host subset)
+    B q0_enc, q0_tree, q0_path, q0_host;
+};
+static S g;
+static inline bool on() {
+    static int v = -1;
+    if (v < 0) { const char* e = getenv("P3_ZKPROF"); v = (e && *e == '1') ? 1 : 0; }
+    return v != 0;
+}
+static inline double nowms() {
+    using namespace std::chrono;
+    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+}
+struct T {
+    B* b; double t0;
+    explicit T(B& bb) : b(on() ? &bb : nullptr), t0(b ? nowms() : 0) {}
+    ~T() { if (b) { b->ms += nowms() - t0; b->n++; } }
+};
+static inline void line(FILE* f, const char* k, const B& b) {
+    if (b.n) fprintf(f, "ZPROF %-13s %9.3f s  x%ld\n", k, b.ms / 1e3, b.n);
+}
+static inline void report(FILE* f = stderr) {
+    line(f, "commit_salt", g.commit_salt); line(f, "commit_plain", g.commit_plain);
+    line(f, "mask_gen", g.mask_gen);
+    line(f, "lug/cnt", g.lug_cnt); line(f, "lug/Am", g.lug_am);
+    line(f, "lug/inv", g.lug_inv); line(f, "lug/hcommit", g.lug_hcom);
+    line(f, "lug/blindA", g.lug_blA); line(f, "lug/blindT", g.lug_blT);
+    line(f, "lug/blindH", g.lug_blH); line(f, "lug/scA", g.lug_scA);
+    line(f, "lug/claims", g.lug_claims); line(f, "lug/scT", g.lug_scT);
+    line(f, "lug/Tevals", g.lug_tev);
+    line(f, "sc5z/blind", g.sc5_blind); line(f, "sc5z/H", g.sc5_H);
+    line(f, "sc5z/chain", g.sc5_chain); line(f, "sc5z/yB", g.sc5_yB);
+    line(f, "bo/blinder", g.bo_blinder); line(f, "bo/G", g.bo_G);
+    line(f, "bo/red", g.bo_red); line(f, "bo/ys+rlc", g.bo_ys);
+    line(f, "bo/fold", g.bo_fold); line(f, "bo/qrounds", g.bo_qr);
+    line(f, "bo/q0-subset", g.bo_q0);
+    line(f, "q0/enc", g.q0_enc); line(f, "q0/tree", g.q0_tree);
+    line(f, "q0/path", g.q0_path); line(f, "q0/host", g.q0_host);
+}
+} // namespace p3zp

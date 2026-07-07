@@ -590,9 +590,9 @@ static inline std::vector<gl_t> sc5_prove(fs::Transcript& tr, const char* tag,
         gl_t s[5] = {0,0,0,0,0};
         // parallel partial sums combine to the SAME field elements (exact
         // arithmetic, order-independent); serial for small rounds
-        const int P = half >= 65536 ? 128 : 1;
+        const int P = half >= 4096 ? 128 : 1;
         std::vector<std::array<gl_t, 5>> part(P, {0, 0, 0, 0, 0});
-        #pragma omp parallel for schedule(static) if (P > 1)
+        #pragma omp parallel for schedule(static) if (P > 1) num_threads(p3bf::nthr((size_t)half * 8))
         for (int p = 0; p < P; p++) {
             size_t lo = half * p / P, hi = half * (p + 1) / P;
             std::vector<gl_t> cur(nc), dd(nc);
@@ -634,9 +634,9 @@ static inline std::vector<gl_t> sc5_prove_srcs(fs::Transcript& tr, const char* t
     for (uint32_t rd = 0; rd < v; rd++) {
         size_t half = cols[0].get().size() / 2;
         gl_t s[5] = {0,0,0,0,0};
-        const int P = half >= 65536 ? 128 : 1;
+        const int P = half >= 4096 ? 128 : 1;
         std::vector<std::array<gl_t, 5>> part(P, {0, 0, 0, 0, 0});
-        #pragma omp parallel for schedule(static) if (P > 1)
+        #pragma omp parallel for schedule(static) if (P > 1) num_threads(p3bf::nthr((size_t)half * 8))
         for (int p = 0; p < P; p++) {
             size_t lo = half * p / P, hi = half * (p + 1) / P;
             std::vector<gl_t> cur(nc), dd(nc);
@@ -659,7 +659,7 @@ static inline std::vector<gl_t> sc5_prove_srcs(fs::Transcript& tr, const char* t
         for (auto& c : cols) {
             const gl_t* src = c.get().data();
             std::vector<gl_t> nf(half);
-            #pragma omp parallel for schedule(static) if (half >= 65536)
+            #pragma omp parallel for schedule(static) if (half >= 65536) num_threads(p3bf::nthr(half))
             for (size_t i = 0; i < half; i++)
                 nf[i] = gl_add(src[2*i], gl_mul(a, gl_sub(src[2*i+1], src[2*i])));
             c.own = std::move(nf); c.bor = nullptr;
@@ -938,19 +938,23 @@ static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32
     }
     std::vector<Col> B(4);
     uint64_t bseed[4];
-    for (int j = 0; j < 4; j++) {
-        std::vector<gl_t> m;
-        bseed[j] = p3zkc::G.blind_on ? p3zkc::next_seed() : 0;
-        B[j] = p3lu::commit_col_nc(p3zkc::blind_col_seeded(vreal, bseed[j], m), R, &m);
-        bl.rt[j] = B[j].root; tr.absorb("sc5-bl", B[j].root.data(), 32);
+    {
+        p3zp::T zt(p3zp::g.sc5_blind);
+        for (int j = 0; j < 4; j++) {
+            std::vector<gl_t> m;
+            bseed[j] = p3zkc::G.blind_on ? p3zkc::next_seed() : 0;
+            B[j] = p3lu::commit_col_nc(p3zkc::blind_col_seeded(vreal, bseed[j], m), R, &m);
+            bl.rt[j] = B[j].root; tr.absorb("sc5-bl", B[j].root.data(), 32);
+        }
     }
     bl.nb = 4;
     gl_t H = 0;
     {
+        p3zp::T zt(p3zp::g.sc5_H);
         const std::vector<gl_t>& E = cols[0];
         const int P = N >= 65536 ? 128 : 1;
         std::vector<gl_t> part(P, 0);
-        #pragma omp parallel for schedule(static) if (P > 1)
+        #pragma omp parallel for schedule(static) if (P > 1) num_threads(p3bf::nthr(N))
         for (int p = 0; p < P; p++) {
             size_t lo = N * p / P, hi = N * (p + 1) / P;
             gl_t acc = 0;
@@ -989,7 +993,10 @@ static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32
                     gl_mul(e, gl_add(v[i0 + 2], gl_mul(e, v[i0 + 3]))))));
         return gl_add(F(v), gl_mul(rho, b_));
     };
+    double zt_ch0 = p3zp::nowms();
     std::vector<gl_t> r = sc5_prove(tr, tag, std::move(cols), F2, msgs);
+    if (p3zp::on()) { p3zp::g.sc5_chain.ms += p3zp::nowms() - zt_ch0; p3zp::g.sc5_chain.n++; }
+    p3zp::T zt_yb(p3zp::g.sc5_yB);
     std::vector<gl_t> eqr = p3bf::build_eq(r);
     for (int j = 0; j < 4; j++) {
         bl.yB[j] = p3bf::eval_h(B[j].v, eqr);
@@ -997,11 +1004,14 @@ static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32
         uint64_t ss = B[j].sseed;
         keep.push_back(std::move(B[j]));
         // blinds are pure PRNG streams: register a regenerator and DROP the
-        // values -- the batched opening rebuilds them transiently per use
+        // values (only when big -- at small dims the batch opener would pay
+        // a host PRNG regeneration per use for no memory win)
         uint32_t vr = vreal; uint64_t bs = bseed[j];
         lg.add(&keep.back().v, bl.rt[j], r, bl.yB[j], ss,
                [vr, bs] { return p3zkc::blind_col_aug(vr, bs); });
-        keep.back().v.clear(); keep.back().v.shrink_to_fit();
+        if (N >= ((size_t)1 << 20)) {
+            keep.back().v.clear(); keep.back().v.shrink_to_fit();
+        }
     }
     return r;
 }
@@ -1032,6 +1042,11 @@ static inline gl_t sc5_blindterm(const p3zkc::Blind& bl, gl_t rho, gl_t w) {
     return gl_mul(rho, gl_add(bl.yB[0], gl_mul(w, gl_add(bl.yB[1],
                    gl_mul(w, gl_add(bl.yB[2], gl_mul(w, bl.yB[3])))))));
 }
+template <typename FF>
+static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, uint32_t vreal,
+        std::vector<ColSrc>&& cols, const gl_t* lam, uint32_t nlam,
+        std::vector<Msg5>& msgs, gl_t base_claim, uint32_t R,
+        p3bo::PLedger& lg, std::deque<Col>& keep, p3zkc::Blind& bl);
 // zk-aware dispatch: legacy path (GPU when large) with zk off, blinded host
 // chain with zk on
 template <typename FF>
@@ -1040,6 +1055,12 @@ static inline std::vector<gl_t> sc5rz(fs::Transcript& tr, const char* tag, uint3
         const CFn& F, std::vector<Msg5>& msgs, gl_t base_claim, uint32_t R,
         p3bo::PLedger& lg, std::deque<Col>& keep, p3zkc::Blind& bl) {
     if (!p3zkc::G.on) return sc5_run<FF>(tr, tag, std::move(cols), lam, nlam, F, msgs);
+    if (p3fri::g_gpu_merkle && cols[0].size() >= (1u << 14) && !p3zkc::G.sim) {
+        std::vector<ColSrc> srcs; srcs.reserve(cols.size());
+        for (auto& c : cols) srcs.emplace_back(std::move(c));
+        return sc5z_gpu<FF>(tr, tag, vreal, std::move(srcs), lam, nlam, msgs,
+                            base_claim, R, lg, keep, bl);
+    }
     return sc5z(tr, tag, vreal, std::move(cols), F, msgs, base_claim, R, lg, keep, bl);
 }
 
@@ -1058,19 +1079,23 @@ static inline std::vector<gl_t> sc5z_srcs(fs::Transcript& tr, const char* tag, u
     }
     std::vector<Col> B(4);
     uint64_t bseed[4];
-    for (int j = 0; j < 4; j++) {
-        std::vector<gl_t> m;
-        bseed[j] = p3zkc::G.blind_on ? p3zkc::next_seed() : 0;
-        B[j] = p3lu::commit_col_nc(p3zkc::blind_col_seeded(vreal, bseed[j], m), R, &m);
-        bl.rt[j] = B[j].root; tr.absorb("sc5-bl", B[j].root.data(), 32);
+    {
+        p3zp::T zt(p3zp::g.sc5_blind);
+        for (int j = 0; j < 4; j++) {
+            std::vector<gl_t> m;
+            bseed[j] = p3zkc::G.blind_on ? p3zkc::next_seed() : 0;
+            B[j] = p3lu::commit_col_nc(p3zkc::blind_col_seeded(vreal, bseed[j], m), R, &m);
+            bl.rt[j] = B[j].root; tr.absorb("sc5-bl", B[j].root.data(), 32);
+        }
     }
     bl.nb = 4;
     gl_t H = 0;
     {
+        p3zp::T zt(p3zp::g.sc5_H);
         const std::vector<gl_t>& E = cols[0].get();
         const int P = N >= 65536 ? 128 : 1;
         std::vector<gl_t> part(P, 0);
-        #pragma omp parallel for schedule(static) if (P > 1)
+        #pragma omp parallel for schedule(static) if (P > 1) num_threads(p3bf::nthr(N))
         for (int p = 0; p < P; p++) {
             size_t lo = N * p / P, hi = N * (p + 1) / P;
             gl_t acc = 0;
@@ -1109,7 +1134,10 @@ static inline std::vector<gl_t> sc5z_srcs(fs::Transcript& tr, const char* tag, u
                     gl_mul(e, gl_add(v[i0 + 2], gl_mul(e, v[i0 + 3]))))));
         return gl_add(F(v), gl_mul(rho, b_));
     };
+    double zt_ch0 = p3zp::nowms();
     std::vector<gl_t> r = sc5_prove_srcs(tr, tag, std::move(cols), F2, msgs);
+    if (p3zp::on()) { p3zp::g.sc5_chain.ms += p3zp::nowms() - zt_ch0; p3zp::g.sc5_chain.n++; }
+    p3zp::T zt_yb(p3zp::g.sc5_yB);
     std::vector<gl_t> eqr = p3bf::build_eq(r);
     for (int j = 0; j < 4; j++) {
         bl.yB[j] = p3bf::eval_h(B[j].v, eqr);
@@ -1119,7 +1147,9 @@ static inline std::vector<gl_t> sc5z_srcs(fs::Transcript& tr, const char* tag, u
         uint32_t vr = vreal; uint64_t bs = bseed[j];
         lg.add(&keep.back().v, bl.rt[j], r, bl.yB[j], ss,
                [vr, bs] { return p3zkc::blind_col_aug(vr, bs); });
-        keep.back().v.clear(); keep.back().v.shrink_to_fit();
+        if (N >= ((size_t)1 << 20)) {
+            keep.back().v.clear(); keep.back().v.shrink_to_fit();
+        }
     }
     if (N >= ((size_t)1 << 24)) p3bf::trim_heap();
     return r;
@@ -1156,19 +1186,23 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
     }
     std::vector<Col> B(4);
     uint64_t bseed[4];
-    for (int j = 0; j < 4; j++) {
-        std::vector<gl_t> m;
-        bseed[j] = p3zkc::G.blind_on ? p3zkc::next_seed() : 0;
-        B[j] = p3lu::commit_col_nc(p3zkc::blind_col_seeded(vreal, bseed[j], m), R, &m);
-        bl.rt[j] = B[j].root; tr.absorb("sc5-bl", B[j].root.data(), 32);
+    {
+        p3zp::T zt(p3zp::g.sc5_blind);
+        for (int j = 0; j < 4; j++) {
+            std::vector<gl_t> m;
+            bseed[j] = p3zkc::G.blind_on ? p3zkc::next_seed() : 0;
+            B[j] = p3lu::commit_col_nc(p3zkc::blind_col_seeded(vreal, bseed[j], m), R, &m);
+            bl.rt[j] = B[j].root; tr.absorb("sc5-bl", B[j].root.data(), 32);
+        }
     }
     bl.nb = 4;
     gl_t H = 0;
     {
+        p3zp::T zt(p3zp::g.sc5_H);
         const std::vector<gl_t>& E = cols[0].get();
         const int P = N >= 65536 ? 128 : 1;
         std::vector<gl_t> part(P, 0);
-        #pragma omp parallel for schedule(static) if (P > 1)
+        #pragma omp parallel for schedule(static) if (P > 1) num_threads(p3bf::nthr(N))
         for (int p = 0; p < P; p++) {
             size_t lo = N * p / P, hi = N * (p + 1) / P;
             gl_t acc = 0;
@@ -1184,6 +1218,7 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
     bl.H = H;
     tr.absorb("sc5-H", &H, 8);
     gl_t rho = chal(tr);
+    double zt_ch0 = p3zp::nowms();
     const uint32_t ncb = (uint32_t)cols.size();
     std::vector<gl_t*> dc(ncb + 4);
     for (uint32_t k = 0; k < ncb; k++) {
@@ -1194,13 +1229,16 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
     for (int j = 0; j < 4; j++) {
         dc[ncb + j] = p3bf::dmalloc(N, "sc5zg:blind");
         cudaMemcpy(dc[ncb + j], B[j].v.data(), N * 8, cudaMemcpyHostToDevice);
-        std::vector<gl_t>().swap(B[j].v);        // regenerable from bseed
+        if (N >= ((size_t)1 << 20))              // regenerable from bseed
+            std::vector<gl_t>().swap(B[j].v);
     }
     std::vector<gl_t> par(2 + nlam);
     par[0] = rho; par[1] = (gl_t)ncb;
     for (uint32_t i = 0; i < nlam; i++) par[2 + i] = lam[i];
     std::vector<gl_t> r = p3sg::sc_prove_gpu<FF5Zk<FF>, Msg5, 5, 32>(
         tr, tag, dc, (uint32_t)N, par.data(), 2 + nlam, msgs);
+    if (p3zp::on()) { p3zp::g.sc5_chain.ms += p3zp::nowms() - zt_ch0; p3zp::g.sc5_chain.n++; }
+    p3zp::T zt_yb(p3zp::g.sc5_yB);
     for (int j = 0; j < 4; j++) {
         cudaMemcpy(&bl.yB[j], dc[ncb + j], 8, cudaMemcpyDeviceToHost);
         tr.absorb("sc5-yB", &bl.yB[j], 8);
@@ -1221,7 +1259,7 @@ static inline std::vector<gl_t> sc5rz_srcs(fs::Transcript& tr, const char* tag, 
         const CFn& F, std::vector<Msg5>& msgs, gl_t base_claim, uint32_t R,
         p3bo::PLedger& lg, std::deque<Col>& keep, p3zkc::Blind& bl) {
     if (!p3zkc::G.on) return sc5_run_srcs<FF>(tr, tag, std::move(cols), lam, nlam, F, msgs);
-    if (p3fri::g_gpu_merkle && cols[0].get().size() >= (1u << 20) && !p3zkc::G.sim)
+    if (p3fri::g_gpu_merkle && cols[0].get().size() >= (1u << 14) && !p3zkc::G.sim)
         return sc5z_gpu<FF>(tr, tag, vreal, std::move(cols), lam, nlam, msgs,
                             base_claim, R, lg, keep, bl);
     return sc5z_srcs(tr, tag, vreal, std::move(cols), F, msgs, base_claim, R, lg, keep, bl);

@@ -237,6 +237,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     PLedger::Cls C = C_in;
     std::vector<gl_t> blv;
     if (p3zkc::G.on) {
+        p3zp::T zt(p3zp::g.bo_blinder);
         blv.resize(N);
         { uint64_t s = p3zkc::next_seed();
           if (p3zkc::G.blind_on) for (auto& x : blv) x = p3zkc::zprng(s); }
@@ -363,6 +364,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     }
     p3bf::ckcuda("bo:G-build");
     tpG = bo_now();
+    if (p3zp::on()) { p3zp::g.bo_G.ms += tpG - tp0; p3zp::g.bo_G.n++; }
 
     // ---- reduction sumcheck ----
     auto eq1 = [](gl_t a, gl_t z) {           // eq(a, z) over one variable
@@ -438,6 +440,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     hG.clear(); hG.shrink_to_fit();
     p3bf::ckcuda("bo:reduction");
     tpR = bo_now();
+    if (p3zp::on()) { p3zp::g.bo_red.ms += tpR - tpG; p3zp::g.bo_red.n++; }
 
     // ---- per-column terminal evals at r* ----
     gl_t* dEqr = p3bf::dmalloc(N, "bo:eqr");
@@ -462,6 +465,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     }
     p3bf::ckcuda("bo:rlc");
     tpY = bo_now();
+    if (p3zp::on()) { p3zp::g.bo_ys.ms += tpY - tpR; p3zp::g.bo_ys.n++; }
 
     // ---- Basefold opening of U at r* (round 0 uncommitted) ----
     // strM: the retained per-round device trees would hold ~64*M0 bytes total
@@ -525,6 +529,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     ot.absorb("final", pf.final_word.data(), pf.final_word.size() * 8);
     p3bf::ckcuda("bo:fold-loop");
     tpF = bo_now();
+    if (p3zp::on()) { p3zp::g.bo_fold.ms += tpF - tpY; p3zp::g.bo_fold.n++; }
 
     // query coset indices (same chain rule as prove_eval_dev)
     std::vector<std::vector<uint32_t>> ccq(Q, std::vector<uint32_t>(v));
@@ -533,6 +538,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         for (uint32_t r = 0; r < v; r++) { uint32_t h = (M0 >> r) / 2, cc = p % h; ccq[q][r] = cc; p = cc; }
     }
     // rounds >= 1 openings against the fresh fold roots
+    double zt_qr0 = p3zp::nowms();
     pf.queries.assign(Q, {});
     for (auto& x : pf.queries) x.rounds.resize(v > 0 ? v - 1 : 0);
     for (uint32_t r = 1; r < v; r++) {
@@ -572,6 +578,8 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     // round-0 per-column SUBSET openings against the ORIGINAL commitments:
     // sorted-unique positions, one pruned Merkle node stream per column
     {
+        if (p3zp::on()) { p3zp::g.bo_qr.ms += p3zp::nowms() - zt_qr0; p3zp::g.bo_qr.n++; }
+        p3zp::T zt_q0(p3zp::g.bo_q0);
         if (colbuf) { cudaFreeAsync(colbuf, 0); colbuf = nullptr; }   // headroom for encodes
         std::vector<uint32_t> upos;
         for (uint32_t q = 0; q < Q; q++) { upos.push_back(ccq[q][0]); upos.push_back(ccq[q][0] + M0 / 2); }
@@ -583,6 +591,99 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         gl_t* d_val; cudaMallocAsync(&d_val, (size_t)nu * 8, 0);
         pf.q0c.assign(nc, {});
         const bool zk_salted = p3zkc::G.on && p3zkc::G.salt_on;
+        // batched small-column path: encode a CHUNK of columns into one forest
+        // buffer, hash all leaves, then run ONE internal-kernel series over the
+        // concatenated subtrees + ONE path gather + ONE value gather for the
+        // whole chunk.  Levels l < logM0 of the forest tree never cross a
+        // column boundary (each column's subtree occupies a contiguous
+        // pow2-aligned slice), so the extracted sibling hashes are bitwise
+        // the per-column tree's -- the proof bytes are unchanged.  The
+        // per-column loop below was pure launch/sync latency at small dims
+        // (~0.8 ms x thousands of columns).
+        if (!strM && !strCol) {
+            const uint32_t CB = (uint32_t)std::min<size_t>(nc,
+                std::max<size_t>(1, ((size_t)1 << 22) / M0));
+            std::vector<uint32_t> gidx; std::vector<gl_t> gvals;
+            for (uint32_t c0 = 0; c0 < nc; c0 += CB) {
+                const uint32_t B = std::min(CB, nc - c0);
+                double zq0 = p3zp::nowms();
+                gl_t* dbuf = p3bf::dmalloc((size_t)B * M0, "bo:q0buf");
+                gl_t* dbin = p3bf::dmalloc((size_t)B * M0, "bo:q0in");
+                cudaMemsetAsync(dbin, 0, (size_t)B * M0 * 8, 0);
+                for (uint32_t b = 0; b < B; b++)
+                    cudaMemcpyAsync(dbin + (size_t)b * M0, dcol[c0 + b], (size_t)N * 8,
+                                    cudaMemcpyDeviceToDevice, 0);
+                ntt.run_batch(dbin, dbuf, B);
+                cudaFreeAsync(dbin, 0);
+                if (p3zp::on()) { cudaDeviceSynchronize();
+                    p3zp::g.q0_enc.ms += p3zp::nowms() - zq0; p3zp::g.q0_enc.n++;
+                    zq0 = p3zp::nowms(); }
+                uint8_t* d0; cudaMallocAsync(&d0, (size_t)B * M0 * 32, 0);
+                for (uint32_t b = 0; b < B; b++) {
+                    if (zk_salted)
+                        p3zkc::p3zkc_salted_leaf_off_kernel<<<(M0 + 255) / 256, 256>>>(
+                            dbuf + (size_t)b * M0, dsseed[c0 + b],
+                            d0 + (size_t)b * M0 * 32, 0, M0);
+                    else
+                        p3_merkle_leaf_kernel<<<(M0 + 255) / 256, 256>>>(
+                            dbuf + (size_t)b * M0, d0 + (size_t)b * M0 * 32, M0);
+                }
+                p3fri::DeviceMerkle mk; mk.build_leaves(d0, B * M0);
+                cudaDeviceSynchronize();
+                p3bf::ckcuda("bo:q0-forest");
+                if (p3zp::on()) { p3zp::g.q0_tree.ms += p3zp::nowms() - zq0;
+                    p3zp::g.q0_tree.n++; zq0 = p3zp::nowms(); }
+                gidx.assign((size_t)B * nu, 0);
+                for (uint32_t b = 0; b < B; b++)
+                    for (uint32_t i = 0; i < nu; i++)
+                        gidx[(size_t)b * nu + i] = b * M0 + upos[i];
+                auto allpaths = mk.paths_batch(gidx);
+                uint32_t* d_gi; cudaMallocAsync(&d_gi, (size_t)B * nu * 4, 0);
+                cudaMemcpy(d_gi, gidx.data(), (size_t)B * nu * 4, cudaMemcpyHostToDevice);
+                gl_t* d_gv; cudaMallocAsync(&d_gv, (size_t)B * nu * 8, 0);
+                p3bf::p3bf_gather_kernel<<<((uint32_t)(B * nu) + 255) / 256, 256>>>(
+                    dbuf, d_gi, d_gv, B * nu);
+                gvals.assign((size_t)B * nu, 0);
+                cudaMemcpy(gvals.data(), d_gv, (size_t)B * nu * 8, cudaMemcpyDeviceToHost);
+                cudaFreeAsync(d_gi, 0); cudaFreeAsync(d_gv, 0);
+                mk.free_(); cudaFreeAsync(dbuf, 0);
+                if (p3zp::on()) { p3zp::g.q0_path.ms += p3zp::nowms() - zq0;
+                    p3zp::g.q0_path.n++; zq0 = p3zp::nowms(); }
+                // per-column host assembly (salts, leaves, pruned subset
+                // stream) -- columns are independent, results deterministic
+                const int hthr = (int)std::min<size_t>(std::max<size_t>(B / 8, 1),
+#ifdef _OPENMP
+                                                       (size_t)omp_get_max_threads());
+#else
+                                                       (size_t)1);
+#endif
+                #pragma omp parallel for schedule(dynamic) if (hthr > 1) num_threads(hthr)
+                for (uint32_t b = 0; b < B; b++) {
+                    const uint32_t c = c0 + b;
+                    BQ0C& oc = pf.q0c[c];
+                    oc.vals.assign(gvals.begin() + (size_t)b * nu,
+                                   gvals.begin() + (size_t)(b + 1) * nu);
+                    std::vector<std::vector<Hash>> paths(nu);
+                    for (uint32_t i = 0; i < nu; i++)
+                        paths[i].assign(allpaths[(size_t)b * nu + i].begin(),
+                                        allpaths[(size_t)b * nu + i].begin() + logM0);
+                    std::vector<Hash> leaves(nu);
+                    if (zk_salted) {
+                        oc.salts.resize(nu);
+                        for (uint32_t i = 0; i < nu; i++) {
+                            oc.salts[i] = p3zkc::salt_of(dsseed[c], upos[i]);
+                            leaves[i] = p3zkc::salted_leaf(oc.vals[i], oc.salts[i]);
+                        }
+                    } else {
+                        for (uint32_t i = 0; i < nu; i++)
+                            leaves[i] = p3fri::leaf_hash(oc.vals[i]);
+                    }
+                    oc.nodes = subset_prove(logM0, upos, leaves, paths);
+                }
+                if (p3zp::on()) { p3zp::g.q0_host.ms += p3zp::nowms() - zq0;
+                    p3zp::g.q0_host.n++; }
+            }
+        } else
         for (uint32_t c = 0; c < nc; c++) {
             gl_t* d_cwc = strCol ? bo_encode_host(col_host(c)->data(), N, logM0, ntt)
                                  : bo_encode_dev(dcol[c], N, logM0, ntt);

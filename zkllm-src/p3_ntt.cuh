@@ -31,6 +31,33 @@ __global__ void p3_ntt_stage_kernel(gl_t* a, const gl_t* W, uint32_t n, uint32_t
     a[base + half] = gl_sub(u, v);
 }
 
+// batched variants: B independent same-size columns laid out contiguously
+// (column b occupies [b*n, (b+1)*n)); identical butterflies/twiddles per
+// column, so each column's output is bitwise the single-column kernel's.
+__global__ void p3_bitrev_batch_kernel(const gl_t* in, gl_t* out, uint32_t n,
+                                       uint32_t logn, uint32_t B) {
+    uint32_t t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= n * B) return;
+    uint32_t b = t / n, i = t - b * n;
+    uint32_t r = __brev(i) >> (32 - logn);
+    out[(size_t)b * n + r] = in[t];
+}
+__global__ void p3_ntt_stage_batch_kernel(gl_t* a, const gl_t* W, uint32_t n,
+                                          uint32_t m, uint32_t B) {
+    uint32_t t = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t half = m >> 1, per = n >> 1;
+    if (t >= per * B) return;
+    uint32_t b = t / per, tid = t - b * per;
+    uint32_t blk = tid / half;
+    uint32_t i   = tid - blk * half;
+    size_t base = (size_t)b * n + blk * m + i;
+    gl_t w = W[(size_t)i * (n / m)];
+    gl_t u = a[base];
+    gl_t v = gl_mul(a[base + half], w);
+    a[base]        = gl_add(u, v);
+    a[base + half] = gl_sub(u, v);
+}
+
 __global__ void p3_scale_kernel(gl_t* a, gl_t c, uint32_t n) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) a[i] = gl_mul(a[i], c);
@@ -75,5 +102,14 @@ struct P3Ntt {
         for (uint32_t m = 2; m <= n; m <<= 1)
             p3_ntt_stage_kernel<<<halfblocks, P3_NTT_THREADS>>>(d_out, W, n, m);
         if (!forward) p3_scale_kernel<<<nblocks, P3_NTT_THREADS>>>(d_out, ninv, n);
+    }
+    // B contiguous same-size columns in one launch series (forward only);
+    // per-column results bitwise identical to run()
+    void run_batch(const gl_t* d_in, gl_t* d_out, uint32_t B) const {
+        uint32_t halfblocks = (n / 2 * B + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
+        uint32_t nblocks    = (n * B     + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
+        p3_bitrev_batch_kernel<<<nblocks, P3_NTT_THREADS>>>(d_in, d_out, n, logn, B);
+        for (uint32_t m = 2; m <= n; m <<= 1)
+            p3_ntt_stage_batch_kernel<<<halfblocks, P3_NTT_THREADS>>>(d_out, d_Wf, n, m, B);
     }
 };

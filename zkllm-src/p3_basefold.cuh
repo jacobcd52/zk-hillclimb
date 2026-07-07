@@ -24,6 +24,9 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include "p3_goldilocks.cuh"
 #include "p3_fri.cuh"
 #include "p3_ntt.cuh"
@@ -77,6 +80,21 @@ static inline void rsslog(const char* tag) {
     fprintf(stderr, "# rss %.1f GB at %s\n", kb / 1048576.0, tag);
 }
 
+// adaptive OpenMP team size: one thread per ~2^14 elements of work, capped at
+// the machine.  Tiny loops stay serial (a 128-thread fork/join costs ~10 ms on
+// this box -- it dominated the whole prover at small dims); big loops keep the
+// full machine.  Team size never changes the computed values: every parallel
+// loop here partitions work by a FIXED block count, so this is pure scheduling.
+static inline int nthr(size_t work) {
+#ifdef _OPENMP
+    size_t t = work >> 14; if (t < 1) t = 1;
+    int mx = omp_get_max_threads();
+    return (int)(t > (size_t)mx ? (size_t)mx : t);
+#else
+    (void)work; return 1;
+#endif
+}
+
 struct SumMsg { gl_t s0, s1, s2; };           // sumcheck univariate at t=0,1,2
 struct EvalProof {
     uint32_t logN, R, Q;                       // v = logN variables
@@ -94,7 +112,7 @@ struct EvalProof {
 static inline std::vector<gl_t> build_eq(const std::vector<gl_t>& z) {
     uint32_t v = (uint32_t)z.size(), N = 1u << v;
     std::vector<gl_t> w(N, 1ULL);
-    #pragma omp parallel for schedule(static) if (N >= 65536)
+    #pragma omp parallel for schedule(static) if (N >= 65536) num_threads(nthr(N))
     for (uint32_t b = 0; b < N; b++) {
         gl_t prod = 1ULL;
         for (uint32_t i = 0; i < v; i++)
@@ -112,7 +130,7 @@ static inline gl_t eval_h(const std::vector<gl_t>& c, const std::vector<gl_t>& e
     }
     const int P = 256;
     gl_t part[P];
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(static) num_threads(nthr(n))
     for (int p = 0; p < P; p++) {
         size_t lo = n * p / P, hi = n * (p + 1) / P;
         gl_t acc = 0;

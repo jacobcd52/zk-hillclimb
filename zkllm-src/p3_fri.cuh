@@ -96,6 +96,7 @@ static inline bool verify_path(Hash leaf, size_t idx, const std::vector<Hash>& p
 // No destructor (shallow-copyable into a vector); call free_() once when done.
 struct DeviceMerkle {
     std::vector<uint8_t*> dlev; std::vector<uint32_t> sz;
+    uint8_t* slab = nullptr;                 // one allocation for ALL internal levels
     void build(const std::vector<gl_t>& cw) {
         uint32_t M = (uint32_t)cw.size();
         gl_t* d_cw; cudaMalloc(&d_cw, (size_t)M*sizeof(gl_t));
@@ -110,12 +111,31 @@ struct DeviceMerkle {
         p3_merkle_leaf_kernel<<<(M+P3_MERKLE_THREADS-1)/P3_MERKLE_THREADS,P3_MERKLE_THREADS>>>(d_cw,d0,M);
         build_leaves(d0, M);
     }
-    // build from a precomputed device leaf-hash buffer (takes ownership of d0)
+    // build from a precomputed device leaf-hash buffer (takes ownership of d0).
+    // All internal levels live in ONE slab allocation and are built two levels
+    // per launch (p3_merkle_internal2_kernel) -- identical tree bytes, ~1/4 the
+    // GPU API calls (the per-level alloc+launch latency dominated the thousands
+    // of small commits in a layer proof).
     void build_leaves(uint8_t* d0, uint32_t M) {
         dlev.assign(1,d0); sz.assign(1,M);
-        for (uint32_t cnt=M; cnt>1;){ uint32_t half=cnt/2; uint8_t* dn; cudaMallocAsync(&dn,(size_t)half*32,0);
-            p3_merkle_internal_kernel<<<(half+P3_MERKLE_THREADS-1)/P3_MERKLE_THREADS,P3_MERKLE_THREADS>>>(dlev.back(),dn,half);
-            dlev.push_back(dn); sz.push_back(half); cnt=half; }
+        size_t tot = 0; for (uint32_t c = M/2; ; c /= 2) { tot += c; if (c <= 1) break; }
+        cudaMallocAsync(&slab, tot*32, 0);
+        uint8_t* p = slab;
+        for (uint32_t cnt=M; cnt>1;) {
+            if (cnt >= 4) {
+                uint32_t half = cnt/2, q = cnt/4;
+                uint8_t* l1 = p; p += (size_t)half*32;
+                uint8_t* l2 = p; p += (size_t)q*32;
+                p3_merkle_internal2_kernel<<<(q+P3_MERKLE_THREADS-1)/P3_MERKLE_THREADS,P3_MERKLE_THREADS>>>(dlev.back(),l1,l2,q);
+                dlev.push_back(l1); sz.push_back(half);
+                dlev.push_back(l2); sz.push_back(q);
+                cnt = q;
+            } else {
+                uint8_t* l1 = p; p += 32;
+                p3_merkle_internal_kernel<<<1,P3_MERKLE_THREADS>>>(dlev.back(),l1,1);
+                dlev.push_back(l1); sz.push_back(1); cnt = 1;
+            }
+        }
     }
     Hash root() const { Hash h; cudaMemcpy(h.data(), dlev.back(), 32, cudaMemcpyDeviceToHost); return h; }
     std::vector<Hash> path(size_t idx) const {
@@ -123,7 +143,9 @@ struct DeviceMerkle {
         for (size_t d=0; d+1<dlev.size(); d++){ Hash h; cudaMemcpy(h.data(), dlev[d]+(size_t)(idx^1)*32, 32, cudaMemcpyDeviceToHost); p.push_back(h); idx>>=1; }
         return p;
     }
-    void free_(){ for(auto p:dlev) cudaFreeAsync(p,0); dlev.clear(); sz.clear(); }
+    void free_(){ if(!dlev.empty()) cudaFreeAsync(dlev[0],0);
+        if(slab){ cudaFreeAsync(slab,0); slab=nullptr; }
+        dlev.clear(); sz.clear(); }
 
     // batch-extract authentication paths for many leaf indices in ONE kernel + ONE D2H
     // (replaces O(#idx * logM) tiny latency-bound copies).
