@@ -1800,3 +1800,100 @@ all violated-witness teeth now exercise the GPU prover path).  Round-0
 packed-bit evaluation (21.6 note) NOT done: at these sizes the expanded
 T_128 column buffer is 138 MB x2 ping-pong -- nowhere near a constraint,
 and sc is already 91 ms; revisit only if witness sizes grow 30x.
+
+### 21.8 The REAL Hawkeye per-product gadget over Binius (2026-07-08, session 2) [VERIFIED unless marked]
+
+Handoff item 2 of 21.6, done for the alignment relation (q/r/align -- the
+full p3_hawkeye_prod.cuh semantics minus only the DM decode-multiply lookup,
+which is item 3's logUp-over-towers).  Files: p3_binius_hawkeye.cuh +
+p3_binius_hawkeye_test.cu (battery suite 23, BINIUS-HAWKEYE 22/22).
+
+The migration (per product row, 110 F_2 bit-slices stacked into ONE PCS
+commitment, 128 slots, column id = top 7 index bits):
+
+    mag[15] sg pr sh[6] h[16] t1 t2 m3 o1 q[15] r[15] almag[15] alsg  (89
+    constrained) + a[8] b[8] eb[5] (committed-only; their evals at the
+    sumcheck endpoint travel in the proof and are bound by the SAME stacked
+    opening)                     vs Goldilocks: 11 x 64-bit columns.
+
+How each Goldilocks constraint/lookup ports to char-2 (the section 17 item-5
+"integer arithmetic is not field arithmetic" answer, in the concrete case):
+
+* C1 `q*pw + r = mag` (an INTEGER identity that Goldilocks gets for free)
+  becomes the shift-mux over committed bits: `mag_j = sum_s h_s * (j >= s ?
+  q_{j-s} : r_j)` with h a committed 16-bit one-hot of s = min(sh,15)
+  (pairwise products + XOR-parity = exactly-one).  Multiplication by the
+  power-of-two pw is a SHIFT of bit-slices -- no adder, no carries at all
+  for the alignment itself.
+* REM lookup (r < pw, 65536 rows) and RANGE15 lookup (q < 2^15, 32768 rows)
+  become STRUCTURAL: h_s * r_j = 0 for j >= s and h_s * q_j = 0 for
+  j >= 15-s (240 batched products).  Two of the four lookups vanish.
+* SH lookup (sh -> pw = 2^min(sh,15), 64 rows) becomes the in-circuit
+  sh <-> h linkage: helper bits t1=sh0*sh1, t2=t1*sh2, m3=t2*sh3,
+  o1=sh4|sh5; h_15 = o1|m3 (exactly [sh>=15]); min-bits constraints force
+  the selected s to equal sh's low 4 bits when h_15=0.  Third lookup gone.
+* C2 `al = pr*(1-2sg)*q` (signed, needs field negation in GL) becomes
+  sign-magnitude: almag_j = pr*q_j, alsg = sg*pr.  No negation exists in
+  char 2; the sign is just a bit.
+* Booleanity of all 110 slices is STRUCTURAL (the packed T_16 commitment
+  can only contain bits).
+
+All of it lands in 401 gamma-batched degree-2 constraints -> ONE degree-3
+eq-weighted zerocheck (same D as the 21.5 adder; the constraint functor is
+factored so each gamma costs ~1 extra mul, ~740 bf128 muls/row/point).  The
+GPU prover is the generic bf_sumcheck_prove_gpu with K=90 (register spill
+at this K is measured, not fatal: see sc time below).  Prove = 1 commit +
+1 zerocheck + 1 stacked opening; proof also carries the 21 committed-only
+column evals (transcript-absorbed before the stacking challenge rho).
+
+Teeth (22/22, real golden vectors from hawkeye_ref.py --dump, 3776 rows):
+witness validator 0 bad rows; functor==0 on 2000 random real rows and !=0
+after one flipped bit; honest accept; GPU proof byte-identical to host
+(root+rounds+finals+xev+opening) at BOTH 4096 and 262144 rows; the two
+CLASSIC Goldilocks-gadget attacks -- (q-1, r+pw) and doubled-shift/halved-q
+-- rejected by the structural ranges / sh<->h linkage that replaced the
+lookups; one targeted attack per constraint family (two h bits, zero h
+bits, flipped mag bit, almag!=0 on pr=0 row, almag!=0 on sh>=15 row,
+flipped alsg); tampered finals / xev / root / PCS all reject.
+
+MEASURED A/B, 262144 REAL products (hawkeye_prod_big.bin, regenerable
+bitwise: `python3 -c "import numpy as np, hawkeye_ref as H; rng =
+np.random.default_rng(20260708); H.dump_product_witness('hawkeye_prod_big.bin',
+[(rng.integers(0,256,(32,1024)).astype(np.uint8),
+rng.integers(0,256,(8,1024)).astype(np.uint8))])"` -- 32x1024x8 random fp8
+codes through the numpy replay's product_witness_rows, coverage: 145184
+sh>=15 rows, 53962 negative al, 4344 absent; RTX 4090; GL side = the
+standalone p3hw gadget at the prod-test parameters R=2 Q=24):
+
+    BINIUS: committed 16.06 MB | commit 32 ms, zerocheck 2048 ms (host A/B
+            9037 ms), open 25 ms -> prove 2105 ms | proof 1.72 MB | verify 45 ms
+    GL:     committed 792.00 MB (the 11 witness columns ALONE, rate-1/4
+            codeword + 8B-leaf Merkle, lookup aux columns EXCLUDED)
+            | commit 95 ms, prove 43540 ms (DM lookup alone 14010 ms)
+    ratios: committed data 49.3x | prove 20.7x total, 14.0x vs GL-excl-DM
+            (the honest same-scope number: Binius covers everything but DM)
+
+Caveats stated plainly: (a) the GL side here is the standalone per-product
+gadget (host quartic sumcheck + v3 logUp), NOT the s20-optimized composed
+hwl path -- the committed-data ratio is robust to that (the columns are
+what they are), the prove-time ratio is gadget-to-gadget; (b) the Binius
+zerocheck is ~97% of prove and is register-spill-bound at K=90 -- the
+round-0 packed-bit trick (21.6) and a split-K functor are known levers if
+this ever dominates a composed prover.
+
+DECISION (21.6 item-2 question): carry-save columns, NOT the section 17
+Goldilocks-hybrid, for the dot-product accumulation.  Measured basis:
+* One GL-committed column at this size costs 72 MB (792/11, measured above)
+  -- the hybrid keeps AT LEAST al (and realistically q, sg, pr) in GL,
+  so its floor is 72-288 MB per matmul-witness PLUS a cross-field
+  consistency argument that does not exist yet.
+* The bit-sliced adder machinery is measured at 0.126 MB per bit-column at
+  2^18 rows (21.5: 4.03 MB / 32 columns).  A pos/neg split binary-tree
+  accumulation of the 32-product groups needs ~65-80 extra bit-columns
+  worth of committed data [REASONED from the measured rate: +8-10 MB here,
+  total ~26 MB] -- still 30x under GL and 3-11x under the hybrid's floor,
+  with no cross-field argument to invent, and the 21.5 e2e already proved
+  the identical adder relation with teeth at this exact scale.
+The accumulation gadget itself (even/odd-restriction chaining of tree
+levels) is the next increment, folded into item 3 (logUp over towers) since
+the group sums feed the max_exp gadget that consumes the lookups.

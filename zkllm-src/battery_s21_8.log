@@ -1,0 +1,26 @@
+=== build ===
+=== run ===
+p3_matmul_selftest: P3.4b MATMUL: 8 passed, 0 failed -> ALL PASS
+p3_rmsnorm_test: RMSNORM-GADGET: 25 passed, 0 failed -> ALL PASS
+p3_swiglu_test: SWIGLU-GADGET: 16 passed, 0 failed -> ALL PASS
+p3_quant_test: QUANT-GADGET: 26 passed, 0 failed -> ALL PASS
+p3_bfadd_test: BFADD-GADGET: 22 passed, 0 failed -> ALL PASS
+p3_rope_test: ROPE-GADGET: 17 passed, 0 failed -> ALL PASS
+p3_softmax_test: SOFTMAX-GADGET: 19 passed, 0 failed -> ALL PASS
+p3_gkr_selftest: GKR-SELFTEST: 88 passed, 0 failed -> ALL PASS
+p3_logup_test: P3-LOGUP: 13 passed, 0 failed -> ALL PASS
+p3_hawkeye_zk_test: HAWKEYE-ZK-HIDING: 19 passed, 0 failed -> ALL PASS
+zk_gadget_smoke: ZK-GADGET-SMOKE: 8 passed, 0 failed -> ALL PASS
+p3_transformer_test: COMPOSED-LAYER: 30 passed, 0 failed -> ALL PASS
+zk_layer_smoke: ZK-LAYER-SMOKE: 15 passed, 0 failed -> ALL PASS
+p3_transformer_zk_test: FULL-LAYER-ZK-HIDING: 16 passed, 0 failed -> ALL PASS
+p3_model_test: COMPOSED-MODEL: 26 passed, 0 failed -> ALL PASS
+zk_model_smoke: ZK-MODEL-SMOKE: 16 passed, 0 failed -> ALL PASS
+p3_model_zk_test: FULL-MODEL-ZK-HIDING: 11 passed, 0 failed -> ALL PASS
+p3_binius_field_test: BINIUS-FIELD: 11 passed, 0 failed -> ALL PASS
+p3_binius_ntt_test: BINIUS-NTT: 8 passed, 0 failed -> ALL PASS
+p3_binius_pcs_test: BINIUS-PCS: 16 passed, 0 failed -> ALL PASS
+p3_binius_sumcheck_test: BINIUS-SUMCHECK: 14 passed, 0 failed -> ALL PASS
+p3_binius_e2e_test: BINIUS-E2E: 10 passed, 0 failed -> ALL PASS
+p3_binius_hawkeye_test: BINIUS-HAWKEYE: 22 passed, 0 failed -> ALL PASS
+BATTERY: ALL GREEN
