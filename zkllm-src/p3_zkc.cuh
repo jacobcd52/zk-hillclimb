@@ -228,16 +228,36 @@ static inline Hash salted_leaf(gl_t v, const Salt& s) {
     return h;
 }
 
+// register-resident salted leaf: salt = SHA256(sseed_le8 || i_le8), leaf =
+// SHA256(value_le8 || salt) -- both single padded blocks; the salt's BE h-words
+// feed the leaf block directly (bitwise-identical to the byte-oriented path)
+__device__ __forceinline__ void p3zkc_salted_leaf_w(gl_t v, uint64_t sseed, uint64_t gi,
+                                                    uint32_t h[8]) {
+    uint32_t w[16] = {0}, hs[8];
+    w[0] = p3_bswap32((uint32_t)sseed);
+    w[1] = p3_bswap32((uint32_t)(sseed >> 32));
+    w[2] = p3_bswap32((uint32_t)gi);
+    w[3] = p3_bswap32((uint32_t)(gi >> 32));
+    w[4] = 0x80000000u;
+    w[15] = 128u;                                   // 16-byte message
+    p3_sha256_rounds_w16(w, hs);
+    uint32_t w2[16] = {0};
+    w2[0] = p3_bswap32((uint32_t)v);
+    w2[1] = p3_bswap32((uint32_t)(v >> 32));
+    #pragma unroll
+    for (int k = 0; k < 8; k++) w2[2 + k] = hs[k];
+    w2[10] = 0x80000000u;
+    w2[15] = 320u;                                  // 40-byte message
+    p3_sha256_rounds_w16(w2, h);
+}
 __global__ void p3zkc_salted_leaf_kernel(const gl_t* cw, uint64_t sseed, uint8_t* out, uint32_t M) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= M) return;
-    uint8_t sb[16], salt[32], buf[40];
-    for (int k = 0; k < 8; k++) { sb[k] = (uint8_t)(sseed >> (8 * k)); sb[8 + k] = (uint8_t)((uint64_t)i >> (8 * k)); }
-    p3_sha256(sb, 16, salt);
-    gl_t v = cw[i];
-    for (int k = 0; k < 8; k++) buf[k] = (uint8_t)(v >> (8 * k));
-    for (int k = 0; k < 32; k++) buf[8 + k] = salt[k];
-    p3_sha256(buf, 40, out + (size_t)i * 32);
+    uint32_t h[8];
+    p3zkc_salted_leaf_w(cw[i], sseed, i, h);
+    uint32_t* o = (uint32_t*)(out + (size_t)i * 32);
+    #pragma unroll
+    for (int k = 0; k < 8; k++) o[k] = p3_bswap32(h[k]);
 }
 // chunk variant for streamed trees: leaves [off, off+len) of the full codeword
 // (the salt index is the GLOBAL leaf index off+i)
@@ -245,14 +265,11 @@ __global__ void p3zkc_salted_leaf_off_kernel(const gl_t* cw_chunk, uint64_t ssee
                                              uint64_t off, uint32_t len) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= len) return;
-    uint64_t gi = off + i;
-    uint8_t sb[16], salt[32], buf[40];
-    for (int k = 0; k < 8; k++) { sb[k] = (uint8_t)(sseed >> (8 * k)); sb[8 + k] = (uint8_t)(gi >> (8 * k)); }
-    p3_sha256(sb, 16, salt);
-    gl_t v = cw_chunk[i];
-    for (int k = 0; k < 8; k++) buf[k] = (uint8_t)(v >> (8 * k));
-    for (int k = 0; k < 32; k++) buf[8 + k] = salt[k];
-    p3_sha256(buf, 40, out + (size_t)i * 32);
+    uint32_t h[8];
+    p3zkc_salted_leaf_w(cw_chunk[i], sseed, off + i, h);
+    uint32_t* o = (uint32_t*)(out + (size_t)i * 32);
+    #pragma unroll
+    for (int k = 0; k < 8; k++) o[k] = p3_bswap32(h[k]);
 }
 
 // device Merkle tree with salted leaves (structure mirrors p3fri::DeviceMerkle)

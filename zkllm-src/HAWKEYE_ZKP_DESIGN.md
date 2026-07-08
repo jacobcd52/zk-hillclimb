@@ -1433,3 +1433,25 @@ Results (proof bytes identical at both dims, verify_ok=1, ALL 17 suites green):
     d=256  zk: prove 19.3 -> 18.2 s
 
 Session cumulative: 344.3 -> 135.8 = 2.54x (486.6 pre-session -> 135.8 = 3.58x).
+
+### 20.6 Lever: register-resident GPU SHA-256 [VERIFIED]
+
+The device Merkle kernels were byte-oriented: uint8 local-memory buffers,
+byte-granular global loads, and a materialized 64-entry message schedule --
+local-memory traffic dominated every tree build.  Rewrote the four kernels
+(merkle leaf, internal, fused-double internal, salted leaf x2) around
+`p3_sha256_rounds_w16`: word loads + __byte_perm endian swaps, rolling 16-word
+schedule, all in registers; the salt's BE h-words feed the leaf block directly.
+Bitwise-identical digests (same SHA-256): commit_split_bench roots unchanged,
+full salted tree at M0=2^28 376 -> 69 ms (5.4x), leaves 192 -> 32 ms.
+
+    d=1024 zk: prove 135.8 -> 106.6 s (1.27x)   commit_salt 26.9 -> 12.5
+               lug/inv 19.5 -> 8.3   mm 64.8 -> 50.9   lug 33.9 -> 22.6
+               batch 32.3 -> 29.0 (q0/tree 3.0 -> 1.0)
+    d=256  zk: prove 18.2 -> 14.9 s   proof bytes identical at both dims
+    ALL 17 suites green.
+
+Session cumulative: 344.3 -> 106.6 = 3.23x (486.6 pre-session -> 106.6 = 4.56x).
+Post-lever profile (106.6 s): mm=50.9 (cwit ~35 s: per 2^25-real commit ~710 ms
+= NTT 244 + tree 69 + ~400 host-side augment/copy) batch=29.0 (q0/enc 13.5,
+NTT-bound) lug=22.6 mask_gen=14.6 commit_salt=12.5.

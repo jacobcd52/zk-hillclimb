@@ -103,23 +103,82 @@ __host__ __device__ __forceinline__ void p3_sha256_compress64(const uint8_t in[6
     }
 }
 
+// ---- register-resident device SHA-256 (bitwise-identical to p3_sha256 /
+// p3_sha256_compress64; word loads + rolling 16-word schedule instead of the
+// byte-oriented local-memory buffers -- the byte path dominated commit time) --
+__device__ __forceinline__ uint32_t p3_bswap32(uint32_t x) { return __byte_perm(x, 0, 0x0123); }
+__device__ __forceinline__ void p3_sha256_rounds_w16(uint32_t w[16], uint32_t h[8]) {
+    static const uint32_t K[64] = {
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2};
+    uint32_t a=0x6a09e667,b=0xbb67ae85,c=0x3c6ef372,d=0xa54ff53a,
+             e=0x510e527f,f=0x9b05688c,g=0x1f83d9ab,hh=0x5be0cd19;
+    #pragma unroll
+    for (int i = 0; i < 64; i++) {
+        uint32_t wi;
+        if (i < 16) wi = w[i];
+        else {
+            uint32_t w15 = w[(i-15) & 15], w2 = w[(i-2) & 15];
+            uint32_t s0 = p3_ror(w15,7) ^ p3_ror(w15,18) ^ (w15 >> 3);
+            uint32_t s1 = p3_ror(w2,17) ^ p3_ror(w2,19) ^ (w2 >> 10);
+            wi = w[i & 15] = w[i & 15] + s0 + w[(i-7) & 15] + s1;
+        }
+        uint32_t S1 = p3_ror(e,6) ^ p3_ror(e,11) ^ p3_ror(e,25);
+        uint32_t ch = (e & f) ^ (~e & g);
+        uint32_t t1 = hh + S1 + ch + K[i] + wi;
+        uint32_t S0 = p3_ror(a,2) ^ p3_ror(a,13) ^ p3_ror(a,22);
+        uint32_t mj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t t2 = S0 + mj;
+        hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    }
+    h[0]=0x6a09e667+a; h[1]=0xbb67ae85+b; h[2]=0x3c6ef372+c; h[3]=0xa54ff53a+d;
+    h[4]=0x510e527f+e; h[5]=0x9b05688c+f; h[6]=0x1f83d9ab+g; h[7]=0x5be0cd19+hh;
+}
+// full SHA-256 of one 8-byte little-endian value (single padded block) -> BE h words
+__device__ __forceinline__ void p3_sha256_val8_w(gl_t v, uint32_t h[8]) {
+    uint32_t w[16] = {0};
+    w[0] = p3_bswap32((uint32_t)v);
+    w[1] = p3_bswap32((uint32_t)(v >> 32));
+    w[2] = 0x80000000u;
+    w[15] = 64u;                                    // bit length
+    p3_sha256_rounds_w16(w, h);
+}
+// compress64 of two 32-byte children given as BE h-words (Merkle node hash)
+__device__ __forceinline__ void p3_sha256_node_w(const uint32_t l[8], const uint32_t r[8],
+                                                 uint32_t h[8]) {
+    uint32_t w[16];
+    #pragma unroll
+    for (int k = 0; k < 8; k++) { w[k] = l[k]; w[8 + k] = r[k]; }
+    p3_sha256_rounds_w16(w, h);
+}
+
 __global__ void p3_merkle_leaf_kernel(const gl_t* codeword, uint8_t* out, uint32_t M) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= M) return;
-    uint8_t buf[8];
-    gl_t v = codeword[i];
+    uint32_t h[8];
+    p3_sha256_val8_w(codeword[i], h);
+    uint32_t* o = (uint32_t*)(out + (size_t)i * 32);
     #pragma unroll
-    for (int k = 0; k < 8; k++) buf[k] = (uint8_t)(v >> (8 * k));
-    p3_sha256(buf, 8, out + (size_t)i * 32);
+    for (int k = 0; k < 8; k++) o[k] = p3_bswap32(h[k]);
 }
 
 __global__ void p3_merkle_internal_kernel(const uint8_t* in, uint8_t* out, uint32_t cnt) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= cnt) return;
-    uint8_t buf[64];
+    const uint32_t* p = (const uint32_t*)(in + (size_t)(2*i) * 32);
+    uint32_t w[16], h[8];
     #pragma unroll
-    for (int k = 0; k < 32; k++) { buf[k] = in[(size_t)(2*i)*32 + k]; buf[32+k] = in[(size_t)(2*i+1)*32 + k]; }
-    p3_sha256_compress64(buf, out + (size_t)i * 32);
+    for (int k = 0; k < 16; k++) w[k] = p3_bswap32(p[k]);
+    p3_sha256_rounds_w16(w, h);
+    uint32_t* o = (uint32_t*)(out + (size_t)i * 32);
+    #pragma unroll
+    for (int k = 0; k < 8; k++) o[k] = p3_bswap32(h[k]);
 }
 
 // fused DOUBLE level: thread i hashes 4 children into parents 2i,2i+1 (out1)
@@ -130,16 +189,21 @@ __global__ void p3_merkle_internal2_kernel(const uint8_t* in, uint8_t* out1,
                                            uint8_t* out2, uint32_t q) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= q) return;
-    uint8_t buf[64], par[64];
+    const uint32_t* p = (const uint32_t*)(in + (size_t)(4*i) * 32);
+    uint32_t w[16], h0[8], h1[8], h2[8];
     #pragma unroll
-    for (int k = 0; k < 64; k++) buf[k] = in[(size_t)(4*i)*32 + k];
-    p3_sha256_compress64(buf, par);
+    for (int k = 0; k < 16; k++) w[k] = p3_bswap32(p[k]);
+    p3_sha256_rounds_w16(w, h0);
     #pragma unroll
-    for (int k = 0; k < 64; k++) buf[k] = in[(size_t)(4*i+2)*32 + k];
-    p3_sha256_compress64(buf, par + 32);
+    for (int k = 0; k < 16; k++) w[k] = p3_bswap32(p[16 + k]);
+    p3_sha256_rounds_w16(w, h1);
+    uint32_t* o1 = (uint32_t*)(out1 + (size_t)(2*i) * 32);
     #pragma unroll
-    for (int k = 0; k < 64; k++) out1[(size_t)(2*i)*32 + k] = par[k];
-    p3_sha256_compress64(par, out2 + (size_t)i * 32);
+    for (int k = 0; k < 8; k++) { o1[k] = p3_bswap32(h0[k]); o1[8 + k] = p3_bswap32(h1[k]); }
+    p3_sha256_node_w(h0, h1, h2);
+    uint32_t* o2 = (uint32_t*)(out2 + (size_t)i * 32);
+    #pragma unroll
+    for (int k = 0; k < 8; k++) o2[k] = p3_bswap32(h2[k]);
 }
 
 // Build a Merkle tree over M (power of 2) codeword elements; write 32-byte root.
