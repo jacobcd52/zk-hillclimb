@@ -481,12 +481,14 @@ static inline uint64_t lcg_jump(uint64_t s, uint64_t k, const LcgLadder& L) {
     return s;
 }
 static inline void zprng_fill(uint64_t s, gl_t* out, size_t n) {
-    if (n < ((size_t)1 << 22)) {
+    if (n < ((size_t)1 << 19)) {
         for (size_t i = 0; i < n; i++) out[i] = zprng(s);
         return;
     }
     static const LcgLadder L = lcg_ladder();
-    const int C = 32;
+    // thread count scaled to the fill size (large fixed teams lost to
+    // fork/join + NUMA on the mid-size fills, section 19.3)
+    const int C = (int)std::min<size_t>(32, n >> 18);
 #ifdef _OPENMP
     #pragma omp parallel for schedule(static) num_threads(C)
 #endif

@@ -14,6 +14,22 @@ __global__ void p3_bitrev_kernel(const gl_t* in, gl_t* out, uint32_t n, uint32_t
     uint32_t r = __brev(i) >> (32 - logn);
     out[r] = in[i];
 }
+// tiled bit-reversal permutation (same out[rev(i)] = in[i] mapping): 32x32
+// shared-memory tiles make both the gather and the scatter segment-coalesced
+// (the naive kernel's random 8-byte scatter was ~1/3 of big-NTT time).
+// blockIdx.y = batch column (column b at offset b*n).
+__global__ void p3_bitrev_tiled_kernel(const gl_t* in, gl_t* out, uint32_t logn) {
+    __shared__ gl_t tile[32][33];
+    const uint32_t nmid = logn - 10;
+    uint32_t mid = blockIdx.x;
+    size_t cb = (size_t)blockIdx.y << logn;
+    uint32_t x = threadIdx.x, y = threadIdx.y;
+    tile[y][x] = in[cb | ((size_t)y << (logn - 5)) | ((size_t)mid << 5) | x];
+    __syncthreads();
+    uint32_t rmid = nmid ? (__brev(mid) >> (32 - nmid)) : 0;
+    uint32_t rx = __brev(x) >> 27, ry = __brev(y) >> 27;
+    out[cb | ((size_t)ry << (logn - 5)) | ((size_t)rmid << 5) | rx] = tile[x][y];
+}
 
 // one DIT stage: m = 2^s butterfly span, half = m/2; W is the length-(n/2) table
 // of powers of the primitive n-th root, indexed with stride n/m.
@@ -142,7 +158,10 @@ struct P3Ntt {
         uint32_t halfblocks = (n/2 + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         uint32_t qblocks    = (n/4 + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         uint32_t nblocks     = (n   + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
-        p3_bitrev_kernel<<<nblocks, P3_NTT_THREADS>>>(d_in, d_out, n, logn);
+        if (logn >= 10)
+            p3_bitrev_tiled_kernel<<<dim3(1u << (logn - 10), 1), dim3(32, 32)>>>(d_in, d_out, logn);
+        else
+            p3_bitrev_kernel<<<nblocks, P3_NTT_THREADS>>>(d_in, d_out, n, logn);
         const gl_t* W = forward ? d_Wf : d_Wi;
         // fused stage pairs (radix-4 traffic); odd logn takes one radix-2 first
         uint32_t m = 2;
@@ -160,7 +179,10 @@ struct P3Ntt {
         uint32_t halfblocks = (n / 2 * B + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         uint32_t qblocks    = (n / 4 * B + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         uint32_t nblocks    = (n * B     + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
-        p3_bitrev_batch_kernel<<<nblocks, P3_NTT_THREADS>>>(d_in, d_out, n, logn, B);
+        if (logn >= 10)
+            p3_bitrev_tiled_kernel<<<dim3(1u << (logn - 10), B), dim3(32, 32)>>>(d_in, d_out, logn);
+        else
+            p3_bitrev_batch_kernel<<<nblocks, P3_NTT_THREADS>>>(d_in, d_out, n, logn, B);
         uint32_t m = 2;
         if (logn & 1) {
             p3_ntt_stage_batch_kernel<<<halfblocks, P3_NTT_THREADS>>>(d_out, d_Wf, n, m, B);

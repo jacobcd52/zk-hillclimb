@@ -1455,3 +1455,25 @@ Session cumulative: 344.3 -> 106.6 = 3.23x (486.6 pre-session -> 106.6 = 4.56x).
 Post-lever profile (106.6 s): mm=50.9 (cwit ~35 s: per 2^25-real commit ~710 ms
 = NTT 244 + tree 69 + ~400 host-side augment/copy) batch=29.0 (q0/enc 13.5,
 NTT-bound) lug=22.6 mask_gen=14.6 commit_salt=12.5.
+
+### 20.7 Lever: tiled bit-reversal + witness move/reserve + fill tuning [VERIFIED]
+
+* NTT bit-reversal: 32x32 shared-memory tiles (p3_bitrev_tiled_kernel) make the
+  scatter segment-coalesced -- the naive 8-byte random scatter was 50 ms of
+  every 2^28 NTT (~1/3).  Same permutation, ntt4_selftest ALL PASS.
+* hawkeye dp witness columns MOVE into their commits under g_free_dp (the
+  caller cedes them anyway) instead of a by-value copy, and the witness
+  allocator RESERVES the augmented capacity in zk mode so the commit-time
+  in-place augment never reallocs/copies (mask_gen 14.6 -> 9.4 s).
+* zprng_fill: parallel threshold lowered to 2^19 with size-scaled thread count.
+
+Results (proof bytes identical at both dims, verify_ok=1, ALL 17 suites green):
+
+    d=1024 zk: prove 106.6 -> 88.0 s (1.21x)   mm 50.9 -> 37.3
+               batch 29.0 -> 25.3 (q0/enc 13.5 -> 9.8)   lug 22.6 -> 21.2
+    d=256  zk: prove 14.9 -> 13.7 s
+
+Session cumulative: 344.3 -> 88.0 = 3.91x (486.6 pre-session -> 88.0 = 5.53x).
+Post-lever profile (88.0 s): mm=37.3 (commits now at the GPU floor: NTT ~170 +
+tree 69 + upload 26 ms per 2^28 commit)  batch=25.3  lug=21.2  commit_salt=10.6
+mask_gen=9.4  sc5z/chain=4.9.

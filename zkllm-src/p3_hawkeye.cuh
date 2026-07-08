@@ -293,10 +293,17 @@ static inline LayerWit gen_witness(const Golden& L, bool check_float = true,
     for (uint32_t n = 0; n < L.N; n++) wt.wsb[n] = L.ws[n];
     wt.Y.assign((size_t)L.B * L.N, 0);
 
-    for (int c = 0; c < NDP; c++) wt.dp[c].assign(d.P, 0);
-    for (int c = 0; c < NDG; c++) wt.dg[c].assign(d.G, 0);
-    for (int c = 0; c < NDO; c++) wt.dob[c].assign(d.Opad, 0);
-    for (int c = 0; c < NDS; c++) { wt.db[c].assign(d.Bpad, 0); wt.dn[c].assign(d.Npad, 0); }
+    // zk: reserve the AUGMENTED capacity so the commit-time in-place augment
+    // (move + resize in commit_col_nc) never reallocates/copies the big columns
+    auto rsv = [](std::vector<gl_t>& v, size_t n) {
+        if (p3zkc::G.on) { uint32_t lg = 0; while (((size_t)1 << lg) < n) lg++;
+                           v.reserve((size_t)1 << p3zkc::vfull(lg)); }
+        v.assign(n, 0);
+    };
+    for (int c = 0; c < NDP; c++) rsv(wt.dp[c], d.P);
+    for (int c = 0; c < NDG; c++) rsv(wt.dg[c], d.G);
+    for (int c = 0; c < NDO; c++) rsv(wt.dob[c], d.Opad);
+    for (int c = 0; c < NDS; c++) { rsv(wt.db[c], d.Bpad); rsv(wt.dn[c], d.Npad); }
     wt.va.assign(d.P, 0); wt.vb.assign(d.P, 0);
     for (int i = 0; i < NLU; i++) {
         size_t sz = d.P;
@@ -1734,7 +1741,12 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         return nullptr;
     };
     for (int c = 0; c < NDP; c++) {
-        CDp[c] = p3lu::commit_col_nc(wt.dp[c], R, mof(c, P_AL, &mAL, P_SEL, &mSEL));
+        // g_free_dp: the caller cedes the column anyway -- MOVE it into the
+        // commit (identical values; skips a 100s-of-MB copy per big column)
+        CDp[c] = g_free_dp
+            ? p3lu::commit_col_nc(std::move(const_cast<LayerWit&>(wt).dp[c]), R,
+                                  mof(c, P_AL, &mAL, P_SEL, &mSEL))
+            : p3lu::commit_col_nc(wt.dp[c], R, mof(c, P_AL, &mAL, P_SEL, &mSEL));
         pf.rdp[c] = CDp[c].root;
         if (g_free_dp) std::vector<gl_t>().swap(const_cast<LayerWit&>(wt).dp[c]);
     }
