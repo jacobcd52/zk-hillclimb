@@ -72,6 +72,34 @@ __global__ void p3lu_qmgen_kernel(gl_t* out, uint64_t sd, size_t n, int mo) {
     if (i < n) out[i] = mo ? p3zkc::zprng_at(sd, i) : 1ULL;
 }
 
+// zk GKR leaf construction on device (even = real/witness rows, odd = mask
+// siblings) -- bit-identical to the host loop (zprng_at is __host__ __device__)
+__global__ void p3lu_zkleaf_kernel(const gl_t* Am, gl_t beta, uint64_t pseed, uint64_t qseed,
+                                   int mo, size_t NR, gl_t* LP, gl_t* LQ, size_t NM) {
+    size_t x = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= NM) return;
+    LP[2*x]   = x < NR ? 1ULL : 0ULL;
+    LQ[2*x]   = gl_add(Am[x], beta);
+    gl_t qm = mo ? p3zkc::zprng_at(qseed, x) : 1ULL;
+    LP[2*x+1] = mo ? gl_mul(p3zkc::zprng_at(pseed, x), qm) : 0ULL;
+    LQ[2*x+1] = qm;
+}
+// device block-partial sum of the sm stream (the A-side mask fraction sum)
+__global__ void p3lu_smsum_kernel(uint64_t pseed, int mo, gl_t* out, size_t n) {
+    __shared__ gl_t sh[256];
+    uint32_t tid = threadIdx.x;
+    gl_t acc = 0;
+    for (size_t i = (size_t)blockIdx.x * blockDim.x + tid; i < n;
+         i += (size_t)gridDim.x * blockDim.x)
+        acc = gl_add(acc, mo ? p3zkc::zprng_at(pseed, i) : 0ULL);
+    sh[tid] = acc; __syncthreads();
+    for (uint32_t s = 128; s > 0; s >>= 1) {
+        if (tid < s) sh[tid] = gl_add(sh[tid], sh[tid + s]);
+        __syncthreads();
+    }
+    if (tid == 0) out[blockIdx.x] = sh[0];
+}
+
 // device reduction of the blind-sum H = sum_b B0 + E*(B1 + E*B2) (block partials)
 __global__ void p3lu_blindsum_kernel(const gl_t* b0, const gl_t* b1, const gl_t* b2,
                                      const gl_t* e, gl_t* out, size_t n) {
@@ -1134,29 +1162,28 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             // sm, qm -- pm/qm = sm, so the mask fraction sum is a PLAIN SUM of
             // the sm stream (no inversions), and (pm,qm) stays a uniform pair
             a.pseed = p3zkc::next_seed(); a.qseed = p3zkc::next_seed();
-            std::vector<gl_t> pmv(NM), qmv(NM);
-            const int P = NM >= 65536 ? 64 : 1;
-            std::vector<gl_t> part(P, 0);
-            #pragma omp parallel for schedule(static) if (P > 1) num_threads(p3bf::nthr(NM))
-            for (int p = 0; p < P; p++) {
-                size_t lo = NM * p / P, hi = NM * (p + 1) / P;
-                gl_t acc = 0;
-                for (size_t i = lo; i < hi; i++) {
-                    gl_t smv = mo ? p3zkc::zprng_at(a.pseed, i) : 0ULL;
-                    qmv[i] = mo ? p3zkc::zprng_at(a.qseed, i) : 1ULL;
-                    pmv[i] = gl_mul(smv, qmv[i]);
-                    acc = gl_add(acc, smv);
-                }
-                part[p] = acc;
-            }
+            // GPU: sm-stream sum, then generate + commit pm and qm entirely on
+            // device (identical values/seed order -> identical roots + salts)
             gl_t sm = 0;
-            for (int p = 0; p < P; p++) sm = gl_add(sm, part[p]);
+            {
+                const uint32_t NB = 256;
+                gl_t* dblk = p3bf::dmalloc(NB, "lug:smsum");
+                p3lu_smsum_kernel<<<NB, 256>>>(a.pseed, mo ? 1 : 0, dblk, NM);
+                std::vector<gl_t> hb(NB);
+                cudaMemcpy(hb.data(), dblk, (size_t)NB * 8, cudaMemcpyDeviceToHost);
+                cudaFreeAsync(dblk, 0);
+                for (auto x : hb) sm = gl_add(sm, x);
+            }
             a.sP = p3zkc::next_seed();
-            a.rtP = p3zkc::salted_commit_root(pmv, R, a.sP);
-            std::vector<gl_t>().swap(pmv);
+            double t_c0 = p3zp::nowms();
+            gl_t* dm = p3bf::dmalloc(NM, "lug:pmqm");
+            p3lu_pmgen_kernel<<<(uint32_t)((NM + 255) / 256), 256>>>(dm, a.pseed, a.qseed, NM, mo ? 1 : 0);
+            a.rtP = p3zkc::salted_commit_root_dev(dm, NM, R, a.sP);
             a.sQ = p3zkc::next_seed();
-            a.rtQ = p3zkc::salted_commit_root(qmv, R, a.sQ);
-            std::vector<gl_t>().swap(qmv);
+            p3lu_qmgen_kernel<<<(uint32_t)((NM + 255) / 256), 256>>>(dm, a.qseed, NM, mo ? 1 : 0);
+            a.rtQ = p3zkc::salted_commit_root_dev(dm, NM, R, a.sQ);
+            cudaFreeAsync(dm, 0);
+            if (p3zp::on()) { p3zp::g.lug_inv.ms += p3zp::nowms() - t_c0; p3zp::g.lug_inv.n++; }
             pf.sub[s].rt_pm = a.rtP; pf.sub[s].rt_qm = a.rtQ;
             tr.absorb("lug-pm", a.rtP.data(), 32);
             tr.absorb("lug-qm", a.rtQ.data(), 32);
@@ -1246,8 +1273,23 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
 
         // ---- GKR leaves: even = real/witness-mask rows, odd = zk mask siblings
         double t_sc = lu_now_ms();
+        double t_leaf0 = p3zp::nowms();
         std::vector<gl_t> LP, LQ;
-        if (zk) {
+        gl_t *dLP = nullptr, *dLQ = nullptr;
+        const bool devleaf = zk && gpu && 2 * NM >= p3gkr::GKR_FULLGPU_MIN;
+        if (devleaf) {
+            // leaves built directly on device (bit-identical values); Am is
+            // uploaded once and never materialized as host LP/LQ
+            AMask& a = am[s];
+            const bool mo = p3zkc::G.mask_on;
+            gl_t* dAm = p3bf::dmalloc(NM, "lug:dAm");
+            cudaMemcpy(dAm, Am.data(), NM * 8, cudaMemcpyHostToDevice);
+            dLP = p3bf::dmalloc(2 * NM, "lug:dLP");
+            dLQ = p3bf::dmalloc(2 * NM, "lug:dLQ");
+            p3lu_zkleaf_kernel<<<(uint32_t)((NM + 255) / 256), 256>>>(
+                dAm, beta, a.pseed, a.qseed, mo ? 1 : 0, NR, dLP, dLQ, NM);
+            cudaFreeAsync(dAm, 0);
+        } else if (zk) {
             AMask& a = am[s];
             const bool mo = p3zkc::G.mask_on;
             LP.resize(2 * NM); LQ.resize(2 * NM);
@@ -1265,8 +1307,11 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             for (size_t x = 0; x < NR; x++) LQ[x] = gl_add(Am[x], beta);
         }
         std::vector<gl_t>().swap(Am);
+        if (p3zp::on()) { p3zp::g.lug_blA.ms += p3zp::nowms() - t_leaf0; p3zp::g.lug_blA.n++; }
         std::vector<gl_t> rA; gl_t cpA = 0, cqA = 0;
-        sp.gk = p3gkr::prove(tr, "lug-gA", std::move(LP), std::move(LQ), !zk,
+        sp.gk = devleaf
+              ? p3gkr::prove_dev(tr, "lug-gA", dLP, dLQ, 2 * NM, !zk, rA, &cpA, &cqA)
+              : p3gkr::prove(tr, "lug-gA", std::move(LP), std::move(LQ), !zk,
                              rA, &cpA, &cqA, gpu);
         accP = gl_add(gl_mul(accP, sp.gk.Q), gl_mul(sp.gk.P, accQ));
         accQ = gl_mul(accQ, sp.gk.Q);
@@ -1278,7 +1323,12 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         // shared member point pm = (rA[0..n) || rA[n+g..))
         std::vector<gl_t> pm(rA.begin(), rA.begin() + n);
         pm.insert(pm.end(), rA.begin() + n + g, rA.end());
-        std::vector<gl_t> eqpm = p3bf::build_eq(pm);
+        const size_t NAc = (size_t)1 << pm.size();
+        const bool deveq = gpu && NAc >= ((size_t)1 << 15);
+        double t_eq0 = p3zp::nowms();
+        std::vector<gl_t> eqpm;
+        if (!deveq) eqpm = p3bf::build_eq(pm);   // host fallback path only
+        if (p3zp::on()) { p3zp::g.lug_blT.ms += p3zp::nowms() - t_eq0; p3zp::g.lug_blT.n++; }
 
         // zk: ledger-open the two mask columns at rA (claims = the published
         // last-layer terminals); pure zprng streams -> drop + regenerate
@@ -1318,14 +1368,18 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         // values first (independent exact dot products -- identical field
         // elements in any order and on either device), absorbed in order
         std::vector<gl_t> ymem((size_t)k * c);
-        const size_t NAc = eqpm.size();
-        // device dots from 2^15 up (the 19.7 GB/s upload of a 512 MB column
-        // beats the measured ~160 ms/claim host eval_h at the big dims)
-        if (gpu && NAc >= ((size_t)1 << 15)) {
-            // device dots against one resident eq(pm) column
+        // device dots from 2^15 up, against a DEVICE-BUILT eq(pm) column (the
+        // host build_eq of a 2^26 eq vector was ~20 s of the d=1024 proof)
+        if (deveq) {
             const uint32_t NB = 256;
             gl_t* deq = p3bf::dmalloc(NAc, "lug:eqpm");
-            cudaMemcpy(deq, eqpm.data(), NAc * 8, cudaMemcpyHostToDevice);
+            {
+                gl_t* dz = p3bf::dmalloc(pm.size(), "lug:pmz");
+                cudaMemcpy(dz, pm.data(), pm.size() * 8, cudaMemcpyHostToDevice);
+                p3bf::p3bf_eq_kernel<<<(uint32_t)((NAc + 255) / 256), 256>>>(
+                    dz, deq, (uint32_t)pm.size(), (uint32_t)NAc);
+                cudaFreeAsync(dz, 0);
+            }
             gl_t* dcol = p3bf::dmalloc(NAc, "lug:ycol");
             gl_t* dblk = p3bf::dmalloc(NB, "lug:yblk");
             std::vector<gl_t> hb(NB);
@@ -1363,8 +1417,11 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
                     tr.absorb("lug-yv", &y, sizeof(gl_t));
                 }
             }
-            if (xc.luq[mi[j]].bind)
+            if (xc.luq[mi[j]].bind) {
+                double t_b0 = p3zp::nowms();
                 sp.mem[j].extra = xc.luq[mi[j]].bind(tr, xc, pm, sp.mem[j].y_virt);
+                if (p3zp::on()) { p3zp::g.lug_blH.ms += p3zp::nowms() - t_b0; p3zp::g.lug_blH.n++; }
+            }
         }
         const double cl_ms = lu_now_ms() - t_cl;
         if (p3zp::on()) { p3zp::g.lug_claims.ms += cl_ms; p3zp::g.lug_claims.n++; }

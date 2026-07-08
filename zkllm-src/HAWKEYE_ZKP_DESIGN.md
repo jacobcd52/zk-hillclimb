@@ -1379,3 +1379,34 @@ Results (verify_ok=1):
 Session cumulative: 344.3 -> 213.5 = 1.61x (486.6 baseline -> 213.5 = 2.28x).
 Post-lever profile (213.5 s): lug=100.3 (hcommit 37.2 + scA 31.6 + claims
 22.2 + Am 7.9)  mm=69.2  batch=39.3 (q0 23.9)  commit_salt=30.1  mask_gen=15.8.
+
+### 20.4 Lever: GPU logUp internals (leaf build, eq build, mask commits) [VERIFIED]
+
+New sub-phase instrumentation exposed lug=100.3 s as three HOST loops:
+lug/blindA 24.9 s = the zk GKR leaf construction (2 x 2^27-value host writes +
+zprng_at draws per big subgroup), lug/blindT 20.7 s = build_eq(pm) (a 2^26 host
+eq vector per subgroup, x16), lug/hcommit 37.5 s = pm/qm mask-stream host
+generation + 32 salted commits.  All three moved to the device with
+bit-identical values (zprng_at is __host__ __device__; the eq kernel matches
+build_eq's LSB-first convention; field sums exact in any order):
+
+* `p3lu_zkleaf_kernel`: LP/LQ built on device from an uploaded Am;
+  `p3gkr::prove` gains device-leaf entry (`prove_dev` -- leaves already
+  resident, ownership transferred), skipping 2 GB of host writes + upload.
+* claims: eq(pm) built by `p3bf_eq_kernel` directly on device (no host
+  build_eq); member dots already device-side.
+* pm/qm: `p3lu_pmgen/qmgen_kernel` + `salted_commit_root_dev` + a device
+  sm-stream reduction (`p3lu_smsum_kernel`) -- same next_seed() order, so
+  roots, salts and transcripts are BYTE-IDENTICAL.
+
+Results (proof bytes identical at both dims, verify_ok=1):
+
+    d=1024 zk: prove 213.5 -> 150.8 s (1.42x)   lug 100.3 -> 37.2
+               (scA 31.9 -> 4.3, claims 23.7 -> 1.6, hcommit 37.5 -> 22.5 --
+                the residual 22.4 s is the pm/qm NTT+SHA commit work itself)
+    d=256  zk: prove 23.7 -> 19.3 s   proof_mb 121.569 identical
+    ALL 17 suites green.
+
+Session cumulative: 344.3 -> 150.8 = 2.28x (486.6 pre-session -> 150.8 = 3.23x).
+Post-lever profile (150.8 s): mm=69.3  batch=39.5 (q0/enc 19.9)  lug=37.2
+(inv=22.4 commit NTT+SHA, Am=8.0)  commit_salt=30.1  mask_gen=16.0.

@@ -201,25 +201,32 @@ static inline Proof prove(fs::Transcript& tr, const char* tag,
                           std::vector<gl_t> p, std::vector<gl_t> q,
                           bool combine_last, std::vector<gl_t>& rfin,
                           gl_t* cp_out = nullptr, gl_t* cq_out = nullptr,
-                          bool gpu = true) {
-    const uint32_t L = ilog2(p.size());
-    if (p.size() != q.size() || p.size() != ((size_t)1 << L) || L < 1)
+                          bool gpu = true,
+                          gl_t* dP0 = nullptr, gl_t* dQ0 = nullptr, size_t Ndev = 0) {
+    const uint32_t L = dP0 ? ilog2(Ndev) : ilog2(p.size());
+    if (!dP0 && (p.size() != q.size() || p.size() != ((size_t)1 << L) || L < 1))
         throw std::runtime_error("p3gkr: leaf size");
     Proof pf;
     // tree: lvp[h]/lvq[h] = level-h pair arrays (h=0 leaves .. L root).
     // devtree: the big levels live ONLY on the device (dlp/dlq); the first
     // level at or below GKR_GPU_MIN is downloaded and the small levels (and
-    // their layers, and the root) run on the host as usual.
-    const bool devtree = gpu && p.size() >= GKR_FULLGPU_MIN;
+    // their layers, and the root) run on the host as usual.  dP0/dQ0: leaves
+    // already device-resident (ownership transferred; frees like dmalloc'd
+    // levels) -- skips the host materialization + upload entirely.
+    const bool devtree = dP0 ? true : (gpu && p.size() >= GKR_FULLGPU_MIN);
     std::vector<std::vector<gl_t>> lvp(L + 1), lvq(L + 1);
     std::vector<gl_t*> dlp(L + 1, nullptr), dlq(L + 1, nullptr);
     uint32_t HB = 0;                           // first host-resident level
     if (devtree) {
+        if (dP0) {
+            dlp[0] = dP0; dlq[0] = dQ0;
+        } else {
         size_t N0 = p.size();
         dlp[0] = p3bf::dmalloc(N0, "gkr:lv"); dlq[0] = p3bf::dmalloc(N0, "gkr:lv");
         cudaMemcpy(dlp[0], p.data(), N0 * 8, cudaMemcpyHostToDevice);
         cudaMemcpy(dlq[0], q.data(), N0 * 8, cudaMemcpyHostToDevice);
         std::vector<gl_t>().swap(p); std::vector<gl_t>().swap(q);
+        }
         uint32_t h = 1;
         for (;; h++) {
             size_t n = (size_t)1 << (L - h);
@@ -411,6 +418,14 @@ static inline bool verify(fs::Transcript& tr, const char* tag, uint32_t L,
     }
     if (why) *why = "ok";
     return true;
+}
+
+// device-leaf entry point: leaves already on the GPU (ownership transferred)
+static inline Proof prove_dev(fs::Transcript& tr, const char* tag,
+                              gl_t* dP, gl_t* dQ, size_t N,
+                              bool combine_last, std::vector<gl_t>& rfin,
+                              gl_t* cp_out = nullptr, gl_t* cq_out = nullptr) {
+    return prove(tr, tag, {}, {}, combine_last, rfin, cp_out, cq_out, true, dP, dQ, N);
 }
 
 } // namespace p3gkr
