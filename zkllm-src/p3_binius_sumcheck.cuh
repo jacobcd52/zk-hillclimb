@@ -76,6 +76,136 @@ static inline void bf_sumcheck_prove(int l, int K, std::vector<std::vector<bf128
     tr.absorb("bfsc-finals", pf.finals.data(), K * sizeof(bf128_t));
 }
 
+// ---- GPU prover (design doc section 21.6 item 1) --------------------------
+// Same protocol, same transcript, byte-identical proof: the round polynomial
+// is an XOR of per-row contributions (order-independent), and the fold is a
+// per-element exact field map, so GPU and host provers agree bitwise (teeth in
+// p3_binius_sumcheck_test.cu / p3_binius_e2e_test.cu).  The constraint is a
+// functor type CF with static constexpr int K, D and a __device__
+// operator()(const bf128_t* w) const, passed by value into the kernels.
+// Columns live in one K x 2^l device buffer (stride 2^l); the fold ping-pongs
+// between two buffers because the in-place host order (read 2y before write y,
+// ascending) has no parallel counterpart.
+
+struct BfScDev {
+    bf128_t *a = nullptr, *b = nullptr;   // ping-pong column buffers, K * n each
+    bf128_t *part = nullptr;              // per-block round partials
+    int K = 0, l = 0;
+    size_t n = 0;                         // 2^l = column stride
+};
+#define BFSC_MAXBLK 512
+static inline void bfsc_dev_alloc(BfScDev& d, int K, int l) {
+    d.K = K; d.l = l; d.n = (size_t)1 << l;
+    cudaMalloc(&d.a, (size_t)K * d.n * sizeof(bf128_t));
+    cudaMalloc(&d.b, (size_t)K * d.n * sizeof(bf128_t));
+    cudaMalloc(&d.part, (size_t)BFSC_MAXBLK * 8 * sizeof(bf128_t));   // D <= 7
+}
+static inline void bfsc_dev_free(BfScDev& d) {
+    cudaFree(d.a); cudaFree(d.b); cudaFree(d.part);
+    d.a = d.b = d.part = nullptr;
+}
+
+// eq(r, .) table built in place on device -- the bf_eq_table recurrence level
+// by level (same multiplication tree, so identical field values)
+static __global__ void bfsc_eq_level_kernel(bf128_t* out, bf128_t r, size_t half) {
+    size_t x = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
+    if (x >= half) return;
+    bf128_t e = out[x];
+    bf128_t hi = bf128_mul(e, r);
+    out[x | half] = hi;
+    out[x] = bf128_add(e, hi);
+}
+static inline void bfsc_dev_eq(bf128_t* d_dst, const bf128_t* r, int k) {
+    bf128_t one = bf128_one();
+    cudaMemcpy(d_dst, &one, sizeof(one), cudaMemcpyHostToDevice);
+    for (int t = 0; t < k; t++) {
+        size_t half = (size_t)1 << t;
+        bfsc_eq_level_kernel<<<(uint32_t)((half + 255) / 256), 256>>>(d_dst, r[t], half);
+    }
+}
+// expand a 0/1 byte witness into T_128 columns (contiguous cols, stride n)
+static __global__ void bfsc_bits_kernel(const uint8_t* bits, bf128_t* dst, size_t total) {
+    size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
+    if (i < total) dst[i] = (bits[i] & 1) ? bf128_one() : bf128_zero();
+}
+
+template <class CF>
+static __global__ void bfsc_round_kernel(const bf128_t* cols, size_t stride, size_t half,
+                                         CF cf, bf128_t* part) {
+    bf128_t acc[CF::D + 1];
+    for (int z = 0; z <= CF::D; z++) acc[z] = bf128_zero();
+    bf128_t a0[CF::K], ad[CF::K], w[CF::K];
+    for (size_t y = blockIdx.x * (size_t)blockDim.x + threadIdx.x; y < half;
+         y += (size_t)gridDim.x * blockDim.x) {
+        for (int k = 0; k < CF::K; k++) {
+            bf128_t v0 = cols[(size_t)k * stride + 2 * y];
+            bf128_t v1 = cols[(size_t)k * stride + 2 * y + 1];
+            a0[k] = v0; ad[k] = bf128_add(v0, v1);
+        }
+        for (int z = 0; z <= CF::D; z++) {
+            for (int k = 0; k < CF::K; k++)
+                w[k] = z ? bf128_add(a0[k], bf128_smul16(ad[k], (uint32_t)z)) : a0[k];
+            acc[z] = bf128_add(acc[z], cf(w));
+        }
+    }
+    __shared__ bf128_t sm[256];
+    for (int z = 0; z <= CF::D; z++) {
+        sm[threadIdx.x] = acc[z];
+        __syncthreads();
+        for (int s = blockDim.x / 2; s; s >>= 1) {
+            if ((int)threadIdx.x < s)
+                sm[threadIdx.x] = bf128_add(sm[threadIdx.x], sm[threadIdx.x + s]);
+            __syncthreads();
+        }
+        if (!threadIdx.x) part[(size_t)blockIdx.x * (CF::D + 1) + z] = sm[0];
+        __syncthreads();
+    }
+}
+static __global__ void bfsc_fold_kernel(const bf128_t* src, bf128_t* dst, size_t stride,
+                                        int K, size_t half, bf128_t zs) {
+    size_t idx = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
+    if (idx >= (size_t)K * half) return;
+    size_t k = idx / half, y = idx - k * half;
+    bf128_t v0 = src[k * stride + 2 * y], v1 = src[k * stride + 2 * y + 1];
+    dst[k * stride + y] = bf128_add(v0, bf128_mul(zs, bf128_add(v0, v1)));
+}
+
+// prove on device; dv.a holds the K columns on entry (consumed).
+template <class CF>
+static inline void bf_sumcheck_prove_gpu(BfScDev& dv, const CF& cf,
+                                         fs::Transcript& tr, BfScProof& pf,
+                                         std::vector<bf128_t>& zeta) {
+    const int D = CF::D, K = CF::K;
+    int l = dv.l;
+    pf.l = l; pf.D = D; pf.K = K;
+    pf.rounds.assign((size_t)l * (D + 1), bf128_zero());
+    zeta.assign(l, bf128_zero());
+    bf128_t *cur = dv.a, *oth = dv.b;
+    std::vector<bf128_t> part;
+    for (int s = 0; s < l; s++) {
+        size_t half = (size_t)1 << (l - 1 - s);
+        uint32_t nb = (uint32_t)((half + 255) / 256);
+        if (nb > BFSC_MAXBLK) nb = BFSC_MAXBLK;
+        bfsc_round_kernel<CF><<<nb, 256>>>(cur, dv.n, half, cf, dv.part);
+        part.resize((size_t)nb * (D + 1));
+        cudaMemcpy(part.data(), dv.part, part.size() * sizeof(bf128_t), cudaMemcpyDeviceToHost);
+        bf128_t* rp = pf.rounds.data() + (size_t)s * (D + 1);
+        for (uint32_t b = 0; b < nb; b++)
+            for (int z = 0; z <= D; z++)
+                rp[z] = bf128_add(rp[z], part[(size_t)b * (D + 1) + z]);
+        tr.absorb("bfsc-round", rp, (D + 1) * sizeof(bf128_t));
+        bf128_t zs = bf_chal128(tr);
+        zeta[s] = zs;
+        size_t tot = (size_t)K * half;
+        bfsc_fold_kernel<<<(uint32_t)((tot + 255) / 256), 256>>>(cur, oth, dv.n, K, half, zs);
+        bf128_t* t = cur; cur = oth; oth = t;
+    }
+    pf.finals.resize(K);
+    cudaMemcpy2D(pf.finals.data(), sizeof(bf128_t), cur, dv.n * sizeof(bf128_t),
+                 sizeof(bf128_t), K, cudaMemcpyDeviceToHost);
+    tr.absorb("bfsc-finals", pf.finals.data(), K * sizeof(bf128_t));
+}
+
 // replay rounds; returns false on a broken chain.  On success *expected is
 // the required integrand value at zeta (caller checks against C(finals)).
 static inline bool bf_sumcheck_verify(const BfScProof& pf, bf128_t claim,

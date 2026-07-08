@@ -1749,3 +1749,54 @@ convention) and the FULL 22-suite battery is green at final HEAD
 (battery_s21.log): all 17 original suites unchanged-pass + BINIUS-FIELD
 11/11, BINIUS-NTT 8/8, BINIUS-PCS 12/12, BINIUS-SUMCHECK 8/8, BINIUS-E2E
 9/9 -> BATTERY: ALL GREEN.
+
+### 21.7 GPU tower sumcheck + tower hashing (2026-07-08, session 2) [VERIFIED]
+
+Handoff item 1 of 21.6, done.  The e2e prove was ~95% host sumcheck; all
+three host-bound prover stages are now on device, and the GPU prover's
+output is BYTE-IDENTICAL to the host prover's (teeth below) because every
+GPU reduction is an XOR (order-independent) and every per-element map is
+the same exact field op.
+
+* GPU sumcheck prover (p3_binius_sumcheck.cuh: BfScDev + bf_sumcheck_prove_gpu
+  <CF>).  Columns live in one K x 2^l device buffer; per round, a grid-stride
+  kernel evaluates the composition at the D+1 tower points with per-block
+  shared-memory XOR reduction (<= 512 blocks, partials XORed on host), the
+  (D+1)-eval message is absorbed / challenged on host exactly as before, and
+  a fold kernel ping-pongs between two buffers (the host's in-place ascending
+  fold has no race-free parallel counterpart).  The constraint is a functor
+  type CF {static constexpr int K, D; __device__ operator()(const bf128_t*)}
+  passed by value, so the same header serves any composition; helpers build
+  the eq(rz,.) table on device (same recurrence level-by-level as
+  bf_eq_table) and expand 0/1 byte witnesses to T_128 columns.
+* GPU column hashing (p3_binius_pcs.cuh: bfpcs_leaf_kernel + bfpcs_tree_gpu).
+  One thread streams one codeword column through a chained rolling-schedule
+  SHA-256 (generalizes the 20.6 register kernel to multi-block messages with
+  proper tail padding), reading the post-NTT still-device-resident codeword
+  with warp-coalesced row-strided loads; internal levels stay host (leaf
+  count is O(sqrt n)).  bfpcs_tree (host) kept as the selftest reference.
+* GPU combine for the opening (bfpcs_combine_kernel): block per unpacked
+  output position, threads XOR-reduce coef[i] over rows with that message
+  bit set; msg uploaded once per open and reused for both the eval row t
+  and the proximity row u.
+
+Measured (RTX 4090, p3_binius_e2e_test, same box/protocol as 21.5):
+
+    lN=18 (262,144 additions, 2^23 witness bits):
+      prove total  1765 ms -> 104 ms   (17x; commit 7, sc 91, open 6)
+      sc host-A/B in the same run: 1154 ms host vs 91 ms GPU = 12.6x
+      open 106 -> 6 ms; verify 18 ms; proof unchanged 893.8 KB
+    lN=16: prove 1291 -> 102 ms (sc 67, open 3; host sc A/B 408 ms = 6.1x)
+    PCS selftest l=20 commit 27 -> 1.1 ms, open 94 -> 1.8 ms
+
+Teeth added (battery counts grow, all green): BINIUS-SUMCHECK 8 -> 14/14
+(GPU eq table bitwise == bf_eq_table; GPU zerocheck accepts; GPU proof
+byte-identical to host on the zerocheck AND on a random K=3/D=2 sum at l=12;
+GPU prover rejects a single violated row); BINIUS-PCS 12 -> 16/16 (GPU
+column-hash tree == host tree, root AND every level, at both shapes; GPU
+combined eval row bitwise == host bfpcs_combine); BINIUS-E2E 9 -> 10/10
+(GPU e2e proof byte-identical to host across root+rounds+finals+opening;
+all violated-witness teeth now exercise the GPU prover path).  Round-0
+packed-bit evaluation (21.6 note) NOT done: at these sizes the expanded
+T_128 column buffer is 138 MB x2 ping-pong -- nowhere near a constraint,
+and sc is already 91 ms; revisit only if witness sizes grow 30x.

@@ -66,6 +66,29 @@ static bf128_t C_adder(const bf128_t* w, const void* vctx) {
     }
     return bf128_mul(w[0], acc);
 }
+// device functor for the GPU prover: the SAME constraint (proof must come out
+// byte-identical to the host path -- teeth below)
+struct AdderF {
+    static constexpr int K = 33, D = 3;
+    bf128_t g[16];
+    __device__ bf128_t operator()(const bf128_t* w) const {
+        const bf128_t *A = w + 1, *B = w + 9, *S = w + 17, *Cin = w + 26;
+        bf128_t acc = bf128_zero();
+        for (int i = 0; i < 8; i++) {
+            bf128_t k = bf128_add(S[i], bf128_add(A[i], B[i]));
+            if (i >= 1) k = bf128_add(k, Cin[i - 1]);
+            acc = bf128_add(acc, bf128_mul(g[i], k));
+        }
+        for (int i = 0; i < 8; i++) {
+            bf128_t ci = (i == 0) ? bf128_zero() : Cin[i - 1];
+            bf128_t maj = bf128_mul(A[i], B[i]);
+            maj = bf128_add(maj, bf128_mul(bf128_add(A[i], B[i]), ci));
+            bf128_t out = (i < 7) ? Cin[i] : S[8];
+            acc = bf128_add(acc, bf128_mul(g[8 + i], bf128_add(out, maj)));
+        }
+        return bf128_mul(w[0], acc);
+    }
+};
 
 // stacked witness: bits[col * N + x], cols in the order above (a,b,s,c)
 static void gen_witness(int lN, std::vector<uint8_t>& bits, bool valid) {
@@ -99,7 +122,8 @@ struct E2EStats { double commit_ms, sc_ms, open_ms, verify_ms; size_t committed;
 
 static const int NCOL = 32, K = 33, DEG = 3;
 
-static void e2e_prove(int lN, const std::vector<uint8_t>& bits, E2EProof& pf, E2EStats& st) {
+static void e2e_prove(int lN, const std::vector<uint8_t>& bits, E2EProof& pf, E2EStats& st,
+                      bool gpu = true) {
     size_t N = (size_t)1 << lN;
     BfPcsParams p;
     p.l = lN + 5; p.lcol = p.l / 2; p.lrow = p.l - p.lcol; p.Q = 100;
@@ -117,16 +141,30 @@ static void e2e_prove(int lN, const std::vector<uint8_t>& bits, E2EProof& pf, E2
     bf128_t gamma = bf_chal128(tr);
     for (int j = 1; j < 16; j++) ctx.g[j] = bf128_mul(ctx.g[j - 1], gamma);
     t0 = now_ms();
-    std::vector<std::vector<bf128_t>> cols(K);
-    bf_eq_table(rz.data(), lN, cols[0]);
-    #pragma omp parallel for schedule(dynamic, 1)
-    for (int j = 0; j < NCOL; j++) {
-        cols[1 + j].resize(N);
-        for (size_t x = 0; x < N; x++)
-            cols[1 + j][x] = bits[(size_t)j * N + x] ? bf128_one() : bf128_zero();
-    }
     std::vector<bf128_t> zeta;
-    bf_sumcheck_prove(lN, K, cols, DEG, C_adder, &ctx, tr, pf.sc, zeta);
+    if (gpu) {
+        BfScDev dv; bfsc_dev_alloc(dv, K, lN);
+        bfsc_dev_eq(dv.a, rz.data(), lN);                     // col 0 = eq(rz, .)
+        uint8_t* d_bits;
+        cudaMalloc(&d_bits, 32 * N);
+        cudaMemcpy(d_bits, bits.data(), 32 * N, cudaMemcpyHostToDevice);
+        bfsc_bits_kernel<<<(uint32_t)((32 * N + 255) / 256), 256>>>(d_bits, dv.a + dv.n, 32 * N);
+        cudaFree(d_bits);
+        AdderF cf;
+        for (int j = 0; j < 16; j++) cf.g[j] = ctx.g[j];
+        bf_sumcheck_prove_gpu(dv, cf, tr, pf.sc, zeta);
+        bfsc_dev_free(dv);
+    } else {
+        std::vector<std::vector<bf128_t>> cols(K);
+        bf_eq_table(rz.data(), lN, cols[0]);
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int j = 0; j < NCOL; j++) {
+            cols[1 + j].resize(N);
+            for (size_t x = 0; x < N; x++)
+                cols[1 + j][x] = bits[(size_t)j * N + x] ? bf128_one() : bf128_zero();
+        }
+        bf_sumcheck_prove(lN, K, cols, DEG, C_adder, &ctx, tr, pf.sc, zeta);
+    }
     st.sc_ms = now_ms() - t0;
     // stacked opening at (zeta, rho_sel)
     std::vector<bf128_t> rho(5), eqsel, R(p.l);
@@ -215,9 +253,22 @@ int main(int argc, char** argv) {
         std::vector<uint8_t> bits;
         gen_witness(lN, bits, true);
         E2EProof pf; E2EStats st;
-        e2e_prove(lN, bits, pf, st);
+        e2e_prove(lN, bits, pf, st);                       // GPU prover (default)
         E2EStats sv;
-        ck("honest 8-bit adder witness accepts (16k rows)", e2e_verify(lN, pf, &sv));
+        ck("honest 8-bit adder witness accepts (16k rows, GPU prover)", e2e_verify(lN, pf, &sv));
+        { E2EProof ph; E2EStats sh;
+          e2e_prove(lN, bits, ph, sh, false);              // host prover, same statement
+          bool same = !memcmp(pf.root, ph.root, 32) &&
+              pf.sc.rounds.size() == ph.sc.rounds.size() &&
+              !memcmp(pf.sc.rounds.data(), ph.sc.rounds.data(),
+                      pf.sc.rounds.size() * sizeof(bf128_t)) &&
+              !memcmp(pf.sc.finals.data(), ph.sc.finals.data(),
+                      pf.sc.finals.size() * sizeof(bf128_t)) &&
+              pf.pcs.t.size() == ph.pcs.t.size() &&
+              !memcmp(pf.pcs.t.data(), ph.pcs.t.data(), pf.pcs.t.size() * sizeof(bf128_t)) &&
+              !memcmp(pf.pcs.u.data(), ph.pcs.u.data(), pf.pcs.u.size() * sizeof(bf128_t)) &&
+              pf.pcs.cols == ph.pcs.cols && pf.pcs.paths == ph.pcs.paths;
+          ck("GPU proof byte-identical to host proof (root+rounds+finals+opening)", same); }
         { auto b2 = bits; b2[(size_t)19 * N + 777] ^= 1;      // s_3 of row 777
           E2EProof q; E2EStats s2; e2e_prove(lN, b2, q, s2);
           ck("ONE violated sum bit (s_3, 1 row of 16k) rejects", !e2e_verify(lN, q)); }
@@ -240,13 +291,15 @@ int main(int argc, char** argv) {
         std::vector<uint8_t> bits;
         gen_witness(lN, bits, true);
         E2EProof pf; E2EStats st;
-        e2e_prove(lN, bits, pf, st);
+        e2e_prove(lN, bits, pf, st);                       // GPU prover
         E2EStats sv;
         bool ok = e2e_verify(lN, pf, &sv);
         char msg[128];
         snprintf(msg, sizeof msg, "measured run lN=%d (%zu additions, 2^%d witness bits) accepts",
                  lN, N, lN + 5);
         ck(msg, ok);
+        E2EProof ph; E2EStats sh;                          // host prover A/B
+        e2e_prove(lN, bits, ph, sh, false);
         double glms; size_t glbytes; uint8_t glroot[32];
         gl_baseline(lN, bits, glms, glbytes, glroot);
         double bin_prove = st.commit_ms + st.sc_ms + st.open_ms;
@@ -254,6 +307,10 @@ int main(int argc, char** argv) {
                "prove total %.0f ms (sc %.0f, open %.0f) | proof %.1f KB | verify %.0f ms\n",
                lN, st.committed / 1048576.0, st.commit_ms, bin_prove, st.sc_ms,
                st.open_ms, pf.bytes() / 1024.0, sv.verify_ms);
+        printf("  [meas] lN=%d  host-prover A/B: sc %.0f ms vs GPU %.0f ms (%.1fx), "
+               "open %.0f ms, prove total %.0f ms\n",
+               lN, sh.sc_ms, st.sc_ms, sh.sc_ms / (st.sc_ms > 0 ? st.sc_ms : 1),
+               sh.open_ms, sh.commit_ms + sh.sc_ms + sh.open_ms);
         printf("  [meas] lN=%d  GOLDILOCKS committed %.2f MB (commit %.0f ms; "
                "same witness, gl_t-per-bit rate-1/4 NTT + 8B-leaf Merkle)\n",
                lN, glbytes / 1048576.0, glms);

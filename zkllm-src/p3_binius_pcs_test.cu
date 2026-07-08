@@ -96,6 +96,25 @@ int main() {
                  p.l, p.l, C.commit_ms, C.committed_bytes / 1048576.0,
                  pf.bytes() / 1024.0, t_open, t_vfy);
         ck(msg, ok);
+        // GPU column hashing (commit path) == host bfpcs_tree, bitwise
+        {
+            BfPcsCommit Ch = C;
+            bfpcs_tree(Ch);                     // host reference rebuild
+            bool same = !memcmp(Ch.root, C.root, 32) && Ch.lvl.size() == C.lvl.size();
+            if (same)
+                for (size_t i = 0; i < Ch.lvl.size(); i++)
+                    if (Ch.lvl[i] != C.lvl[i]) { same = false; break; }
+            ck("GPU column-hash tree == host tree (root + all levels)", same);
+        }
+        // GPU combine (open path) == host bfpcs_combine, bitwise
+        {
+            std::vector<bf128_t> eqrow, th;
+            bf_eq_table(r.data() + p.lcol, p.lrow, eqrow);
+            bfpcs_combine(C, eqrow, th);
+            ck("GPU combined eval row == host bfpcs_combine (bitwise)",
+               th.size() == pf.t.size() &&
+               !memcmp(th.data(), pf.t.data(), th.size() * sizeof(bf128_t)));
+        }
         if (cfg == 0) continue;
 
         { auto q = pf; q.t[rnd() % q.t.size()].lo ^= 1;

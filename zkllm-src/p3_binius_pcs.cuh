@@ -121,16 +121,9 @@ struct BfPcsCommit {
     double commit_ms = 0;
 };
 
-// Merkle over codeword columns (host; leaf = SHA-256 of the column bytes)
-static inline void bfpcs_tree(BfPcsCommit& C) {
+// internal Merkle levels above the leaves (host; leaf count is O(sqrt n))
+static inline void bfpcs_tree_levels(BfPcsCommit& C, std::vector<uint8_t>&& leaves) {
     C.lvl.clear();
-    std::vector<uint8_t> leaves((size_t)C.nc * 32);
-    #pragma omp parallel for schedule(static)
-    for (int64_t j = 0; j < (int64_t)C.nc; j++) {
-        std::vector<bf16_t> col(C.n_rows);
-        for (uint32_t i = 0; i < C.n_rows; i++) col[i] = C.cw[(size_t)i * C.nc + j];
-        fs::sha256(col.data(), C.n_rows * sizeof(bf16_t), leaves.data() + (size_t)j * 32);
-    }
     C.lvl.push_back(std::move(leaves));
     while (C.lvl.back().size() > 32) {
         const std::vector<uint8_t>& prev = C.lvl.back();
@@ -142,6 +135,111 @@ static inline void bfpcs_tree(BfPcsCommit& C) {
     memcpy(C.root, C.lvl.back().data(), 32);
     C.committed_bytes = (size_t)C.n_rows * C.nc * sizeof(bf16_t);
     for (auto& L : C.lvl) C.committed_bytes += L.size();
+}
+
+// Merkle over codeword columns (host reference; leaf = SHA-256 of the column bytes)
+static inline void bfpcs_tree(BfPcsCommit& C) {
+    std::vector<uint8_t> leaves((size_t)C.nc * 32);
+    #pragma omp parallel for schedule(static)
+    for (int64_t j = 0; j < (int64_t)C.nc; j++) {
+        std::vector<bf16_t> col(C.n_rows);
+        for (uint32_t i = 0; i < C.n_rows; i++) col[i] = C.cw[(size_t)i * C.nc + j];
+        fs::sha256(col.data(), C.n_rows * sizeof(bf16_t), leaves.data() + (size_t)j * 32);
+    }
+    bfpcs_tree_levels(C, std::move(leaves));
+}
+
+// ---- GPU column hashing: one thread streams one codeword column through a
+// chained rolling-schedule SHA-256 (word assembly from row-strided bf16 loads,
+// coalesced across the warp) -- bitwise-identical to fs::sha256 of the column
+// bytes, checked by the selftest against bfpcs_tree ----
+__device__ __forceinline__ void bfpcs_sha_blk_st(const uint32_t win[16], uint32_t st[8]) {
+    static const uint32_t Kc[64] = {
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2};
+    uint32_t w[16];
+    #pragma unroll
+    for (int i = 0; i < 16; i++) w[i] = win[i];
+    uint32_t a=st[0],b=st[1],c=st[2],d=st[3],e=st[4],f=st[5],g=st[6],hh=st[7];
+    #pragma unroll
+    for (int i = 0; i < 64; i++) {
+        uint32_t wi;
+        if (i < 16) wi = w[i];
+        else {
+            uint32_t w15 = w[(i-15) & 15], w2 = w[(i-2) & 15];
+            uint32_t s0 = p3_ror(w15,7) ^ p3_ror(w15,18) ^ (w15 >> 3);
+            uint32_t s1 = p3_ror(w2,17) ^ p3_ror(w2,19) ^ (w2 >> 10);
+            wi = w[i & 15] = w[i & 15] + s0 + w[(i-7) & 15] + s1;
+        }
+        uint32_t S1 = p3_ror(e,6) ^ p3_ror(e,11) ^ p3_ror(e,25);
+        uint32_t ch = (e & f) ^ (~e & g);
+        uint32_t t1 = hh + S1 + ch + Kc[i] + wi;
+        uint32_t S0 = p3_ror(a,2) ^ p3_ror(a,13) ^ p3_ror(a,22);
+        uint32_t mj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t t2 = S0 + mj;
+        hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    }
+    st[0]+=a; st[1]+=b; st[2]+=c; st[3]+=d; st[4]+=e; st[5]+=f; st[6]+=g; st[7]+=hh;
+}
+static __global__ void bfpcs_leaf_kernel(const bf16_t* cw, uint32_t n_rows, uint32_t nc,
+                                         uint8_t* leaves) {
+    uint32_t j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= nc) return;
+    uint32_t st[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+                      0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+    uint64_t total = (uint64_t)n_rows * 2;                    // column bytes (LE bf16)
+    uint32_t full = (uint32_t)(total / 64);
+    for (uint32_t b = 0; b < full; b++) {
+        uint32_t w[16];
+        #pragma unroll
+        for (int k = 0; k < 16; k++) {
+            uint32_t r0 = cw[(size_t)(32 * b + 2 * k)     * nc + j];
+            uint32_t r1 = cw[(size_t)(32 * b + 2 * k + 1) * nc + j];
+            w[k] = p3_bswap32(r0 | (r1 << 16));
+        }
+        bfpcs_sha_blk_st(w, st);
+    }
+    // tail: remaining rows + 0x80 pad + 8-byte BE bit length (1 or 2 blocks)
+    uint8_t buf[128];
+    #pragma unroll
+    for (int i = 0; i < 128; i++) buf[i] = 0;
+    uint32_t rem = (uint32_t)(total - (uint64_t)full * 64);
+    for (uint32_t t = 0; t < rem / 2; t++) {
+        uint32_t v = cw[(size_t)(32 * full + t) * nc + j];
+        buf[2 * t] = (uint8_t)v; buf[2 * t + 1] = (uint8_t)(v >> 8);
+    }
+    buf[rem] = 0x80;
+    int nblk = (rem + 9 <= 64) ? 1 : 2;
+    uint64_t bits = total * 8;
+    for (int t = 0; t < 8; t++) buf[nblk * 64 - 1 - t] = (uint8_t)(bits >> (8 * t));
+    for (int b = 0; b < nblk; b++) {
+        uint32_t w[16];
+        #pragma unroll
+        for (int k = 0; k < 16; k++)
+            w[k] = ((uint32_t)buf[64*b+4*k] << 24) | ((uint32_t)buf[64*b+4*k+1] << 16) |
+                   ((uint32_t)buf[64*b+4*k+2] << 8) | (uint32_t)buf[64*b+4*k+3];
+        bfpcs_sha_blk_st(w, st);
+    }
+    uint32_t* o = (uint32_t*)(leaves + (size_t)j * 32);
+    #pragma unroll
+    for (int k = 0; k < 8; k++) o[k] = p3_bswap32(st[k]);
+}
+// GPU tree: leaves hashed on device from the (post-NTT, still-resident)
+// codeword; internal levels host (leaf count is O(sqrt n))
+static inline void bfpcs_tree_gpu(BfPcsCommit& C, const bf16_t* d_cw) {
+    uint8_t* d_leaves;
+    cudaMalloc(&d_leaves, (size_t)C.nc * 32);
+    bfpcs_leaf_kernel<<<(C.nc + 127) / 128, 128>>>(d_cw, C.n_rows, C.nc, d_leaves);
+    std::vector<uint8_t> leaves((size_t)C.nc * 32);
+    cudaMemcpy(leaves.data(), d_leaves, leaves.size(), cudaMemcpyDeviceToHost);
+    cudaFree(d_leaves);
+    bfpcs_tree_levels(C, std::move(leaves));
 }
 
 // commit witness bits (one byte per bit, length 2^l) under params p
@@ -170,8 +268,8 @@ static inline void bfpcs_commit(const BfPcsParams& p, const uint8_t* bits,
     cudaMemcpy(d_rows, C.cw.data(), C.cw.size() * sizeof(bf16_t), cudaMemcpyHostToDevice);
     bfntt_fwd_gpu(dv, d_rows, C.n_rows);
     cudaMemcpy(C.cw.data(), d_rows, C.cw.size() * sizeof(bf16_t), cudaMemcpyDeviceToHost);
+    bfpcs_tree_gpu(C, d_rows);                 // leaves hashed from the resident codeword
     cudaFree(d_rows); cudaFree(dv.d_twid);
-    bfpcs_tree(C);
     cudaEventRecord(e1); cudaEventSynchronize(e1);
     float ms = 0; cudaEventElapsedTime(&ms, e0, e1);
     C.commit_ms = ms;
@@ -212,19 +310,54 @@ static inline void bfpcs_combine(const BfPcsCommit& C, const std::vector<bf128_t
         }
 }
 
+// GPU combine: block per unpacked output position j' = 16*jp + u, threads
+// XOR-reduce coef[i] over rows with bit u of msg[i][jp] set.  XOR accumulation
+// is order-independent, so the result is bitwise-identical to bfpcs_combine.
+static __global__ void bfpcs_combine_kernel(const bf16_t* msg, uint32_t n_rows, uint32_t pc,
+                                            const bf128_t* coef, bf128_t* out) {
+    uint32_t jp = blockIdx.x >> 4, u = blockIdx.x & 15;
+    bf128_t acc = bf128_zero();
+    for (uint32_t i = threadIdx.x; i < n_rows; i += blockDim.x)
+        acc = bf128_add(acc, bf128_smul1(coef[i], (uint32_t)(msg[(size_t)i * pc + jp] >> u)));
+    __shared__ bf128_t sm[128];
+    sm[threadIdx.x] = acc;
+    __syncthreads();
+    for (int s = 64; s; s >>= 1) {
+        if ((int)threadIdx.x < s) sm[threadIdx.x] = bf128_add(sm[threadIdx.x], sm[threadIdx.x + s]);
+        __syncthreads();
+    }
+    if (!threadIdx.x) out[blockIdx.x] = sm[0];
+}
+// device-resident open state: msg uploaded once, both combined rows on GPU
+static inline void bfpcs_combine_gpu(const bf16_t* d_msg, uint32_t n_rows, uint32_t pc,
+                                     const std::vector<bf128_t>& coef, bf128_t* d_coef,
+                                     bf128_t* d_out, std::vector<bf128_t>& out) {
+    size_t nu = (size_t)pc * 16;
+    cudaMemcpy(d_coef, coef.data(), n_rows * sizeof(bf128_t), cudaMemcpyHostToDevice);
+    bfpcs_combine_kernel<<<(uint32_t)nu, 128>>>(d_msg, n_rows, pc, d_coef, d_out);
+    out.resize(nu);
+    cudaMemcpy(out.data(), d_out, nu * sizeof(bf128_t), cudaMemcpyDeviceToHost);
+}
+
 static inline void bfpcs_open(const BfPcsCommit& C, const bf128_t* r, bf128_t v,
                               fs::Transcript& tr, BfPcsProof& pf) {
     const BfPcsParams& p = C.p;
     tr.absorb("bfpcs-point", r, p.l * sizeof(bf128_t));
     tr.absorb("bfpcs-value", &v, sizeof(v));
+    bf16_t* d_msg; bf128_t *d_coef, *d_out;
+    cudaMalloc(&d_msg, C.msg.size() * sizeof(bf16_t));
+    cudaMalloc(&d_coef, (size_t)C.n_rows * sizeof(bf128_t));
+    cudaMalloc(&d_out, ((size_t)C.pc * 16) * sizeof(bf128_t));
+    cudaMemcpy(d_msg, C.msg.data(), C.msg.size() * sizeof(bf16_t), cudaMemcpyHostToDevice);
     std::vector<bf128_t> eqrow;
     bf_eq_table(r + p.lcol, p.lrow, eqrow);
-    bfpcs_combine(C, eqrow, pf.t);
+    bfpcs_combine_gpu(d_msg, C.n_rows, C.pc, eqrow, d_coef, d_out, pf.t);
     tr.absorb("bfpcs-t", pf.t.data(), pf.t.size() * sizeof(bf128_t));
     std::vector<bf128_t> rho;
     bfpcs_rho(tr, C.n_rows, rho);
-    bfpcs_combine(C, rho, pf.u);
+    bfpcs_combine_gpu(d_msg, C.n_rows, C.pc, rho, d_coef, d_out, pf.u);
     tr.absorb("bfpcs-u", pf.u.data(), pf.u.size() * sizeof(bf128_t));
+    cudaFree(d_msg); cudaFree(d_coef); cudaFree(d_out);
     std::vector<uint32_t> q;
     bfpcs_queries(tr, C.nc, p.Q, q);
     int depth = 0; while ((1u << depth) < C.nc) depth++;
