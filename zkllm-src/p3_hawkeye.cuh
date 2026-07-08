@@ -990,7 +990,8 @@ static inline void mblind_claims(fs::Transcript& tr, MBlind&& mb,
             keep.push_back(std::move(bc));     // values dropped: pure PRNG stream
             uint64_t bs = mb.bseed[j];
             lg.add(&keep.back().v, bl.rt[j], r, bl.yB[j], mb.sseeds[j],
-                   [vr, bs](gl_t* o, size_t n) { p3zkc::blind_col_aug_into(vr, bs, o, n); });
+                   [vr, bs](gl_t* o, size_t n) { p3zkc::blind_col_aug_into(vr, bs, o, n); },
+                   [bs](gl_t* o, size_t n) { p3zkc::blind_col_aug_dev(bs, o, n); });
         }
         return;
     }
@@ -1003,6 +1004,12 @@ static inline void mblind_claims(fs::Transcript& tr, MBlind&& mb,
         for (int j = 0; j < 4; j++)
             p3zkc::blind_col_aug_into(vr, bs[j], o + (size_t)j * seg, seg);
     };
+    p3bo::PLedger::DGen dregen = [b0, b1, b2, b3](gl_t* o, size_t n) {
+        uint64_t bs[4] = {b0, b1, b2, b3};
+        size_t seg = n / 4;
+        for (int j = 0; j < 4; j++)
+            p3zkc::blind_col_aug_dev(bs[j], o + (size_t)j * seg, seg);
+    };
     for (int j = 0; j < 4; j++) tr.absorb("sc5-yB", &bl.yB[j], 8);
     // bind all four published slice evals with ONE opening at (r || tau):
     // the merged column is degree-1 in each slice coordinate, so agreement at
@@ -1013,7 +1020,7 @@ static inline void mblind_claims(fs::Transcript& tr, MBlind&& mb,
     gl_t y23 = gl_add(bl.yB[2], gl_mul(t0, gl_sub(bl.yB[3], bl.yB[2])));
     gl_t ystar = gl_add(y01, gl_mul(t1, gl_sub(y23, y01)));
     std::vector<gl_t> pt = r; pt.push_back(t0); pt.push_back(t1);
-    lg.add(&keep.back().v, bl.rt[0], pt, ystar, ss, regen);
+    lg.add(&keep.back().v, bl.rt[0], pt, ystar, ss, regen, dregen);
     if (N >= ((size_t)1 << 20)) { keep.back().v.clear(); keep.back().v.shrink_to_fit(); }
 }
 static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32_t vreal,

@@ -414,6 +414,38 @@ static inline void blind_col_aug_into(uint32_t v, uint64_t s, gl_t* out, size_t 
     for (size_t i = 0; i < n; i++) out[i] = zprng(s);
 }
 
+// ---- DEVICE-side zprng chain (LCG jump-ahead) ----
+// out[i] = the i-th value of the host zprng chain from seed s0 -- BIT-IDENTICAL
+// to blind_col_aug_into, computed independently per element: s_{i+1} =
+// A_{i+1}*s0 + C_{i+1} (mod 2^64) via the binary ladder A_{2k} = A_k^2,
+// C_{2k} = C_k*(A_k+1), then the same xorshift mix + mod-p reduction.  Lets the
+// batched-opening ledger materialize dropped blind columns directly on the GPU
+// (no host serial fill + 512 MB upload per use).
+struct LcgLadder { uint64_t A[33]; uint64_t C[33]; };
+static inline LcgLadder lcg_ladder() {
+    LcgLadder L;
+    L.A[0] = 6364136223846793005ULL; L.C[0] = 1442695040888963407ULL;
+    for (int k = 1; k < 33; k++) {
+        L.A[k] = L.A[k-1] * L.A[k-1];
+        L.C[k] = L.C[k-1] * (L.A[k-1] + 1);
+    }
+    return L;
+}
+__global__ void p3zkc_lcgchain_kernel(gl_t* out, uint64_t s0, size_t n, LcgLadder L) {
+    size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    uint64_t s = s0, steps = i + 1;
+    for (int k = 0; steps; k++, steps >>= 1)
+        if (steps & 1) s = L.A[k] * s + L.C[k];
+    uint64_t z = s ^ (s >> 31);
+    out[i] = z % GL_P;
+}
+// device blind_col_aug: fill n slots of a DEVICE buffer from seed s
+static inline void blind_col_aug_dev(uint64_t s, gl_t* dout, size_t n) {
+    if (!G.blind_on) { cudaMemsetAsync(dout, 0, n * 8, 0); return; }
+    p3zkc_lcgchain_kernel<<<(uint32_t)((n + 255) / 256), 256>>>(dout, s, n, lcg_ladder());
+}
+
 // ---- Libra blind material for one sumcheck instance ----
 // nb committed blind columns (4 for quartic Msg5 chains, 3 for cubic Msg4);
 // serialized in the proof as (roots, H); yB claims ride the shared ledger.

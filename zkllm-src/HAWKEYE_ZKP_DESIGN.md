@@ -1294,3 +1294,35 @@ Battery harness: run_battery.sh (builds all 17 suites in parallel, runs serially
 Post-lever d=1024 zk profile (302.1 s): mm=108.5 lug=101.3 batch=87.5
 (bo: G=13.9 ys+rlc=23.9 q0=39.3 blinder=5.4 fold=3.2) sc5z/blind=35.4
 commit_salt=30.2 mask_gen=16.0 lug/hcommit=36.9 lug/scA=31.7 lug/claims=22.6.
+
+### 20.2 Lever: DEVICE-side regen of dropped ledger columns [VERIFIED]
+
+The ledger's gen-backed columns (Libra blind chains, logUp GKR mask streams)
+were regenerated on the HOST (serial LCG / OpenMP zprng_at fills) and uploaded
+per use (~0.10-0.25 s per 512 MB column-use across bo/G, bo/ys+rlc and q0).
+Change: `PLedger` gains an optional DGen (device regenerator, kernel-only);
+prove_class prefers it for the resident dcol fill, upload_col and the q0
+encode.  Producers:
+
+* `p3zkc::blind_col_aug_dev`: LCG jump-ahead kernel (s_{i+1} = A_{i+1} s0 +
+  C_{i+1} via the binary ladder A_2k = A_k^2, C_2k = C_k (A_k+1)), BIT-IDENTICAL
+  to the host zprng chain -- validated by lcgdev_selftest.cu (20/20 seeds x
+  sizes incl. 2^24) -- wired for both mblind layouts in p3_hawkeye.
+* `p3lu_pmgen/qmgen_kernel`: zprng_at is __host__ __device__, so the GKR
+  mask-stream regens fill on device with the same values.
+
+Results (proof bytes identical, verify_ok=1):
+
+    d=1024 zk: prove 302.1 -> 260.8 s (1.16x)   batch 87.5 -> 47.0 s
+               (bo/G 13.9 -> 2.0, bo/ys+rlc 23.9 -> 2.8, q0/enc 35.2 -> 27.6)
+    d=256  zk: prove 28.6 -> 27.0 s   proof_mb identical
+    ALL 17 suites green.
+
+Also tried [VERIFIED, no effect, kept]: extending the lug/claims device-dot
+range above 2^22 -- lug/claims unchanged at 22.6 s (the cost there is NOT the
+member dots; needs finer instrumentation).
+
+Post-lever d=1024 zk profile (260.8 s): mm=108.6 lug=100.3 batch=47.0
+(q0=31.8 of which enc=27.6 -- now NTT-bound: ~100-130 ms per 2^28 re-encode
+x ~170 distinct columns), sc5z/blind=35.5 commit_salt=30.2 lug/hcommit=36.9
+lug/scA=31.4 lug/claims=22.6 mask_gen=16.2.

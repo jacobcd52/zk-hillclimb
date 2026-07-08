@@ -61,6 +61,17 @@ struct FLuGpuZk {
                  gl_add(c[4], gl_mul(c[2], gl_add(c[5], gl_mul(c[2], c[6]))))));
     }
 };
+// device regen of the GKR mask-leaf stream columns (bit-identical to the host
+// ledger regenerators: zprng_at is __host__ __device__ with the same values)
+__global__ void p3lu_pmgen_kernel(gl_t* out, uint64_t sd, uint64_t sq, size_t n, int mo) {
+    size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = mo ? gl_mul(p3zkc::zprng_at(sd, i), p3zkc::zprng_at(sq, i)) : 0ULL;
+}
+__global__ void p3lu_qmgen_kernel(gl_t* out, uint64_t sd, size_t n, int mo) {
+    size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = mo ? p3zkc::zprng_at(sd, i) : 1ULL;
+}
+
 // device reduction of the blind-sum H = sum_b B0 + E*(B1 + E*B2) (block partials)
 __global__ void p3lu_blindsum_kernel(const gl_t* b0, const gl_t* b1, const gl_t* b2,
                                      const gl_t* e, gl_t* out, size_t n) {
@@ -1285,6 +1296,8 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
                     #pragma omp parallel for schedule(static) if (n >= 65536) num_threads(p3bf::nthr(n))
                     for (size_t i = 0; i < n; i++)
                         b[i] = mo2 ? gl_mul(p3zkc::zprng_at(sd, i), p3zkc::zprng_at(sq, i)) : 0ULL;
+                }, [sd, sq, mo2](gl_t* b, size_t n) {
+                    p3lu_pmgen_kernel<<<(uint32_t)((n + 255) / 256), 256>>>(b, sd, sq, n, mo2 ? 1 : 0);
                 });
             }
             {
@@ -1296,6 +1309,8 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
                     (void)NM3;
                     #pragma omp parallel for schedule(static) if (n >= 65536) num_threads(p3bf::nthr(n))
                     for (size_t i = 0; i < n; i++) b[i] = mo2 ? p3zkc::zprng_at(sd, i) : 1ULL;
+                }, [sd, mo2](gl_t* b, size_t n) {
+                    p3lu_qmgen_kernel<<<(uint32_t)((n + 255) / 256), 256>>>(b, sd, n, mo2 ? 1 : 0);
                 });
             }
         }
@@ -1304,9 +1319,9 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         // elements in any order and on either device), absorbed in order
         std::vector<gl_t> ymem((size_t)k * c);
         const size_t NAc = eqpm.size();
-        // device dots win in the launch-bound middle range; above ~2^22 the
-        // per-column PCIe upload loses to the OpenMP host dot
-        if (gpu && NAc >= ((size_t)1 << 15) && NAc <= ((size_t)1 << 22)) {
+        // device dots from 2^15 up (the 19.7 GB/s upload of a 512 MB column
+        // beats the measured ~160 ms/claim host eval_h at the big dims)
+        if (gpu && NAc >= ((size_t)1 << 15)) {
             // device dots against one resident eq(pm) column
             const uint32_t NB = 256;
             gl_t* deq = p3bf::dmalloc(NAc, "lug:eqpm");

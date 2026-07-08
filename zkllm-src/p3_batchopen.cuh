@@ -146,21 +146,25 @@ struct PLedger {
     // fresh std::vector cost a 100s-of-MB mmap + page-fault + free cycle PER
     // USE at scale, which dominated the big batch classes)
     typedef std::function<void(gl_t*, size_t)> Gen;
+    // DEVICE regenerator: fills a DEVICE buffer with the same n values (kernel
+    // launches only) -- skips the host materialization + PCIe upload entirely.
+    // Optional; when present it MUST produce bit-identical values to gen.
+    typedef std::function<void(gl_t*, size_t)> DGen;
     struct Ent { const std::vector<gl_t>* vals; Hash root; uint32_t zid; gl_t y;
-                 uint64_t sseed; Gen gen; };
+                 uint64_t sseed; Gen gen; DGen dgen; };
     struct Cls { uint32_t v; std::vector<std::vector<gl_t>> pts; std::vector<Ent> ents; };
     std::vector<Cls> cls;
     void add(const std::vector<gl_t>* vals, const Hash& root, const std::vector<gl_t>& z,
-             gl_t y, uint64_t sseed = 0, Gen gen = {}) {
+             gl_t y, uint64_t sseed = 0, Gen gen = {}, DGen dgen = {}) {
         uint32_t vv = (uint32_t)z.size();
         for (auto& c : cls) if (c.v == vv) {
             uint32_t zid = 0;
             while (zid < c.pts.size() && c.pts[zid] != z) zid++;
             if (zid == c.pts.size()) c.pts.push_back(z);
-            c.ents.push_back({vals, root, zid, y, sseed, std::move(gen)});
+            c.ents.push_back({vals, root, zid, y, sseed, std::move(gen), std::move(dgen)});
             return;
         }
-        cls.push_back({vv, {z}, {{vals, root, 0, y, sseed, std::move(gen)}}});
+        cls.push_back({vv, {z}, {{vals, root, 0, y, sseed, std::move(gen), std::move(dgen)}}});
     }
 };
 // verifier ledger: roots only
@@ -322,6 +326,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     // distinct columns by root (first appearance), entry -> column map
     std::vector<const std::vector<gl_t>*> hcols;
     std::vector<PLedger::Gen> hgen;
+    std::vector<PLedger::DGen> hdgen;
     std::vector<Hash> droots;
     std::vector<uint64_t> dsseed;
     std::vector<uint32_t> colidx(k);
@@ -330,6 +335,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         while (c < droots.size() && !(droots[c] == C.ents[j].root)) c++;
         if (c == droots.size()) { droots.push_back(C.ents[j].root); hcols.push_back(C.ents[j].vals);
                                   hgen.push_back(C.ents[j].gen);
+                                  hdgen.push_back(C.ents[j].dgen);
                                   dsseed.push_back(C.ents[j].sseed); }
         colidx[j] = c;
     }
@@ -411,12 +417,14 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     if (!strCol)
         for (uint32_t c = 0; c < nc; c++) {
             dcol[c] = p3bf::dmalloc(N, "bo:dcol");
-            cudaMemcpy(dcol[c], col_host(c)->data(), colbytes, cudaMemcpyHostToDevice);
+            if (hdgen[c]) hdgen[c](dcol[c], (size_t)N);
+            else cudaMemcpy(dcol[c], col_host(c)->data(), colbytes, cudaMemcpyHostToDevice);
         }
     gl_t* colbuf = strCol ? p3bf::dmalloc(N, "bo:colbuf") : nullptr;
     auto upload_col = [&](uint32_t c) -> const gl_t* {
         if (!strCol) return dcol[c];
-        cudaMemcpy(colbuf, col_host(c)->data(), colbytes, cudaMemcpyHostToDevice);
+        if (hdgen[c]) { hdgen[c](colbuf, (size_t)N); cudaDeviceSynchronize(); }
+        else cudaMemcpy(colbuf, col_host(c)->data(), colbytes, cudaMemcpyHostToDevice);
         return colbuf;
     };
     auto eq_dev = [&](const gl_t* zh, uint32_t nv, gl_t* out) {
@@ -861,8 +869,16 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         } else
         for (uint32_t c = 0; c < nc; c++) {
             double zq0 = p3zp::nowms();
-            gl_t* d_cwc = strCol ? bo_encode_host(col_host(c)->data(), N, logM0, ntt)
-                                 : bo_encode_dev(dcol[c], N, logM0, ntt);
+            gl_t* d_cwc;
+            if (strCol && hdgen[c]) {
+                gl_t* dtmp = p3bf::dmalloc(N, "bo:q0gen");
+                hdgen[c](dtmp, (size_t)N);
+                d_cwc = bo_encode_dev(dtmp, N, logM0, ntt);
+                cudaFreeAsync(dtmp, 0);
+            } else {
+                d_cwc = strCol ? bo_encode_host(col_host(c)->data(), N, logM0, ntt)
+                               : bo_encode_dev(dcol[c], N, logM0, ntt);
+            }
             if (p3zp::on()) { cudaDeviceSynchronize();
                 p3zp::g.q0_enc.ms += p3zp::nowms() - zq0; p3zp::g.q0_enc.n++;
                 zq0 = p3zp::nowms(); }
