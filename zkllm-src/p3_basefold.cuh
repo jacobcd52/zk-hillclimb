@@ -198,10 +198,12 @@ static inline Hash commit_gpu_rootonly(const std::vector<gl_t>& c, uint32_t R) {
     uint32_t M0; gl_t* d_out = rs_encode_gpu_dev(c, R, M0);
     Hash r;
     if (M0 >= (1u << 24)) {          // stream: the full tree would hold 64*M0 bytes
+        p3fri::RetTree rt;
         r = p3fri::stream_tree_build(M0, [&](size_t off, uint32_t len, uint8_t* out) {
                 p3_merkle_leaf_kernel<<<(len + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS,
                                         P3_MERKLE_THREADS>>>(d_out + off, out, len);
-            }).root();
+            }, &rt).root();
+        p3fri::rettree_reg()[r] = std::move(rt);
     } else {
         p3fri::DeviceMerkle mk; mk.build_dev(d_out, M0);
         r = mk.root(); mk.free_();

@@ -860,18 +860,28 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
             }
         } else
         for (uint32_t c = 0; c < nc; c++) {
+            double zq0 = p3zp::nowms();
             gl_t* d_cwc = strCol ? bo_encode_host(col_host(c)->data(), N, logM0, ntt)
                                  : bo_encode_dev(dcol[c], N, logM0, ntt);
+            if (p3zp::on()) { cudaDeviceSynchronize();
+                p3zp::g.q0_enc.ms += p3zp::nowms() - zq0; p3zp::g.q0_enc.n++;
+                zq0 = p3zp::nowms(); }
             std::vector<std::vector<Hash>> paths;
             BQ0C& oc = pf.q0c[c];
             oc.vals.resize(nu);
+            // commit-time retained tree top: rebuild only the query-touched
+            // subtrees (path bytes identical to the full-tree rebuild)
+            auto rit = p3fri::rettree_reg().find(droots[c]);
+            const bool haveret = rit != p3fri::rettree_reg().end();
             if (zk_salted) {
                 uint64_t ss = dsseed[c];
                 auto sleaves = [&](size_t off, uint32_t len, uint8_t* out) {
                     p3zkc::p3zkc_salted_leaf_off_kernel<<<(len + 255) / 256, 256>>>(
                         d_cwc + off, ss, out, off, len);
                 };
-                if (strM) {
+                if (haveret) {
+                    paths = p3fri::retained_tree_paths(rit->second, sleaves, upos);
+                } else if (strM) {
                     paths = p3fri::stream_tree_paths_onepass(M0, sleaves, upos);
                 } else {
                     p3zkc::SaltedDevMerkle mk; mk.build_dev(d_cwc, M0, ss); cudaDeviceSynchronize();
@@ -881,7 +891,9 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
                 oc.salts.resize(nu);
                 for (uint32_t i = 0; i < nu; i++) oc.salts[i] = p3zkc::salt_of(ss, upos[i]);
             } else {
-                if (strM) {
+                if (haveret) {
+                    paths = p3fri::retained_tree_paths(rit->second, plain_leaves(d_cwc), upos);
+                } else if (strM) {
                     paths = p3fri::stream_tree_paths_onepass(M0, plain_leaves(d_cwc), upos);
                 } else {
                     p3fri::DeviceMerkle mk; mk.build_dev(d_cwc, M0); cudaDeviceSynchronize();
@@ -889,6 +901,10 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
                     mk.free_();
                 }
             }
+            if (haveret) p3fri::rettree_reg().erase(rit);   // last use of this root
+            if (p3zp::on()) { cudaDeviceSynchronize();
+                p3zp::g.q0_tree.ms += p3zp::nowms() - zq0; p3zp::g.q0_tree.n++;
+                zq0 = p3zp::nowms(); }
             p3bf::p3bf_gather_kernel<<<(nu + 255) / 256, 256>>>(d_cwc, d_idx, d_val, nu);
             cudaMemcpy(oc.vals.data(), d_val, (size_t)nu * 8, cudaMemcpyDeviceToHost);
             std::vector<Hash> leaves(nu);
@@ -897,6 +913,8 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
                                       : p3fri::leaf_hash(oc.vals[i]);
             oc.nodes = subset_prove(logM0, upos, leaves, paths);
             cudaFreeAsync(d_cwc, 0);
+            if (p3zp::on()) { p3zp::g.q0_host.ms += p3zp::nowms() - zq0;
+                p3zp::g.q0_host.n++; }
         }
         cudaFreeAsync(d_idx, 0); cudaFreeAsync(d_val, 0);
     }

@@ -1248,3 +1248,49 @@ exactly like augment).
     ALL 17 batteries green after the change (composed layer 30/30, model 26/26,
     zk smokes 15/15 + 16/16, hiding 16/16 + 11/11 + 19/19, 7 gadget selftests,
     logup 13/13, GKR 88/88, zk-gadget-smoke 8/8).
+
+## 20. Speedup campaign session 2026-07-08 [VERIFIED unless marked]
+
+Baseline reproduced at session start (HEAD b92980b, RTX 4090, commands as section 19):
+`P3_ZKPROF=1 P3_MEMLOG=1 p3_transformer_bench 4 1024 16 64 4096 1 1 tables_ld10.bin`
+-> prove=344.3 s (section 19.5 recorded 343.1), verify_ok=1, proof 134.416 MB.
+New q0 split instrumentation (per-column strM branch now records q0_enc/q0_tree):
+
+    bo/q0-subset 80.6 s  =  q0/enc 36.3 (NTT re-encode + host regen/upload)
+                          + q0/tree 43.1 (FULL salted-tree SHA rebuild per column)
+                          + path/host ~1.0
+
+### 20.1 Lever: commit-time retained Merkle tree tops (section 19.4 q0 plan) [VERIFIED]
+
+Every big (M0 >= 2^24) commitment already streams its full Merkle tree ONCE at
+commit time (stream_tree_build) and then discards it; the batched round-0 subset
+opening rebuilt the ENTIRE salted tree per distinct column to extract ~2Q paths.
+Change (p3_fri.cuh + p3_zkc.cuh + p3_basefold.cuh + p3_batchopen.cuh):
+
+* `RetTree`: stream_tree_build optionally captures the tree's nodes at level
+  lsub = clamp(logM-15, 10, lch-1) and everything above (<= 2^15 nodes + upper
+  ~ 2 MB per v=26 column), registered in a root-keyed map by all three big
+  commit sites (salted_commit_root, salted_commit_root_dev, commit_gpu_rootonly).
+* The q0 per-column opening looks the root up and, on a hit, rebuilds ONLY the
+  query-touched 2^lsub-leaf subtrees from the freshly re-encoded codeword
+  (retained_tree_paths), splicing the retained upper nodes onto the in-subtree
+  paths; entry erased after use (q0 is the root's last use).  Path bytes are
+  IDENTICAL to the full rebuild (level-lsub nodes are the same hashes), so
+  roots, proofs and transcripts are unchanged.
+
+Results (verify_ok=1, proof bytes identical at both dims):
+
+    d=1024 zk: prove 344.3 -> 302.1 s (1.14x)   bo/q0 80.6 -> 39.3 s
+               (q0/tree 43.1 -> 3.2 s; q0/enc 35.2 s remains: NTT re-encode +
+                host regen/upload of dropped columns)   rss 35.6 -> 35.8 GB
+    d=256  zk: prove 30.4 -> 28.6 s   proof_mb 115.163 identical
+    d=64: unchanged (M0 < 2^24 never registers; batched forest path as before)
+
+Regression: ALL 17 suites green (7 gadget selftests, GKR 88/88, logup 13/13,
+hawkeye-zk 19/19, zk-gadget-smoke 8/8, composed layer 30/30 + zk smoke 15/15 +
+hiding 16/16, composed model 26/26 + zk smoke 16/16 + hiding 11/11).
+Battery harness: run_battery.sh (builds all 17 suites in parallel, runs serially).
+
+Post-lever d=1024 zk profile (302.1 s): mm=108.5 lug=101.3 batch=87.5
+(bo: G=13.9 ys+rlc=23.9 q0=39.3 blinder=5.4 fold=3.2) sc5z/blind=35.4
+commit_salt=30.2 mask_gen=16.0 lug/hcommit=36.9 lug/scA=31.7 lug/claims=22.6.

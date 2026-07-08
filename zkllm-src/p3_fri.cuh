@@ -202,14 +202,52 @@ struct StreamTree {
     }
 };
 
+// ---- retained tree tops (commit-time snapshot for cheap subset opens) ----
+// A committed big column's Merkle tree is built ONCE at commit time and then
+// discarded; the batched round-0 subset opening used to rebuild the ENTIRE
+// salted tree (2^logM leaves of SHA) per column just to extract ~2Q paths.
+// RetTree keeps the tree's nodes from level lsub UP TO the root (a few MB per
+// column), registered by root: the opening then rebuilds only the query-
+// touched 2^lsub-leaf subtrees and splices the retained upper nodes onto the
+// in-subtree paths -- byte-identical paths, ~2^(logM-lsub)/2Q x less hashing.
+struct RetTree {
+    uint32_t logM = 0, lsub = 0;
+    std::vector<std::vector<Hash>> upper;      // upper[0] = level-lsub nodes
+    void build_upper_from0() {
+        while (upper.back().size() > 1) {
+            const auto& cur = upper.back();
+            std::vector<Hash> nx(cur.size() / 2);
+            for (size_t i = 0; i < nx.size(); i++) nx[i] = node_hash(cur[2*i], cur[2*i+1]);
+            upper.push_back(std::move(nx));
+        }
+    }
+};
+static inline uint32_t rettree_lsub(uint32_t logM, uint32_t lch) {
+    uint32_t l = logM > 15 ? logM - 15 : 10;           // <= 2^15 retained nodes
+    if (l < 10) l = 10;
+    if (l > lch - 1) l = lch - 1;                       // capturable inside a chunk
+    return l;
+}
+static inline std::map<Hash, RetTree>& rettree_reg() {
+    static std::map<Hash, RetTree> m; return m;
+}
+
 // LeafFn(off, len, d_out): write the leaf hashes of codeword positions
 // [off, off+len) into the device buffer d_out (len*32 bytes).
+// ret (optional): capture the level-lsub nodes + upper tree during the build.
 template <class LeafFn>
-static inline StreamTree stream_tree_build(size_t M, LeafFn leaf_chunk) {
+static inline StreamTree stream_tree_build(size_t M, LeafFn leaf_chunk, RetTree* ret = nullptr) {
     StreamTree st; st.M = M;
     size_t CH = (size_t)1 << P3_STREAM_LCH; if (CH > M) CH = M;
     st.lch = 0; while (((size_t)1 << st.lch) < CH) st.lch++;
     const size_t nch = M / CH;
+    size_t retcnt = 0;
+    if (ret) {
+        ret->logM = 0; while (((size_t)1 << ret->logM) < M) ret->logM++;
+        ret->lsub = rettree_lsub(ret->logM, st.lch);
+        retcnt = CH >> ret->lsub;                       // level-lsub nodes per chunk
+        ret->upper.assign(1, std::vector<Hash>(M >> ret->lsub));
+    }
     uint8_t *ha, *hb;
     cudaMallocAsync(&ha, CH * 32, 0);
     cudaMallocAsync(&hb, (CH / 2 ? CH / 2 : 1) * 32, 0);
@@ -218,6 +256,9 @@ static inline StreamTree stream_tree_build(size_t M, LeafFn leaf_chunk) {
         leaf_chunk(c * CH, (uint32_t)CH, ha);
         uint8_t *cur = ha, *nxt = hb;
         for (size_t cnt = CH; cnt > 1; cnt /= 2) {
+            if (ret && cnt == retcnt)
+                cudaMemcpy(ret->upper[0][c * retcnt].data(), cur, cnt * 32,
+                           cudaMemcpyDeviceToHost);
             uint32_t half = (uint32_t)(cnt / 2);
             p3_merkle_internal_kernel<<<(half + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS,
                                         P3_MERKLE_THREADS>>>(cur, nxt, half);
@@ -227,6 +268,7 @@ static inline StreamTree stream_tree_build(size_t M, LeafFn leaf_chunk) {
     }
     cudaFreeAsync(ha, 0); cudaFreeAsync(hb, 0);
     st.build_upper(std::move(sub));
+    if (ret) ret->build_upper_from0();
     return st;
 }
 
@@ -252,6 +294,35 @@ static inline std::vector<std::vector<Hash>> stream_tree_paths(const StreamTree&
             auto& r = res[cc.second[q]]; r = std::move(lp[q]);   // in-chunk levels
             uint32_t u = (uint32_t)(pos[cc.second[q]] >> st.lch);
             for (size_t l = 0; l + 1 < st.upper.size(); l++) { r.push_back(st.upper[l][u ^ 1]); u >>= 1; }
+        }
+    }
+    return res;
+}
+
+// paths from a commit-time RetTree: rebuild ONLY the 2^lsub-leaf subtrees
+// containing positions (leaf_chunk regenerates their leaves from the freshly
+// re-encoded codeword) and splice the retained upper nodes on top.  Path bytes
+// identical to the full tree's.
+template <class LeafFn>
+static inline std::vector<std::vector<Hash>> retained_tree_paths(const RetTree& rt, LeafFn leaf_chunk,
+                                                                 const std::vector<uint32_t>& pos) {
+    const size_t CH = (size_t)1 << rt.lsub;
+    std::vector<std::vector<Hash>> res(pos.size());
+    std::map<uint32_t, std::vector<uint32_t>> byc;
+    for (uint32_t i = 0; i < (uint32_t)pos.size(); i++) byc[(uint32_t)(pos[i] >> rt.lsub)].push_back(i);
+    for (auto& cc : byc) {
+        uint8_t* d0; cudaMallocAsync(&d0, CH * 32, 0);
+        leaf_chunk((size_t)cc.first << rt.lsub, (uint32_t)CH, d0);
+        DeviceMerkle mk; mk.build_leaves(d0, (uint32_t)CH);      // takes ownership of d0
+        cudaDeviceSynchronize();
+        std::vector<uint32_t> loc; loc.reserve(cc.second.size());
+        for (auto i : cc.second) loc.push_back(pos[i] & (uint32_t)(CH - 1));
+        auto lp = mk.paths_batch(loc);
+        mk.free_();
+        for (size_t q = 0; q < cc.second.size(); q++) {
+            auto& r = res[cc.second[q]]; r = std::move(lp[q]);   // in-subtree levels
+            uint32_t u = (uint32_t)(pos[cc.second[q]] >> rt.lsub);
+            for (size_t l = 0; l + 1 < rt.upper.size(); l++) { r.push_back(rt.upper[l][u ^ 1]); u >>= 1; }
         }
     }
     return res;

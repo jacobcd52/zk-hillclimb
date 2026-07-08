@@ -276,20 +276,24 @@ static inline Hash salted_commit_root(const std::vector<gl_t>& c, uint32_t R, ui
     const bool big = M0 >= (1u << 24);       // stream: full tree = 64*M0 bytes
     if (G.salt_on) {
         if (big) {
+            p3fri::RetTree rt;
             r = p3fri::stream_tree_build(M0, [&](size_t off, uint32_t len, uint8_t* out) {
                     p3zkc_salted_leaf_off_kernel<<<(len + 255) / 256, 256>>>(
                         d_cw + off, sseed, out, off, len);
-                }).root();
+                }, &rt).root();
+            p3fri::rettree_reg()[r] = std::move(rt);
         } else {
             SaltedDevMerkle mk; mk.build_dev(d_cw, M0, sseed); cudaDeviceSynchronize();
             r = mk.root(); mk.free_();
         }
     } else {
         if (big) {
+            p3fri::RetTree rt;
             r = p3fri::stream_tree_build(M0, [&](size_t off, uint32_t len, uint8_t* out) {
                     p3_merkle_leaf_kernel<<<(len + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS,
                                             P3_MERKLE_THREADS>>>(d_cw + off, out, len);
-                }).root();
+                }, &rt).root();
+            p3fri::rettree_reg()[r] = std::move(rt);
         } else {
             p3fri::DeviceMerkle mk; mk.build_dev(d_cw, M0); cudaDeviceSynchronize();
             r = mk.root(); mk.free_();
@@ -317,20 +321,24 @@ static inline Hash salted_commit_root_dev(const gl_t* d_vals, size_t n, uint32_t
     const bool big = M0 >= (1u << 24);
     if (G.salt_on) {
         if (big) {
+            p3fri::RetTree rt;
             r = p3fri::stream_tree_build(M0, [&](size_t off, uint32_t len, uint8_t* out) {
                     p3zkc_salted_leaf_off_kernel<<<(len + 255) / 256, 256>>>(
                         d_out + off, sseed, out, off, len);
-                }).root();
+                }, &rt).root();
+            p3fri::rettree_reg()[r] = std::move(rt);
         } else {
             SaltedDevMerkle mk; mk.build_dev(d_out, M0, sseed); cudaDeviceSynchronize();
             r = mk.root(); mk.free_();
         }
     } else {
         if (big) {
+            p3fri::RetTree rt;
             r = p3fri::stream_tree_build(M0, [&](size_t off, uint32_t len, uint8_t* out) {
                     p3_merkle_leaf_kernel<<<(len + P3_MERKLE_THREADS - 1) / P3_MERKLE_THREADS,
                                             P3_MERKLE_THREADS>>>(d_out + off, out, len);
-                }).root();
+                }, &rt).root();
+            p3fri::rettree_reg()[r] = std::move(rt);
         } else {
             p3fri::DeviceMerkle mk; mk.build_dev(d_out, M0); cudaDeviceSynchronize();
             r = mk.root(); mk.free_();
