@@ -40,6 +40,7 @@
 #include <vector>
 #include "p3_binius_logup.cuh"
 #include "p3_binius_acc.cuh"
+#include "p3_binius_trans.cuh"
 
 namespace bhw {
 
@@ -65,7 +66,10 @@ enum {
     LEB = 105,              // 5
     NCOLB = 110,
     L5BASE = 110,           // 4   accumulation level-5 group sums (acc mode)
-    NCOLA = 114,            // slots covered by the xev/xev2 bindings
+    LPC = 114,              // 6   link carries eb + sh = ME12 (trans mode)
+    LTSEL = 120,            // 1   tightness selector t (trans mode)
+    LORT = 121, LORP = 122, // 2   OR-tree levels 1..4 over t / pr (heap rows)
+    NCOLA = 123,            // slots covered by the xev/xev2 bindings
     LOGSTK = 7, NSTK = 128  // stacked slots
 };
 static const int NC = 401;  // batched constraint count
@@ -286,13 +290,14 @@ struct BhwProof {
     bf128_t xev2[NCOLA];         // ALL column evals at the lookup point rfin_w
     BfPcsProofM pcs;             // ONE multi-point main-stack opening
     bacc::AccProof acc;          // accumulation gadget (section 21.10), if on
+    btr::TrProof tr;             // group transition gadget (21.11), if on
     size_t bytes() const {
         return 32 + lu.bytes() + sc.rounds.size() * 16 + sc.finals.size() * 16 +
-               sizeof(xev) + sizeof(xev2) + pcs.bytes() + acc.bytes();
+               sizeof(xev) + sizeof(xev2) + pcs.bytes() + acc.bytes() + tr.bytes();
     }
 };
 struct BhwStats { double commit_ms = 0, lu_ms = 0, sc_ms = 0, open_ms = 0,
-                  verify_ms = 0, acc_ms = 0; size_t committed = 0; };
+                  verify_ms = 0, acc_ms = 0, tr_ms = 0; size_t committed = 0; };
 
 static inline BfPcsParams bhw_params(int lN) {
     BfPcsParams p;
@@ -315,14 +320,19 @@ static inline void bhw_gammas(fs::Transcript& tr, std::vector<bf128_t>& g) {
 static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
                              BhwProof& pf, BhwStats& st, bool gpu = true,
                              const bacc::Wit* aw = nullptr,
-                             const uint8_t* acc_in = nullptr) {
+                             const uint8_t* acc_in = nullptr,
+                             const btr::Wit* tw = nullptr) {
     size_t N = (size_t)1 << lN;
     pf.lN = lN;
     pf.acc.on = aw ? 1 : 0;
+    pf.tr.on = tw ? 1 : 0;
+    pf.tr.CH = tw ? tw->CH : 1;
     BfPcsParams p = bhw_params(lN);
     fs::Transcript tr("binius-hawkeye");
     tr.absorb("stmt-bhw", &lN, sizeof lN);
     tr.absorb("stmt-acc", &pf.acc.on, sizeof pf.acc.on);
+    tr.absorb("stmt-tr", &pf.tr.on, sizeof pf.tr.on);
+    if (tw) tr.absorb("stmt-tr-ch", &pf.tr.CH, sizeof pf.tr.CH);
     BfPcsCommit C;
     bfpcs_commit(p, bits.data(), tr, C);
     st.commit_ms = C.commit_ms; st.committed = C.committed_bytes;
@@ -335,6 +345,15 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
         memcpy(pf.acc.root2, C2.root, 32);
         st.committed += C2.committed_bytes;
         st.acc_ms += bhw_now_ms() - ta;
+    }
+    // transition stack (21.11) committed up front as well
+    BfPcsCommit C3;
+    if (tw) {
+        double ta = bhw_now_ms();
+        bfpcs_commit(btr::tr_params(lN), tw->bits.data(), tr, C3);
+        memcpy(pf.tr.root3, C3.root, 32);
+        st.committed += C3.committed_bytes;
+        st.tr_ms += bhw_now_ms() - ta;
     }
     // DM lookup: the 38 tuple columns against the public decode-multiply table
     double t0 = bhw_now_ms();
@@ -494,6 +513,125 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
         }
         st.acc_ms += bhw_now_ms() - ta;
     }
+    // ---- transition gadget (section 21.11): link + OR-tree + A/B/C
+    // zerochecks, then the chain-binding points and supplied evals ----
+    int lG = lN - 5, LCH = tw ? tw->LCH : 0;
+    std::vector<bf128_t> zlk, zor[5], zA, zB, zC;
+    std::vector<bf128_t> tau_tr(5), sig_or(5), zetaH, zsh[16];
+    if (tw) {
+        double ta = bhw_now_ms();
+        BfScDev ws; ws.a = nullptr;
+        uint8_t* d_sb = nullptr;
+        if (gpu) {
+            bfsc_dev_reserve(ws, (size_t)btr::LkF::K << lN);
+            cudaMalloc(&d_sb, (size_t)25 << lN);
+        }
+        std::vector<uint8_t> sb;
+        std::vector<bf128_t> g2;
+        // link zerocheck (product cube)
+        btr::tr_gammas(tr, btr::LkF::NC, g2);
+        btr::sc_bytes_link(lN, bits.data(), LEB, LSH, LPR, LTSEL, LPC,
+                           tw->bits.data(), sb);
+        btr::tr_zc<btr::LkF>(lN, sb, tr, pf.tr.lk, zlk, g2, gpu,
+                             gpu ? &ws : nullptr, d_sb);
+        // OR-tree levels
+        for (int l = 1; l <= 5; l++) {
+            btr::tr_gammas(tr, btr::OrF::NC, g2);
+            btr::sc_bytes_or(lN, l, bits.data(), LTSEL, LPR, LORT, LORP,
+                             tw->bits.data(), sb);
+            btr::tr_zc<btr::OrF>(lN - l, sb, tr, pf.tr.orsc[l - 1], zor[l - 1],
+                                 g2, gpu, gpu ? &ws : nullptr, d_sb);
+        }
+        // group-cube zerochecks A, B, C: host-only in BOTH prover modes (the
+        // wide functors would blow up ptxas, and the group cube is tiny)
+        {
+            int ca[btr::NA]; btr::cols_A(ca);
+            btr::tr_gammas(tr, btr::AF::NC, g2);
+            btr::sc_bytes_cols(lG, ca, btr::NA, tw->bits.data(), sb);
+            btr::tr_zc<btr::AF, false>(lG, sb, tr, pf.tr.A, zA, g2, false);
+        }
+        btr::tr_gammas(tr, btr::BF::NC, g2);
+        btr::sc_bytes_B(lN, bits.data(), L5BASE, tw->bits.data(), sb);
+        btr::tr_zc<btr::BF, false>(lG, sb, tr, pf.tr.B, zB, g2, false);
+        {
+            int cc[btr::NCC]; btr::cols_C(cc);
+            btr::tr_gammas(tr, btr::CF3::NC, g2);
+            btr::sc_bytes_cols(lG, cc, btr::NCC, tw->bits.data(), sb);
+            btr::tr_zc<btr::CF3, false>(lG, sb, tr, pf.tr.C, zC, g2, false);
+        }
+        if (gpu) { bfsc_dev_free(ws); cudaFree(d_sb); }
+        // binding challenges
+        for (auto& x : tau_tr) x = bf_chal128(tr);
+        for (auto& x : sig_or) x = bf_chal128(tr);
+        zetaH.resize(lG - LCH);
+        for (auto& x : zetaH) x = bf_chal128(tr);
+        for (int j = 0; j < LCH; j++) {
+            zsh[j].resize(lG - 1 - j);
+            for (auto& x : zsh[j]) x = bf_chal128(tr);
+        }
+        // supplied main-stack evals at the 11 new points
+        {
+            std::vector<bf128_t> R(lN);
+            auto ev = [&](int i) {
+                pf.tr.evMain[i].resize(NCOLA);
+                bacc::acc_stack_evals(bits.data(), NCOLA, lN, R.data(),
+                                      pf.tr.evMain[i].data());
+                tr.absorb("btr-evM", pf.tr.evMain[i].data(),
+                          NCOLA * sizeof(bf128_t));
+            };
+            for (int t = 0; t < lG; t++) R[t] = zB[t];
+            for (int t = 0; t < 5; t++) R[lG + t] = tau_tr[t];
+            ev(0);                                        // RTR
+            for (int t = 0; t < lN; t++) R[t] = zlk[t];
+            ev(1);                                        // RLK
+            for (int l = 1; l <= 4; l++) {                // orA_l
+                for (int t = 0; t < lN - l; t++) R[t] = zor[l - 1][t];
+                R[lN - l] = bf128_one();
+                for (int t = lN - l + 1; t < lN; t++) R[t] = bf128_zero();
+                ev(1 + l);
+            }
+            R[0] = sig_or[0];                             // orB_1
+            for (int t = 0; t < lN - 1; t++) R[1 + t] = zor[0][t];
+            ev(6);
+            for (int l = 2; l <= 5; l++) {                // orB_l
+                R[0] = sig_or[l - 1];
+                for (int t = 0; t < lN - l; t++) R[1 + t] = zor[l - 1][t];
+                R[1 + lN - l] = bf128_one();
+                for (int t = lN - l + 2; t < lN; t++) R[t] = bf128_zero();
+                ev(5 + l);
+            }
+        }
+        // supplied transition-stack evals
+        {
+            std::vector<bf128_t> R(lG);
+            auto ev = [&](std::vector<bf128_t>& dst) {
+                dst.resize(btr::NCOLT);
+                bacc::acc_stack_evals(tw->bits.data(), btr::NCOLT, lG, R.data(),
+                                      dst.data());
+                tr.absorb("btr-evT", dst.data(), btr::NCOLT * sizeof(bf128_t));
+            };
+            R.assign(zA.begin(), zA.end()); ev(pf.tr.evT[0]);      // TA
+            R.assign(zB.begin(), zB.end()); ev(pf.tr.evT[1]);      // TB
+            R.assign(zC.begin(), zC.end()); ev(pf.tr.evT[2]);      // TC
+            for (int t = 0; t < lG; t++) R[t] = zlk[5 + t];
+            ev(pf.tr.evT[3]);                                      // TLK
+            R.assign(zor[4].begin(), zor[4].end()); ev(pf.tr.evT[4]); // TOR5
+            for (int t = 0; t < LCH; t++) R[t] = bf128_zero();     // THEAD
+            for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];
+            ev(pf.tr.evT[5]);
+            pf.tr.evTS.resize(2 * LCH);
+            for (int j = 0; j < LCH; j++) {                        // TS pairs
+                for (int t = 0; t < j; t++) R[t] = bf128_zero();
+                R[j] = bf128_one();
+                for (int t = j + 1; t < lG; t++) R[t] = zsh[j][t - j - 1];
+                ev(pf.tr.evTS[2 * j]);
+                for (int t = 0; t < j; t++) R[t] = bf128_one();
+                R[j] = bf128_zero();
+                ev(pf.tr.evTS[2 * j + 1]);
+            }
+        }
+        st.tr_ms += bhw_now_ms() - ta;
+    }
     // one stacked MULTI-POINT opening per commitment
     std::vector<bf128_t> rho(LOGSTK), eqsel, R1(p.l), R2(p.l);
     for (auto& x : rho) x = bf_chal128(tr);
@@ -522,8 +660,44 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
             VB1 = bf128_add(VB1, bf128_mul(eqsel[j], pf.acc.evB1[j]));
             VA5 = bf128_add(VA5, bf128_mul(eqsel[j], pf.acc.evA5[j]));
         }
-        bfpcs_open_multi(C, {R1.data(), R2.data(), RB1.data(), RA5.data()},
-                         {V1, V2, VB1, VA5}, tr, pf.pcs);
+        std::vector<std::vector<bf128_t>> RM;
+        std::vector<bf128_t> VM;
+        RM.push_back(R1); RM.push_back(R2); RM.push_back(RB1); RM.push_back(RA5);
+        VM.push_back(V1); VM.push_back(V2); VM.push_back(VB1); VM.push_back(VA5);
+        if (tw) {           // the 11 transition points on the main stack
+            std::vector<bf128_t> R(p.l);
+            for (int t = 0; t < LOGSTK; t++) R[lN + t] = rho[t];
+            auto pushm = [&](int i) {
+                bf128_t V = bf128_zero();
+                for (int j = 0; j < NCOLA; j++)
+                    V = bf128_add(V, bf128_mul(eqsel[j], pf.tr.evMain[i][j]));
+                RM.push_back(R); VM.push_back(V);
+            };
+            for (int t = 0; t < lG; t++) R[t] = zB[t];
+            for (int t = 0; t < 5; t++) R[lG + t] = tau_tr[t];
+            pushm(0);
+            for (int t = 0; t < lN; t++) R[t] = zlk[t];
+            pushm(1);
+            for (int l = 1; l <= 4; l++) {
+                for (int t = 0; t < lN - l; t++) R[t] = zor[l - 1][t];
+                R[lN - l] = bf128_one();
+                for (int t = lN - l + 1; t < lN; t++) R[t] = bf128_zero();
+                pushm(1 + l);
+            }
+            R[0] = sig_or[0];
+            for (int t = 0; t < lN - 1; t++) R[1 + t] = zor[0][t];
+            pushm(6);
+            for (int l = 2; l <= 5; l++) {
+                R[0] = sig_or[l - 1];
+                for (int t = 0; t < lN - l; t++) R[1 + t] = zor[l - 1][t];
+                R[1 + lN - l] = bf128_one();
+                for (int t = lN - l + 2; t < lN; t++) R[t] = bf128_zero();
+                pushm(5 + l);
+            }
+        }
+        std::vector<const bf128_t*> rmp;
+        for (auto& R : RM) rmp.push_back(R.data());
+        bfpcs_open_multi(C, rmp, VM, tr, pf.pcs);
         // acc-stack opening: points [A_1, A_2, A_3, A_4, B_2, B_3, B_4, B_5]
         BfPcsParams p2 = bacc::acc_params(lN);
         std::vector<bf128_t> rho2(bacc::LOGSTK2), eqsel2;
@@ -555,6 +729,48 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
         std::vector<const bf128_t*> rp;
         for (auto& R : RR) rp.push_back(R.data());
         bfpcs_open_multi(C2, rp, VV, tr, pf.acc.pcs2);
+        // transition-stack opening: [TA TB TC TLK TOR5 THEAD TS_I/O pairs]
+        if (tw) {
+            BfPcsParams p3 = btr::tr_params(lN);
+            std::vector<bf128_t> rho3(btr::LOGSTK3), eqsel3;
+            for (auto& x : rho3) x = bf_chal128(tr);
+            bf_eq_table(rho3.data(), btr::LOGSTK3, eqsel3);
+            std::vector<std::vector<bf128_t>> RT;
+            std::vector<bf128_t> VT;
+            std::vector<bf128_t> R(p3.l);
+            for (int t = 0; t < btr::LOGSTK3; t++) R[lG + t] = rho3[t];
+            auto pusht = [&](const std::vector<bf128_t>& ev) {
+                bf128_t V = bf128_zero();
+                for (int j = 0; j < btr::NCOLT; j++)
+                    V = bf128_add(V, bf128_mul(eqsel3[j], ev[j]));
+                RT.push_back(R); VT.push_back(V);
+            };
+            for (int t = 0; t < lG; t++) R[t] = zA[t];
+            pusht(pf.tr.evT[0]);
+            for (int t = 0; t < lG; t++) R[t] = zB[t];
+            pusht(pf.tr.evT[1]);
+            for (int t = 0; t < lG; t++) R[t] = zC[t];
+            pusht(pf.tr.evT[2]);
+            for (int t = 0; t < lG; t++) R[t] = zlk[5 + t];
+            pusht(pf.tr.evT[3]);
+            for (int t = 0; t < lG; t++) R[t] = zor[4][t];
+            pusht(pf.tr.evT[4]);
+            for (int t = 0; t < LCH; t++) R[t] = bf128_zero();
+            for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];
+            pusht(pf.tr.evT[5]);
+            for (int j = 0; j < LCH; j++) {
+                for (int t = 0; t < j; t++) R[t] = bf128_zero();
+                R[j] = bf128_one();
+                for (int t = j + 1; t < lG; t++) R[t] = zsh[j][t - j - 1];
+                pusht(pf.tr.evTS[2 * j]);
+                for (int t = 0; t < j; t++) R[t] = bf128_one();
+                R[j] = bf128_zero();
+                pusht(pf.tr.evTS[2 * j + 1]);
+            }
+            std::vector<const bf128_t*> rtp;
+            for (auto& RR2 : RT) rtp.push_back(RR2.data());
+            bfpcs_open_multi(C3, rtp, VT, tr, pf.tr.pcs3);
+        }
     }
     st.open_ms = bhw_now_ms() - t0;
 }
@@ -566,8 +782,12 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
     fs::Transcript tr("binius-hawkeye");
     tr.absorb("stmt-bhw", &lN, sizeof lN);
     tr.absorb("stmt-acc", &pf.acc.on, sizeof pf.acc.on);
+    tr.absorb("stmt-tr", &pf.tr.on, sizeof pf.tr.on);
+    if (pf.tr.on) tr.absorb("stmt-tr-ch", &pf.tr.CH, sizeof pf.tr.CH);
+    if (pf.tr.on && !pf.acc.on) return false;   // transition requires the trees
     tr.absorb("bfpcs-root", pf.root, 32);
     if (pf.acc.on) tr.absorb("bfpcs-root", pf.acc.root2, 32);
+    if (pf.tr.on) tr.absorb("bfpcs-root", pf.tr.root3, 32);
     // DM lookup chain; its leaf claim is bound against xev2 below
     std::vector<bf128_t> rfin_w, bk; bf128_t cw, alpha;
     if (!bflu::bflu_verify(tr, lN, 16, DMJ, bhw_dm_table_bits().data(), pf.lu,
@@ -635,6 +855,57 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
             tr.absorb("bacc-evB", pf.acc.evB[l - 2].data(),
                       bacc::NSTK2 * sizeof(bf128_t));
     }
+    // ---- transition gadget: replay the 9 zerochecks, draw the binding
+    // challenges, absorb the supplied evals, check the chain equalities ----
+    int lG = lN - 5, LCH = 0;
+    std::vector<bf128_t> zlk, zor[5], zA, zB, zC;
+    std::vector<bf128_t> tau_tr(5), sig_or(5), zetaH, zsh[16];
+    if (pf.tr.on) {
+        int CH = pf.tr.CH;
+        if (CH < 1 || (CH & (CH - 1))) return false;
+        while ((1 << LCH) < CH) LCH++;
+        if (lG < LCH) return false;
+        std::vector<bf128_t> g2;
+        btr::tr_gammas(tr, btr::LkF::NC, g2);
+        if (!btr::tr_zc_verify<btr::LkF>(lN, pf.tr.lk, tr, zlk, g2)) return false;
+        for (int l = 1; l <= 5; l++) {
+            btr::tr_gammas(tr, btr::OrF::NC, g2);
+            if (!btr::tr_zc_verify<btr::OrF>(lN - l, pf.tr.orsc[l - 1], tr,
+                                             zor[l - 1], g2)) return false;
+        }
+        btr::tr_gammas(tr, btr::AF::NC, g2);
+        if (!btr::tr_zc_verify<btr::AF>(lG, pf.tr.A, tr, zA, g2)) return false;
+        btr::tr_gammas(tr, btr::BF::NC, g2);
+        if (!btr::tr_zc_verify<btr::BF>(lG, pf.tr.B, tr, zB, g2)) return false;
+        btr::tr_gammas(tr, btr::CF3::NC, g2);
+        if (!btr::tr_zc_verify<btr::CF3>(lG, pf.tr.C, tr, zC, g2)) return false;
+        for (auto& x : tau_tr) x = bf_chal128(tr);
+        for (auto& x : sig_or) x = bf_chal128(tr);
+        zetaH.resize(lG - LCH);
+        for (auto& x : zetaH) x = bf_chal128(tr);
+        for (int j = 0; j < LCH; j++) {
+            zsh[j].resize(lG - 1 - j);
+            for (auto& x : zsh[j]) x = bf_chal128(tr);
+        }
+        for (int i = 0; i < 11; i++)
+            if ((int)pf.tr.evMain[i].size() != NCOLA) return false;
+        for (int i = 0; i < 6; i++)
+            if ((int)pf.tr.evT[i].size() != btr::NCOLT) return false;
+        if ((int)pf.tr.evTS.size() != 2 * LCH) return false;
+        for (auto& v : pf.tr.evTS)
+            if ((int)v.size() != btr::NCOLT) return false;
+        for (int i = 0; i < 11; i++)
+            tr.absorb("btr-evM", pf.tr.evMain[i].data(), NCOLA * sizeof(bf128_t));
+        for (int i = 0; i < 6; i++)
+            tr.absorb("btr-evT", pf.tr.evT[i].data(), btr::NCOLT * sizeof(bf128_t));
+        for (auto& v : pf.tr.evTS)
+            tr.absorb("btr-evT", v.data(), btr::NCOLT * sizeof(bf128_t));
+        // the CHAIN WELD: in-state at (10^j, zeta) == out-state at (01^j, zeta)
+        for (int j = 0; j < LCH; j++)
+            for (int c = 0; c < btr::NST; c++)
+                if (!bf128_eq(pf.tr.evTS[2 * j][c],
+                              pf.tr.evTS[2 * j + 1][btr::NST + c])) return false;
+    }
     std::vector<bf128_t> rho(LOGSTK), eqsel, R1(p.l), R2(p.l);
     for (auto& x : rho) x = bf_chal128(tr);
     bf_eq_table(rho.data(), LOGSTK, eqsel);
@@ -683,9 +954,79 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
             VB1 = bf128_add(VB1, bf128_mul(eqsel[j], hvB1[j] ? derB1[j] : pf.acc.evB1[j]));
             VA5 = bf128_add(VA5, bf128_mul(eqsel[j], hvA5[j] ? derA5[j] : pf.acc.evA5[j]));
         }
-        ok = bfpcs_verify_multi(p, pf.root,
-                                {R1.data(), R2.data(), RB1.data(), RA5.data()},
-                                {V1, V2, VB1, VA5}, tr, pf.pcs);
+        std::vector<std::vector<bf128_t>> RM;
+        std::vector<bf128_t> VM;
+        RM.push_back(R1); RM.push_back(R2); RM.push_back(RB1); RM.push_back(RA5);
+        VM.push_back(V1); VM.push_back(V2); VM.push_back(VB1); VM.push_back(VA5);
+        if (pf.tr.on) {
+            std::vector<bf128_t> R(p.l);
+            for (int t = 0; t < LOGSTK; t++) R[lN + t] = rho[t];
+            bf128_t der[NCOLA];
+            uint8_t hv[NCOLA];
+            auto pushm = [&](int i) {
+                bf128_t V = bf128_zero();
+                for (int j = 0; j < NCOLA; j++)
+                    V = bf128_add(V, bf128_mul(eqsel[j],
+                                   hv[j] ? der[j] : pf.tr.evMain[i][j]));
+                RM.push_back(R); VM.push_back(V);
+            };
+            // RTR: level-5 tree sums derive from ZC-B's P/N input finals
+            memset(hv, 0, sizeof hv);
+            for (int t = 0; t < lG; t++) R[t] = zB[t];
+            for (int t = 0; t < 5; t++) R[lG + t] = tau_tr[t];
+            {
+                std::vector<bf128_t> eqt;
+                bf_eq_table(tau_tr.data(), 5, eqt);
+                for (int col = 0; col < 40; col++) {
+                    int slot, t;
+                    bacc::acc_slot(5, 0, col, L5BASE, slot, t);
+                    if (!hv[slot]) { hv[slot] = 1; der[slot] = bf128_zero(); }
+                    der[slot] = bf128_add(der[slot],
+                                bf128_mul(eqt[t], pf.tr.B.finals[1 + col]));
+                }
+            }
+            pushm(0);
+            // RLK: the link zerocheck's main columns derive from its finals
+            memset(hv, 0, sizeof hv);
+            for (int t = 0; t < lN; t++) R[t] = zlk[t];
+            for (int j = 0; j < 5; j++) { hv[LEB + j] = 1; der[LEB + j] = pf.tr.lk.finals[1 + j]; }
+            for (int j = 0; j < 6; j++) { hv[LSH + j] = 1; der[LSH + j] = pf.tr.lk.finals[1 + 5 + j]; }
+            hv[LPR] = 1; der[LPR] = pf.tr.lk.finals[1 + 11];
+            hv[LTSEL] = 1; der[LTSEL] = pf.tr.lk.finals[1 + 12];
+            for (int j = 0; j < 6; j++) { hv[LPC + j] = 1; der[LPC + j] = pf.tr.lk.finals[1 + 13 + j]; }
+            pushm(1);
+            // orA_l: the level's committed OR columns
+            for (int l = 1; l <= 4; l++) {
+                memset(hv, 0, sizeof hv);
+                for (int t = 0; t < lN - l; t++) R[t] = zor[l - 1][t];
+                R[lN - l] = bf128_one();
+                for (int t = lN - l + 1; t < lN; t++) R[t] = bf128_zero();
+                hv[LORT] = 1; der[LORT] = pf.tr.orsc[l - 1].finals[1 + 4];
+                hv[LORP] = 1; der[LORP] = pf.tr.orsc[l - 1].finals[1 + 5];
+                pushm(1 + l);
+            }
+            // orB_l: the level's INPUT finals against level l-1 (l=1: t / pr)
+            for (int l = 1; l <= 5; l++) {
+                memset(hv, 0, sizeof hv);
+                R[0] = sig_or[l - 1];
+                for (int t = 0; t < lN - l; t++) R[1 + t] = zor[l - 1][t];
+                if (l >= 2) {
+                    R[1 + lN - l] = bf128_one();
+                    for (int t = lN - l + 2; t < lN; t++) R[t] = bf128_zero();
+                }
+                const bf128_t* f = pf.tr.orsc[l - 1].finals.data();
+                auto comb = [&](bf128_t fe, bf128_t fo) {
+                    return bf128_add(fe, bf128_mul(sig_or[l - 1], bf128_add(fe, fo)));
+                };
+                int st_ = (l == 1) ? LTSEL : LORT, sp_ = (l == 1) ? LPR : LORP;
+                hv[st_] = 1; der[st_] = comb(f[1 + 0], f[1 + 1]);
+                hv[sp_] = 1; der[sp_] = comb(f[1 + 2], f[1 + 3]);
+                pushm(l == 1 ? 6 : 5 + l);
+            }
+        }
+        std::vector<const bf128_t*> rmp;
+        for (auto& RX : RM) rmp.push_back(RX.data());
+        ok = bfpcs_verify_multi(p, pf.root, rmp, VM, tr, pf.pcs);
         if (!ok) return false;
         BfPcsParams p2 = bacc::acc_params(lN);
         std::vector<bf128_t> rho2(bacc::LOGSTK2), eqsel2;
@@ -732,6 +1073,91 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
         std::vector<const bf128_t*> rp;
         for (auto& R : RR) rp.push_back(R.data());
         ok = bfpcs_verify_multi(p2, pf.acc.root2, rp, VV, tr, pf.acc.pcs2);
+        if (!ok) return false;
+        // transition-stack opening with derived overrides per point
+        if (pf.tr.on) {
+            BfPcsParams p3 = btr::tr_params(lN);
+            std::vector<bf128_t> rho3(btr::LOGSTK3), eqsel3;
+            for (auto& x : rho3) x = bf_chal128(tr);
+            bf_eq_table(rho3.data(), btr::LOGSTK3, eqsel3);
+            std::vector<std::vector<bf128_t>> RT;
+            std::vector<bf128_t> VT;
+            std::vector<bf128_t> R(p3.l);
+            for (int t = 0; t < btr::LOGSTK3; t++) R[lG + t] = rho3[t];
+            bf128_t der[btr::NCOLT];
+            uint8_t hv[btr::NCOLT];
+            auto pusht = [&](const std::vector<bf128_t>& ev) {
+                bf128_t V = bf128_zero();
+                for (int j = 0; j < btr::NCOLT; j++)
+                    V = bf128_add(V, bf128_mul(eqsel3[j], hv[j] ? der[j] : ev[j]));
+                RT.push_back(R); VT.push_back(V);
+            };
+            {   // TA: every ZC-A column derives from its finals
+                memset(hv, 0, sizeof hv);
+                int ca[btr::NA]; btr::cols_A(ca);
+                for (int i = 0; i < btr::NA; i++) {
+                    hv[ca[i]] = 1; der[ca[i]] = pf.tr.A.finals[1 + i];
+                }
+                for (int t = 0; t < lG; t++) R[t] = zA[t];
+                pusht(pf.tr.evT[0]);
+            }
+            {   // TB: ZC-B's transition-committed columns
+                memset(hv, 0, sizeof hv);
+                int cb[btr::NBT]; btr::cols_B(cb);
+                for (int i = 0; i < btr::NBT; i++) {
+                    hv[cb[i]] = 1; der[cb[i]] = pf.tr.B.finals[1 + 40 + i];
+                }
+                for (int t = 0; t < lG; t++) R[t] = zB[t];
+                pusht(pf.tr.evT[1]);
+            }
+            {   // TC: every ZC-C column
+                memset(hv, 0, sizeof hv);
+                int cc[btr::NCC]; btr::cols_C(cc);
+                for (int i = 0; i < btr::NCC; i++) {
+                    hv[cc[i]] = 1; der[cc[i]] = pf.tr.C.finals[1 + i];
+                }
+                for (int t = 0; t < lG; t++) R[t] = zC[t];
+                pusht(pf.tr.evT[2]);
+            }
+            {   // TLK: the lifted ME12 input of the link zerocheck
+                memset(hv, 0, sizeof hv);
+                for (int j = 0; j < 6; j++) {
+                    hv[btr::TME12 + j] = 1;
+                    der[btr::TME12 + j] = pf.tr.lk.finals[1 + 19 + j];
+                }
+                for (int t = 0; t < lG; t++) R[t] = zlk[5 + t];
+                pusht(pf.tr.evT[3]);
+            }
+            {   // TOR5: og / pg from the level-5 OR zerocheck
+                memset(hv, 0, sizeof hv);
+                hv[btr::TOG] = 1; der[btr::TOG] = pf.tr.orsc[4].finals[1 + 4];
+                hv[btr::TPG] = 1; der[btr::TPG] = pf.tr.orsc[4].finals[1 + 5];
+                for (int t = 0; t < lG; t++) R[t] = zor[4][t];
+                pusht(pf.tr.evT[4]);
+            }
+            {   // THEAD: chain heads carry the zero in-state
+                memset(hv, 0, sizeof hv);
+                for (int c = 0; c < btr::NST; c++) {
+                    hv[c] = 1; der[c] = bf128_zero();
+                }
+                for (int t = 0; t < LCH; t++) R[t] = bf128_zero();
+                for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];
+                pusht(pf.tr.evT[5]);
+            }
+            memset(hv, 0, sizeof hv);   // TS pairs: equality checked above
+            for (int j = 0; j < LCH; j++) {
+                for (int t = 0; t < j; t++) R[t] = bf128_zero();
+                R[j] = bf128_one();
+                for (int t = j + 1; t < lG; t++) R[t] = zsh[j][t - j - 1];
+                pusht(pf.tr.evTS[2 * j]);
+                for (int t = 0; t < j; t++) R[t] = bf128_one();
+                R[j] = bf128_zero();
+                pusht(pf.tr.evTS[2 * j + 1]);
+            }
+            std::vector<const bf128_t*> rtp;
+            for (auto& RX : RT) rtp.push_back(RX.data());
+            ok = bfpcs_verify_multi(p3, pf.tr.root3, rtp, VT, tr, pf.tr.pcs3);
+        }
     }
     if (st) st->verify_ms = bhw_now_ms() - t0;
     return ok;

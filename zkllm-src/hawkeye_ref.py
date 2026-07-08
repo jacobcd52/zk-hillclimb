@@ -142,6 +142,10 @@ def hawkeye_ref(x_codes, x_scale, w_codes, w_scale, *,
                                                      max_exp, IW, ZE)
         if record is not None:
             record[-1]['_contribution'] = contribution  # group-level sanity hook
+            record[-1]['_max_exp'] = max_exp.copy()     # transition-gadget goldens
+            record[-1]['_out_sign'] = acc_sign.copy()
+            record[-1]['_out_exp'] = acc_exp.copy()
+            record[-1]['_out_sig'] = acc_sig.copy()
 
     y = gfloat_to_f32(acc_sign, acc_exp, acc_sig)
     y = (y * x_scale.reshape(-1, 1).astype(np.float32)) * w_scale.reshape(1, -1).astype(np.float32)
@@ -246,6 +250,97 @@ def dump_acc_witness(path, layers):
         np.array([0x41434332, len(P)], I64).tofile(f)
         P.tofile(f); Nn.tofile(f); S.tofile(f)
     return n, len(P)
+
+
+def trans_witness_rows(x_codes, w_codes, CH, **kw):
+    """CHAIN-CONTIGUOUS witness for the transition gadget: K is padded with
+    zero codes to 32*CH (all-absent padding groups are the IDENTITY transition,
+    asserted bitwise below), then rows are ordered (chain, g_k, kk) with kk in
+    the low 5 index bits and g_k in the next log2(CH) bits -- chain = one (m,n)
+    output, so 'previous group in the chain' is group-index minus one.  Returns
+    (cols, P, N, S, MEZ, SGO, AEO, NSO): per-group adder-tree sums plus the
+    per-group transition goldens max_exp-ZE and the out-state (sign, exp-ZE,
+    sig>>10) of the accumulator after the group."""
+    G = kw.get('products_per_group', 32)
+    ZE = kw.get('zero_exponent', -139)
+    M, K = x_codes.shape
+    N = w_codes.shape[0]
+    Kp = G * CH
+    assert K <= Kp, f"K={K} exceeds CH={CH} chains"
+    xp = np.zeros((M, Kp), np.uint8); xp[:, :K] = x_codes
+    wp = np.zeros((N, Kp), np.uint8); wp[:, :K] = w_codes
+    ones_x, ones_w = np.ones(M, np.float32), np.ones(N, np.float32)
+    # padding groups must be the identity transition: bitwise-equal outputs
+    assert (hawkeye_ref(x_codes, ones_x, w_codes, ones_w, **kw) ==
+            hawkeye_ref(xp, ones_x, wp, ones_w, **kw)).all(), \
+        "K padding changed the result"
+    rec = []
+    hawkeye_ref(xp, ones_x, wp, ones_w, record=rec, **kw)
+    cols = {k: [] for k in 'a b eb mag sg pr sh q r al'.split()}
+    for e in rec:
+        a2 = np.broadcast_to(e['a'].astype(I64)[:, None], (M, N))
+        b2 = np.broadcast_to(e['b'].astype(I64)[None, :], (M, N))
+        mag = np.abs(e['scaled'])
+        sg = (e['scaled'] < 0).astype(I64)
+        sh = e['shift']
+        shc = np.minimum(sh, 15)
+        q = mag >> shc
+        r = mag - (q << shc)
+        al = np.where(e['present'], (1 - 2 * sg) * q, 0)
+        assert (al == e['aligned_masked']).all()
+        cols['a'].append(a2.ravel()); cols['b'].append(b2.ravel())
+        cols['eb'].append((e['prod_exp'] + 12).ravel())
+        cols['mag'].append(mag.ravel()); cols['sg'].append(sg.ravel())
+        cols['pr'].append(e['present'].astype(I64).ravel())
+        cols['sh'].append(sh.ravel()); cols['q'].append(q.ravel())
+        cols['r'].append(r.ravel()); cols['al'].append(al.ravel())
+    out = {}
+    for k, v in cols.items():   # (gk*G + kk, mn) -> (mn*CH + gk, kk)
+        out[k] = np.concatenate(v).reshape(CH, G, M * N).transpose(2, 0, 1) \
+                   .reshape(-1).astype(I64).copy()
+    al = out['al'].reshape(-1, G)
+    P = np.where(al > 0, al, 0).sum(axis=1).astype(I64)
+    Nn = np.where(al < 0, -al, 0).sum(axis=1).astype(I64)
+    S = al.sum(axis=1).astype(I64)
+    # per-group goldens from the recorded group hooks, reordered (mn, gk)
+    def grp(key):
+        v = np.stack([rec[gk * G + G - 1][key] for gk in range(CH)])  # (CH,M,N)
+        return v.reshape(CH, M * N).T.reshape(-1).astype(I64).copy()
+    MEZ = grp('_max_exp') - ZE
+    SGO = grp('_out_sign')
+    AEO = grp('_out_exp') - ZE
+    NSO = grp('_out_sig') >> 10
+    AEO = np.where(NSO != 0, AEO, 0)   # empty-acc state encodes ae = 0
+    assert (SGO[NSO == 0] == 0).all()
+    return out, P, Nn, S, MEZ, SGO, AEO, NSO
+
+
+def dump_trans_witness(path, layers, CH=None):
+    """Chain-ordered witness + adder-tree sums + transition goldens.
+    Format: int64 n_rows; 10 int64 col arrays (a,b,eb,mag,sg,pr,sh,q,r,al);
+    int64 magic 0x54524E31 ('TRN1'); int64 CH; int64 n_groups; then P, N, S,
+    MEZ, SGO, AEO, NSO int64 arrays of length n_groups."""
+    if CH is None:
+        CH = 1
+        for (x, w) in layers:
+            nk = (x.shape[1] + 31) // 32
+            while CH < nk: CH *= 2
+    allc, gold = None, [[] for _ in range(7)]
+    for (x, w) in layers:
+        c, *g = trans_witness_rows(x, w, CH)
+        allc = c if allc is None else {k: np.concatenate([allc[k], c[k]]) for k in c}
+        for i in range(7): gold[i].append(g[i])
+    gold = [np.concatenate(v) for v in gold]
+    n = len(allc['a'])
+    assert n == 32 * len(gold[0]) and n % (32 * CH) == 0
+    assert (allc['al'].reshape(-1, 32).sum(axis=1) == gold[2]).all()
+    with open(path, 'wb') as f:
+        np.array([n], I64).tofile(f)
+        for k in 'a b eb mag sg pr sh q r al'.split():
+            allc[k].tofile(f)
+        np.array([0x54524E31, CH, len(gold[0])], I64).tofile(f)
+        for v in gold: v.tofile(f)
+    return n, len(gold[0]), CH
 
 
 # ---------------- golden full-layer battery for the composed ZKP ----------------
@@ -417,6 +512,30 @@ if __name__ == '__main__':
         layers.append((x, w))
         n, ng = dump_acc_witness(path, layers)
         print(f"wrote {n} group-ordered rows ({ng} groups) to {path}")
+        assert nfail == 0, "REFUSING to bless vectors: Triton mismatch above"
+    if '--dumptrans' in sys.argv:
+        path = sys.argv[sys.argv.index('--dumptrans') + 1]
+        rng = np.random.default_rng(7)
+        layers = []
+        for (M, K, N) in [(4, 64, 8), (2, 40, 4), (3, 96, 4)]:
+            layers.append((rng.integers(0, 256, (M, K)).astype(np.uint8),
+                           rng.integers(0, 256, (N, K)).astype(np.uint8)))
+        x = np.full((1, 32), 0x08, np.uint8); x[0, 0] = 0x78
+        w = np.full((1, 32), 0x08, np.uint8); w[0, 0] = 0x78
+        layers.append((x, w))
+        x = np.tile(np.array([0x3F, 0xBF, 0x00, 0x40], np.uint8), (1, 8))
+        w = np.tile(np.array([0xBF, 0x3F, 0x40, 0x00], np.uint8), (1, 8))
+        layers.append((x, w))
+        n, ng, ch = dump_trans_witness(path, layers)
+        print(f"wrote {n} chain-ordered rows ({ng} groups, CH={ch}) to {path}")
+        assert nfail == 0, "REFUSING to bless vectors: Triton mismatch above"
+    if '--dumptransbig' in sys.argv:
+        path = sys.argv[sys.argv.index('--dumptransbig') + 1]
+        rng = np.random.default_rng(11)
+        x = rng.integers(0, 256, (16, 1024)).astype(np.uint8)
+        w = rng.integers(0, 256, (16, 1024)).astype(np.uint8)
+        n, ng, ch = dump_trans_witness(path, [(x, w)])
+        print(f"wrote {n} chain-ordered rows ({ng} groups, CH={ch}) to {path}")
         assert nfail == 0, "REFUSING to bless vectors: Triton mismatch above"
     if '--dumplayers' in sys.argv:
         assert nfail == 0, "REFUSING to bless layers: Triton mismatch above"

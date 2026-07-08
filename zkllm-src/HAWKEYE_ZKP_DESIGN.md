@@ -2093,3 +2093,118 @@ reconciliation (cmag = |P-N| with sign, one more adder row per group), the
 acc-chain/max_exp/normalize transition gadget consuming these sums
 (section 21.6 item "the rest of hwl"), FRI-Binius opening, and ZK.  Full
 25-suite battery ALL GREEN at this HEAD (battery_s21_10.log).
+
+### 21.11 The group transition gadget: the COMPLETE Hawkeye matmul semantics over the tower (2026-07-08, session 4) [VERIFIED]
+
+The "rest of hwl" (21.6) and the 21.10 signed reconciliation, built as ONE
+gadget: per group the Binius proof now covers max_exp, accumulator realign,
+signed reconciliation, normalize, and the group-to-group accumulator CHAIN
+-- so the last group of every chain carries the layer's final accumulator
+state (sign, exponent, 14-bit significand) for its (m,n) output, proven
+against the same commitments as the per-product witness, the DM lookup and
+the adder trees.  Files: p3_binius_trans.cuh (+ bhw integration in
+p3_binius_hawkeye.cuh), p3_binius_trans_test.cu (battery suite 26,
+BINIUS-TRANS 43/43); hawkeye_ref.py grows trans_witness_rows /
+dump_trans_witness (--dumptrans / --dumptransbig) emitting CHAIN-ordered
+rows plus golden per-group max_exp and out-states, Triton-cross-checked.
+
+THE CONSTRUCTION (all new witness = F_2 bit-slices in a THIRD 512-slot
+stack over the group cube, 317 slots used; plus 9 main-stack slots: link
+carries pc[6], tightness selector t, two OR-tree heap columns; main stack
+110 -> 123 of 128 slots):
+
+* max_exp.  MEZ (8 bits, zero-exponent-offset) is welded to the committed
+  per-product shifts through the LINK zerocheck on the PRODUCT cube:
+  pr * (eb + sh = ME12) as a gamma-batched bit-adder (carries pc committed
+  in the main stack), with ME12 = MEZ - 127 itself bound by a pg-gated
+  adder on the group cube -- eb + sh is CONSTANT = max_exp + 12 across a
+  group's present products in exact Hawkeye, so dominance (no product
+  exceeds the claimed max) is the adder's non-negativity for free.
+  TIGHTNESS (the max is achieved, so MEZ cannot be overstated) is a
+  committed per-product selector t with t -> (pr = 1, sh = 0), OR-trees
+  over t (og) and pr (pg) heap-packed into two main-stack columns (levels
+  1..4 at rows [2^(lN-l), 2^(lN-l+1)); level 5 = og/pg in the transition
+  stack), and og OR tacc = 1 with tacc -> d = 0 (the accumulator achieves
+  the max when no product does).
+* realign.  d = MEZ - aeI as a bit-adder (non-negativity structural = acc
+  dominance), one-hot ha over min(d,14) with in-circuit d <-> ha linkage
+  (bucket bits + OR-helpers hi/t3, the 21.8 sh <-> h pattern), aligned
+  accumulator am_j = sum_i ha_i * nsI_{j+i} (shift-select, no adder), and
+  the sign split amP/amN by the in-state sign (sign-magnitude, as 21.10).
+* reconcile.  SP = P + amP and SN = N + amN as 21-bit adders whose P/N
+  inputs are the committed level-5 tree sums (ZC-B's finals derive the
+  main-stack slots 110..113 at its own zeta -- the RTR binding point), then
+  the SIGNED RECONCILIATION cmag = |SP - SN| with sign csg as a mux-operand
+  adder: lo + cmag = hi with lo/hi the csg-mux of SN/SP and carry-out 0
+  (if csg picks the wrong side there is NO solution -- subtraction needs no
+  new machinery in char 2, just a committed sign and the same carry chain);
+  csg * W_0 = 0 makes the sign canonical on cmag = 0.
+* normalize.  Width one-hot w[0..21] with the pow2 SANDWICH (selected top
+  bit of cmag = 1, all bits >= width = 0 via prefix sums U_j), output
+  significand nsO = cmag shifted to 14 bits (truncating shift-select,
+  bitwise vs the fp8 reference), exponent adders MEZ + width = X and
+  aeO + 14 = X (gated), zero path w_0 -> (aeO = 0, sgO = 0, nsO = 0).
+* chain.  In/out states (sgI,aeI,nsI)/(sgO,aeO,nsO) committed per group;
+  rows are CHAIN-CONTIGUOUS (group = chain*CH + t, CH a power of two,
+  all-absent padding groups are the identity transition -- asserted
+  bitwise in the reference).  I_g = O_{g-1} costs NO sumcheck: the borrow
+  decomposition of g-1 gives LCH restriction-point PAIRS -- the in-state
+  slots at low bits (0^j, 1, zsh_j) must equal the out-state slots at low
+  bits (1^j, 0, zsh_j) -- checked as supplied-eval equalities inside the
+  transition stack's multi-point opening, plus ONE head point (low bits
+  0^LCH, random tail) where the in-state slots derive to ZERO.
+* Everything lands in three multi-point openings: main stack 4 -> 15
+  points (adds RTR, RLK, orA_1..4, orB_1..5), acc stack unchanged, and one
+  transition-stack opening with 6 + 2*LCH points (TA/TB/TC/TLK/TOR5/THEAD
+  + the chain pairs).  9 new zerochecks total: link (product cube, GPU,
+  K=26), 5 shared OR-tree levels (GPU), and A/B/C on the group cube
+  (K=124/151/163, D=5/3/4) -- host-only in BOTH prover modes (ptxas on the
+  spill-bound generic kernel at these K costs tens of minutes for a domain
+  where the OpenMP host prover is faster anyway; proofs stay byte-identical
+  by construction).  Every constrained column is welded through derived
+  finals at the binding points, exactly the 21.10 discipline (derived slots
+  derive COMPLETELY; prover-supplied evals transcript-absorbed pre-rho).
+
+Teeth (BINIUS-TRANS 43/43, real golden vectors 6912 products/216 groups/
+CH=4 incl. a max-boundary and a cancellation layer, + 262144 products/8192
+groups/256 chains of CH=32): every golden max_exp AND out-state (sign,
+exponent, significand) reproduced bitwise at BOTH scales; witness validator
+0 bad groups + catches flips at all 18 stages; 9 functors zero on honest
+rows / nonzero after a flip; honest composed accept; GPU proof
+byte-identical to host across all 9 new zerochecks + both new openings;
+trans=off regression; 11 targeted witness flips (incl. tacc -> d=0, link
+carry, selector-on-non-achiever, OR-tree node); THREE WELD ATTACKS with
+fully consistent downstream witnesses -- (1) overstated max_exp with all
+shifts bumped and q/r/al/trees/transition rebuilt, caught by the tightness
+selector alone; (2) a broken chain with zero cascade (nsI bit under the
+shift window), caught by the restriction-pair binding alone; (3) a nonzero
+head in-state invisible in every zerocheck, caught by the head point alone
+-- and 13 proof-object tampers (root3, finals/rounds of lk/A/B/C/or,
+supplied evals at RTR/THEAD/chain-pairs, PCS row, stripping tr.on,
+tampering CH).
+
+MEASURED, 262144 real products = 8192 groups = 256 chains (CH=32,
+hawkeye_trans_big.bin, regenerable: python3 hawkeye_ref.py --dumptransbig
+hawkeye_trans_big.bin; RTX 4090; GL side = the standalone p3hw per-product
+gadget, R=2 Q=24, same rows):
+
+    BINIUS FULL: committed 27.17 MB (17.08 main + 8.06 acc + 2.03
+                 transition stack) | commit 105 ms, lu 729 ms, sc 2047 ms,
+                 acc 4813 ms, tr 6387 ms, open 54 ms -> prove 14.13 s
+                 | proof 5.53 MB | verify 355 ms
+    GL:          committed 792 MB | prove 50.6 s -- proving ONLY the
+                 per-product relation (no accumulation, no max_exp, no
+                 normalize, no chain)
+    ratios:      committed 29.1x | prove 3.6x, proving the ENTIRE matmul
+                 semantics vs GL's per-product slice (equal-scope
+                 per-product ratio stays 11.7x, suite 24)
+
+The tr 6.39 s is host-sumcheck-bound on the three wide group-cube
+zerochecks (K up to 163 on an 8k cube) + 22 supplied-eval XOR-select
+sweeps; the 21.6 split-K/packed-bit rewrite remains THE speed lever and
+now attacks sc + acc + tr at once.  What remains for the Binius track:
+FRI-Binius opening (lever 4), ZK over the tower (lever 5: salted leaves +
+masking -- the p3_zkc.cuh pattern), and the composed end-to-end Binius
+matmul statement (bind the per-(m,n) final out-states to a committed
+output tensor / the GL pipeline's quantize input).  Full 26-suite battery
+ALL GREEN at this HEAD (battery_s21_11.log).
