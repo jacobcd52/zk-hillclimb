@@ -1542,3 +1542,210 @@ Next levers (scoped, unstarted): fused/shared-memory NTT stages (stages are
 q0/enc + commit NTT again); GPU witness generation (bench "witness 18 s" is
 outside prove); Binius migration (20.8); Poseidon2 leaves (would cut the
 remaining SHA but changes the commitment scheme / verifier hashing).
+
+## 21. Binius substrate + migration (2026-07-08) [VERIFIED unless marked]
+
+Session goal (multi-session effort, this is session 1): build a binary-tower
+proving substrate ALONGSIDE the Goldilocks prover (nothing existing touched;
+all 17 batteries re-run green at final HEAD) and prove ONE real relation end
+to end over it, with the committed-data win MEASURED.  All four substrate
+modules + the end-to-end relation are DONE and selftested with teeth.
+
+Build/run for everything below:
+`nvcc -arch=sm_89 -std=c++17 -O2 -Xcompiler -fopenmp <test>.cu -o <bin>`
+
+### 21.1 Tower field library  p3_binius_field.cuh  [VERIFIED]
+
+Fan-Paar tower T_0=GF(2), T_{k+1}=T_k[X_k]/(X_k^2+X_k*X_{k-1}+1), levels
+GF(2)..GF(2^128), as branch-free bit arithmetic (no tables, no init) that is
+literally the same code path on host and device: bf2/4/8/16/32/64_mul,
+per-level mulgen, and INVERSES via the recursive norm formula
+a^{-1} = ((a0+a1*g) + a1*X) * (a0(a0+a1*g)+a1^2)^{-1} recursing to GF(4)
+(no Fermat in the hot path).  Element bit u = coefficient of the u-th F_2
+basis monomial, so subfield embedding is zero-extension and bit-slicing IS
+the representation.  Two fast paths that matter downstream:
+* bf128_smul16 (T_16 scalar times T_128): the 8 16-bit limbs of a T_128
+  element are its coordinates over a T_16 basis, so the scalar action is 8
+  limb-wise bf16_muls (~27x cheaper than bf128_mul).  This is the sumcheck
+  + verifier-encode workhorse.
+* HOST log/exp tables for GF(2^16) (384 KB, built once on first use from the
+  arithmetic form, generator found by checking order-65535 cofactors):
+  bf16_mul = 3 lookups.  bf128_mul host: 1591 -> 88 ns single-thread
+  (measured, 1e6-mul loop).  Device keeps the branch-free arithmetic form.
+Selftest p3_binius_field_test.cu: 11/11.  Teeth: EXHAUSTIVE bitwise match vs
+an independent implementation (the recursive reference of binius_proto.cu) at
+4 and 8 bits (all 256 / 65536 pairs), 20k random ref-match + commutativity/
+associativity/distributivity/inverse checks per level at 16/32/64/128 bits,
+bf16 Fermat + inv==pow(2^16-2), bf128 a^(2^128-1)==1, embedding multiplicati-
+vity, smul16 == full embedded mul, and device==host bitwise on 64k lanes
+(which cross-validates the host table path against the device arithmetic
+path -- they are different code).
+
+### 21.2 Additive NTT  p3_binius_ntt.cuh  [VERIFIED]
+
+Iterative LCH "novel polynomial basis" additive NTT over GF(2^16) (the form
+production Binius uses), NOT the recursive Gao-Mateer monomial form of the
+20.8 prototype: subspace polynomials W_0(x)=x, W_{i+1}=W_i*(W_i+W_i(beta_i)),
+normalized What_i = W_i/W_i(beta_i) is F_2-linear with What_i(beta_i)=1;
+Xhat_k = prod_{i in bits(k)} What_i has deg = k, so zero-padding the novel-
+basis coefficient vector and evaluating on a 4x larger subspace IS rate-1/4
+Reed-Solomon.  Butterfly (stage s, block h): lo ^= What_s(omega_h)*hi;
+hi ^= lo -- per-stage twiddles are XOR-folds of an m x m table (F_2-linearity
+of What_s), n-1 field elements total, precomputed on host.  All butterflies
+in a stage are independent -> one trivial GPU kernel per stage + a batch
+variant (rows in parallel).  Measured GPU batch: 513 rows x 4096 = 7.1
+Gelem/s (0.30 ms).
+Selftest p3_binius_ntt_test.cu: 8/8.  Teeth: bitwise vs BY-DEFINITION brute
+force (W_i evaluated as the literal product of (x+v) over the whole subspace
+-- independent of recurrence and twiddles) at n=2,4,16,256,1024; linearity;
+RS DISTANCE teeth (20 random distinct-message pairs at rate 1/4 must differ
+in >= 3n+1 of 4n positions -- catches any indexing/degree bug; observed all
+1024/1024); GPU==host bitwise on 513 rows (odd count on purpose).
+
+### 21.3 Small-field PCS  p3_binius_pcs.cuh  [VERIFIED]
+
+Commit BITS at true width: a 2^l-coefficient F_2 multilinear becomes a
+2^lrow x 2^lcol bit matrix, rows packed 16 bits per T_16 symbol (the F_2
+bit-basis -- so "unpack" is reading bits and a committed column can only
+contain F_2 values: BOOLEANITY IS STRUCTURAL, the booleanity constraints the
+Goldilocks gadgets pay for disappear), rows RS-encoded rate 1/4 by the GPU
+additive NTT, SHA-256 Merkle over codeword COLUMNS (host OpenMP for now).
+Opening (Ligero/Brakedown-style, the "Brakedown-style" option of the session
+scope): eval row t = sum_i eq(r_hi,i)*M[i][.], proximity row u with fresh
+transcript randoms rho_i, Q=100 spot columns with Merkle paths; verifier
+re-encodes pack(t) and pack(u) OVER T_128 (limb-wise T_16 butterflies --
+valid because Enc is T_16-linear and T_128 is a free T_16-module; checked
+bitwise by the selftest) and checks both combinations at every spot column,
+then v == <eq(r_lo,.), t>.  Fiat-Shamir bound via fs_transcript.
+Selftest p3_binius_pcs_test.cu: 12/12.  Teeth: Enc128 limb-consistency +
+combination-commutes checks; honest accept at l=16 and l=20; tampered t / u /
+column data / Merkle path / claimed value / evaluation point ALL reject; a
+CHEATING PROVER that flips one witness bit after commitment (t,u,v all
+internally consistent for the modified witness) is caught by the spot-check
+consistency test; a corrupted codeword with an HONESTLY REBUILT tree (Merkle
+passes) is caught by the same test.  l=20 (1M bits): commit 27 ms, committed
+0.52 MB, proof 257 KB, verify ~0.2 s host.
+[REASONED] Q=100 at rate 1/4 gives per-query miss probability <= ~(1-3/16)
+against words at the proximity bound (Ligero-style analysis), i.e. >= ~29
+bits from the spot checks alone plus the 2^-128 field terms; Q is a knob and
+the FRI-style opening that replaces this bound is in the handoff.
+
+### 21.4 Sumcheck / zerocheck over T_128  p3_binius_sumcheck.cuh  [VERIFIED]
+
+Multilinear sumcheck for sum_x C(W_0(x)..W_{K-1}(x)) with degree-D
+composition C, all arithmetic in T_128.  The characteristic-2 items a prime-
+field port would get wrong are called out in the header and tested: hypercube
+"sum" is XOR; round polynomials are sent as evaluations at the D+1 TOWER
+POINTS {0,1,2,..,D} (distinct bitstring field elements, not integers mod p);
+the verifier interpolates with Lagrange weights over XOR-differences; pair
+extension V(z) = V0 + z*(V0+V1) uses the smul16 fast path (z is a subfield
+element).  Zerocheck = eq(rz,.) as column 0 (over char 2 the eq factor
+collapses to 1 + rz_t + x_t); the verifier recomputes eq(rz,zeta) itself.
+Fold is column-parallel (in-place pair fold is only race-free WITHIN a
+column -- the first cut parallelized over pairs and corrupted the fold; the
+selftest caught it immediately).
+Selftest p3_binius_sumcheck_test.cu: 8/8.  Teeth: honest accept with finals
+cross-checked against independent multilinear evaluation at zeta; tampered
+round poly / wrong claim / tampered finals reject; a patched-round-0 cheat
+(chain check p(0)+p(1)==claim satisfied for the lie) rejects; zerocheck
+accepts a satisfying witness incl. the verifier-side eq check and rejects a
+SINGLE violated row out of 256.
+
+### 21.5 End-to-end relation + MEASURED win  p3_binius_e2e_test.cu  [VERIFIED]
+
+The relation is the exact shape section 17 item 5 flagged as THE Binius
+risk: integer arithmetic over characteristic 2.  Approach taken: EXPLICIT
+BIT-DECOMPOSITION + CARRY CHAIN.  N private 8-bit additions s = a + b are
+witnessed as 32 F_2 bit-slices (a0..a7, b0..b7, s0..s8, c1..c7) and the
+integer semantics are exactly the ripple-carry identities over F_2:
+
+    s_0 = a_0 + b_0          c_1     = a_0 b_0
+    s_i = a_i + b_i + c_i    c_{i+1} = a_i b_i + (a_i + b_i) c_i   (i=1..6)
+    s_7 = a_7 + b_7 + c_7    s_8     = a_7 b_7 + (a_7 + b_7) c_7
+
+16 constraints, all degree <= 2, gamma-batched into ONE degree-3 zerocheck
+(eq * quadratic).  The 32 columns are STACKED into one PCS commitment
+(column id = top 5 index bits); the 32 column evals the verifier needs at
+the sumcheck endpoint are bound to the commitment by ONE stacked opening at
+(zeta, rho_sel) worth sum_j eq(rho_sel,j)*finals[j], rho_sel drawn after the
+finals are absorbed.  What towers buy here vs Goldilocks: the 32 bit-columns
+commit at 1 bit each (vs 64), and NO booleanity constraints are needed (32
+would be needed in F_p).  What they cost: the carry columns exist at all (in
+Goldilocks the adder is one native field add; here 16 of 32 columns are
+decomposition/carry witness) -- for the ACTUAL migration target this cost is
+already paid: the Hawkeye per-product witness (fp8 codes, sign/shift fields,
+q/r limbs) is ALREADY bit-decomposed for range reasons, so the Binius side
+inherits the same columns at 1/64 the committed width.
+
+Teeth (9/9): honest accept; flipping ONE sum bit / ONE carry bit / the
+carry-out of ONE row among 16k rejects; tampered finals / commitment root /
+PCS opening reject.
+
+Measured A/B (RTX 4090 + 128-core host, `p3_binius_e2e_test [lN]`), same 32N
+bit-witness both sides; Goldilocks side = the production pattern (one gl_t
+per bit value, zero-padded rate-1/4 GPU NTT via p3_ntt.cuh, 8-byte-leaf GPU
+SHA-256 Merkle via p3_merkle.cuh -- the same leaf format p3_fri.cuh uses):
+
+    lN=18 (262,144 additions, 2^23 witness bits, 2^25 gl_t codeword):
+      BINIUS      committed  4.03 MB   commit  ~8 ms
+      GOLDILOCKS  committed  2304 MB   commit  ~30 ms
+      committed-data ratio 571x   commit-time ratio ~3-4x
+      (codeword-only ratio is the predicted 64x = 8B/1bit * same rate;
+       the rest is the 8-byte-leaf tree: 32B leaf hash + 32B internals per
+       gl_t vs one 32B leaf per 2^11-row COLUMN on the Binius side)
+    Binius end-to-end: prove ~1.0-1.7 s (host sumcheck dominates; timing on
+      this shared box is noisy -- sc 0.3-1.7 s across runs), proof 894 KB,
+      verify ~20-35 ms.  lN=16: committed 1.02 MB vs 576 MB (567x).
+
+The 571x headline is for a PURE BIT witness (the extreme end); the section
+17 estimate of ~10-20x across the real matmul witness mix (2-10 bit fields)
+remains the planning number for full migration.  Both statements are
+consistent: ratio per column = 64/(bit width) on codeword bytes, x tree
+effects.
+
+### 21.6 What is NOT built yet -- precise handoff [REASONED]
+
+Order of attack for session 2+:
+1. GPU sumcheck + GPU column hashing.  The e2e prove is ~95% host sumcheck
+   (round evals + folds) and the PCS Merkle is host OpenMP.  Both are
+   embarrassingly parallel; the field lib is already __host__ __device__
+   with the device arithmetic path validated.  Expect prove << 100 ms at
+   lN=18.  (Also: first-round witness columns are BITS -- the round-0 eval
+   can work on packed words with popcount-style tricks instead of T_128
+   arrays; memory drops 128x for round 0.)
+2. Hawkeye per-product bit-witness gadget over Binius: port the REAL matmul
+   witness columns (fp8 codes 8b, sign/parity 1b, exponent/shift 2-5b, q/r
+   limbs <=10b) using the 21.5 pattern (stacked bit-slices, one commitment,
+   zerocheck).  The dot-product accumulation (integer sums of q*2^s terms)
+   is the open design question: EITHER k-bit carry-save adder columns per
+   accumulation level (21.5 shows the per-bit machinery works; cost = one
+   carry column per adder bit) OR the hybrid of section 17 (keep the
+   integer-sum side in Goldilocks, prove cross-field consistency of the
+   shared bit columns: both sides commit the same bits; open both at a
+   common point and check the bit-recomposition identity -- the natural
+   demo is proving the SAME column once in each system).  Decide by
+   measuring the carry-column overhead on the real witness mix first.
+3. logUp over towers: needs only field inverses (bf128_inv is in and
+   tested); the GKR fractional-sum tree of 16.1 is field-agnostic.  Port
+   the lookup argument, then the range/table gadgets come with it.
+4. FRI-Binius opening (ring-switching + additive-NTT folding) to replace
+   the O(sqrt n) Ligero opening: proof 894 KB -> polylog, and the 21.3
+   [REASONED] query-soundness note is superseded by standard FRI bounds.
+   Commit format (packed T_16 codeword + column Merkle) is UNCHANGED by
+   this swap -- the committed-data win is already locked in.
+5. ZK layer: salted leaves (the p3_zkc.cuh pattern ports: salt hashes are
+   field-agnostic) + masking rows for the Ligero combinations / Libra-style
+   blinds over T_128 re-derived for char 2, with the chi-square hiding
+   battery re-run on tower elements.
+6. Packing beyond bits: 21.3 packs kappa=16 F_2 elements per T_16 symbol;
+   the same block-level encoding with kappa=2 T_8 elements handles the fp8
+   code columns directly (committed bytes = true width either way).
+
+Files: p3_binius_field.cuh / p3_binius_ntt.cuh / p3_binius_pcs.cuh /
+p3_binius_sumcheck.cuh + *_test.cu each + p3_binius_e2e_test.cu.  Selftest
+totals 11+8+12+8+9 = 48/48.  Existing prover untouched: run_battery.sh
+extended 17 -> 22 suites (the five Binius suites print the same summary
+convention) and the FULL 22-suite battery is green at final HEAD
+(battery_s21.log): all 17 original suites unchanged-pass + BINIUS-FIELD
+11/11, BINIUS-NTT 8/8, BINIUS-PCS 12/12, BINIUS-SUMCHECK 8/8, BINIUS-E2E
+9/9 -> BATTERY: ALL GREEN.
