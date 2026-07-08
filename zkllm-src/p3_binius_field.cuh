@@ -77,22 +77,68 @@ BF_HD uint32_t bf8_inv(uint32_t a) {
 }
 
 // ---- T_4 = GF(2^16), X3^2 = X3*X2 + 1  (NTT / packing field) ----
-BF_HD uint32_t bf16_mul(uint32_t a, uint32_t b) {
+// branch-free arithmetic form: the only form on DEVICE, and the host
+// reference the log/exp tables are built from (and tested against)
+BF_HD uint32_t bf16_mul_arith(uint32_t a, uint32_t b) {
     uint32_t a0 = a & 255, a1 = (a >> 8) & 255, b0 = b & 255, b1 = (b >> 8) & 255;
     uint32_t p00 = bf8_mul(a0, b0), p11 = bf8_mul(a1, b1);
     uint32_t pm  = bf8_mul(a0 ^ a1, b0 ^ b1);
     return (p00 ^ p11) | ((pm ^ p00 ^ p11 ^ bf8_mg(p11)) << 8);
+}
+#ifndef __CUDA_ARCH__
+// host fast path: log/exp tables over a generator of GF(2^16)* (384 KB,
+// L2-resident; ~10x on bf128_mul whose recursion bottoms out here).
+// Built once, thread-safe (C++11 function-local static).
+struct Bf16Tab {
+    uint16_t lg[65536];
+    uint16_t ex[131072];
+    Bf16Tab() {
+        uint32_t g = 0;
+        for (uint32_t c = 2; !g; c++) {           // order 65535 = 3*5*17*257
+            bool prim = true;
+            for (uint32_t f : {3u, 5u, 17u, 257u}) {
+                uint32_t r = 1, b = c, e = 65535 / f;
+                while (e) { if (e & 1) r = bf16_mul_arith(r, b); b = bf16_mul_arith(b, b); e >>= 1; }
+                if (r == 1) { prim = false; break; }
+            }
+            if (prim) g = c;
+        }
+        uint32_t v = 1;
+        for (uint32_t i = 0; i < 65535; i++) {
+            ex[i] = ex[i + 65535] = (uint16_t)v;
+            lg[v] = (uint16_t)i;
+            v = bf16_mul_arith(v, g);
+        }
+        lg[0] = 0; ex[131070] = ex[131071] = 0;
+    }
+};
+static inline const Bf16Tab& bf16_tab() { static Bf16Tab t; return t; }
+#endif
+BF_HD uint32_t bf16_mul(uint32_t a, uint32_t b) {
+#ifdef __CUDA_ARCH__
+    return bf16_mul_arith(a, b);
+#else
+    if (!a || !b) return 0;
+    const Bf16Tab& t = bf16_tab();
+    return t.ex[(uint32_t)t.lg[a] + t.lg[b]];
+#endif
 }
 BF_HD uint32_t bf16_mg(uint32_t a) {             // * X3
     uint32_t c0 = a & 255, c1 = (a >> 8) & 255;
     return c1 | ((c0 ^ bf8_mg(c1)) << 8);
 }
 BF_HD uint32_t bf16_inv(uint32_t a) {
+#ifndef __CUDA_ARCH__
+    if (!a) return 0;
+    const Bf16Tab& t = bf16_tab();
+    return t.ex[65535 - t.lg[a]];
+#else
     uint32_t a0 = a & 255, a1 = (a >> 8) & 255;
     uint32_t t = a0 ^ bf8_mg(a1);
     uint32_t d = bf8_mul(a0, t) ^ bf8_mul(a1, a1);
     uint32_t di = bf8_inv(d);
     return bf8_mul(t, di) | (bf8_mul(a1, di) << 8);
+#endif
 }
 BF_HD uint32_t bf16_pow(uint32_t a, uint32_t e) {
     uint32_t r = 1, b = a;
