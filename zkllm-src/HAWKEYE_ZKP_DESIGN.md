@@ -1477,3 +1477,68 @@ Session cumulative: 344.3 -> 88.0 = 3.91x (486.6 pre-session -> 88.0 = 5.53x).
 Post-lever profile (88.0 s): mm=37.3 (commits now at the GPU floor: NTT ~170 +
 tree 69 + upload 26 ms per 2^28 commit)  batch=25.3  lug=21.2  commit_salt=10.6
 mask_gen=9.4  sc5z/chain=4.9.
+
+### 20.8 Binius de-risk prototype [VERIFIED -- standalone, nothing migrated]
+
+`binius_proto.cu` (host-only): the two primitives a Binius-style commitment of
+the Hawkeye bit-witness would stand on, built standalone and validated:
+
+* Fan-Paar binary tower T_0=GF(2), T_{k+1}=T_k[X_k]/(X_k^2+X_k*X_{k-1}+1)
+  with Karatsuba multiplication: field axioms (comm/assoc/distrib) + Fermat
+  a^(2^n-1)=1 at 8/16/32/64/128 bits -- 800/800 checks per level, ALL PASS.
+* Additive NTT (Gao-Mateer): Taylor expansion in y=x^2+x (division by the
+  sparse binomial x^2t+x^t per level) + normalized-basis recursion over
+  gamma_i = beta_i^2+beta_i; verified against brute-force polynomial
+  evaluation on the F2-linear span at n = 2^4/2^6/2^8/2^9 over GF(2^16),
+  bad=0 everywhere.
+
+The scalar reference T_7 mult is ~10 us (recursive, no CLMUL) -- a correctness
+anchor only; a real migration would bit-slice on GPU.  VERDICT: the math is
+validated and contained (~250 lines); the migration itself (bit-witness
+commitment + tower sumcheck for the per-product Hawkeye bit-work) remains a
+multi-session effort and was NOT started (honesty over completeness).
+
+### 20.9 Session summary + final state [VERIFIED]
+
+All levers transcript-preserving unless noted; every lever landed with ALL 17
+suites green and (except 20.3, which changes transcripts by construction)
+byte-identical proofs.  d=1024 zk prove, RTX 4090 (same command throughout):
+
+    session start (HEAD b92980b)                 344.3 s   proof 134.4 MB
+    20.1 retained Merkle tree tops               302.1 s   (bo/q0 80.6->39.3)
+    20.2 device-side ledger regen (DGen)         260.8 s   (batch 87.5->47.0)
+    20.3 structured Libra blinds  [transcript-changing]
+                                                 213.5 s   (mm 108.6->69.2; proof 140.3 MB)
+    20.4 GPU logUp internals                     150.8 s   (lug 100.3->37.2)
+    20.5 radix-4 NTT + parallel LCG fills        135.8 s
+    20.6 register-resident GPU SHA-256           106.6 s   (2^28 tree 376->69 ms)
+    20.7 tiled bitrev + witness move/reserve      88.0 s
+
+    d=1024 zk:  486.6 (section 16) -> 344.3 (19.5) -> 88.0 s   [5.5x overall]
+    d=1024 non-zk: 32.7 s  -> zk ratio 2.69x  (proof 42.5 vs 140.3 MB)
+    d=512  zk: 32.7 s (was 186.0 at section 19.2)
+    d=256  zk: 13.7 s (was 30.4 at session start)
+    d=64   zk layer: 2.4 s (was 3.8)   zk MODEL (2 layers + head): 3.50 s (was 4.88)
+
+Final d=1024 zk profile (88.0 s): mm=37.3 batch=25.3 (q0/enc 9.8 blinder 4.9)
+lug=21.2 (Am 8.0 inv 6.8 scA 4.0) commit_salt=10.6 mask_gen=9.4 sc5z/chain=4.9.
+Commits are near the GPU floor (2^28 commit: NTT ~170 ms + tree 69 ms).
+
+Failed / no-effect experiments this session (measured):
+* lug/claims device-dot range extension past 2^22: no change (20.2) -- the
+  cost was build_eq + leaf construction, found and fixed in 20.4.
+* per-class d=1024 size-debug runs collided on the GPU with a concurrent
+  prove and produced nothing; the proof-size delta was characterized at
+  d=256 instead (20.3).
+
+Evaluated, NOT taken:
+* Bit-packing small witness fields (16.2/19.4): after 20.1-20.7 the commit
+  side it targets is ~20 s of 88; an invasive per-gadget witness+lookup
+  relayout no longer competes with the remaining levers per unit risk.
+* int8-tensor-core bignum field mul: skipped per coordinator guidance.
+
+Next levers (scoped, unstarted): fused/shared-memory NTT stages (stages are
+103 ms of the ~170 ms 2^28 NTT; a 3-pass four-step NTT could roughly halve
+q0/enc + commit NTT again); GPU witness generation (bench "witness 18 s" is
+outside prove); Binius migration (20.8); Poseidon2 leaves (would cut the
+remaining SHA but changes the commitment scheme / verifier hashing).
