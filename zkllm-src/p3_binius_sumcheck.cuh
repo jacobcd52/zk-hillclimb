@@ -20,10 +20,20 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <omp.h>
 #include "fs_transcript.hpp"
 #include "p3_binius_pcs.cuh"      // bf_eq_table, bf_chal128
 
 typedef bf128_t (*BfConstraintFn)(const bf128_t* w, const void* ctx);
+
+// threads proportional to the work: at high core counts (128 on this box)
+// full-team spawn + critical on a small domain costs far more than the rows;
+// the XOR accumulation makes the result identical at any thread count
+static inline int bfsc_nthr(size_t work) {
+    int t = (int)(work / 8192); if (t < 1) t = 1;
+    int m = omp_get_max_threads();
+    return t > m ? m : t;
+}
 
 struct BfScProof {
     int l = 0, D = 0, K = 0;
@@ -42,7 +52,7 @@ static inline void bf_sumcheck_prove(int l, int K, std::vector<std::vector<bf128
     for (int s = 0; s < l; s++) {
         size_t half = (size_t)1 << (l - 1 - s);
         bf128_t* rp = pf.rounds.data() + (size_t)s * (D + 1);
-        #pragma omp parallel
+        #pragma omp parallel if(half >= 1024) num_threads(bfsc_nthr(half * K))
         {
             std::vector<bf128_t> acc(D + 1, bf128_zero());
             std::vector<bf128_t> w(K);
@@ -64,7 +74,7 @@ static inline void bf_sumcheck_prove(int l, int K, std::vector<std::vector<bf128
         zeta[s] = zs;
         // fold in place; ascending y within one column is safe (position y is
         // last read at iteration y/2 <= y), so parallelize across columns only
-        #pragma omp parallel for schedule(dynamic, 1)
+        #pragma omp parallel for schedule(dynamic, 1) if((size_t)K * half >= 4096)
         for (int k = 0; k < K; k++)
             for (size_t y = 0; y < half; y++) {
                 bf128_t v0 = cols[k][2 * y], v1 = cols[k][2 * y + 1];

@@ -11,8 +11,9 @@
 // Measurement runs on hawkeye_prod_big.bin (262144 real products, random fp8
 // codes through the same numpy replay) and A/Bs against the REAL Goldilocks
 // gadget: p3hw::build_witness + commit_col x11 + p3hw::prove (R=2, Q=24, the
-// prod-test parameters), reporting committed bytes and prove time, plus the
-// DM-lookup-only share (the one piece the Binius side has NOT yet ported).
+// prod-test parameters).  Since section 21.9 the Binius gadget covers the
+// FULL per-product semantics including the DM lookup, so the prove-time
+// ratio is same-scope on both sides.
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -67,17 +68,35 @@ static bf128_t row_eval(const vector<uint8_t>& bits, size_t N, size_t i,
     return cf(w.data());
 }
 
+static bool sc_equal(const BfScProof& a, const BfScProof& b) {
+    return a.rounds.size() == b.rounds.size() && a.finals.size() == b.finals.size() &&
+           !memcmp(a.rounds.data(), b.rounds.data(), a.rounds.size() * sizeof(bf128_t)) &&
+           !memcmp(a.finals.data(), b.finals.data(), a.finals.size() * sizeof(bf128_t));
+}
+static bool gkr_equal(const bflu::BfGkrProof& a, const bflu::BfGkrProof& b) {
+    if (!bf128_eq(a.root, b.root) || !bf128_eq(a.g0, b.g0) || !bf128_eq(a.g1, b.g1) ||
+        a.lay.size() != b.lay.size()) return false;
+    for (size_t i = 0; i < a.lay.size(); i++)
+        if (!sc_equal(a.lay[i], b.lay[i])) return false;
+    return true;
+}
 static bool proofs_equal(const bhw::BhwProof& x, const bhw::BhwProof& y) {
-    return !memcmp(x.root, y.root, 32) &&
-           x.sc.rounds.size() == y.sc.rounds.size() &&
-           !memcmp(x.sc.rounds.data(), y.sc.rounds.data(),
-                   x.sc.rounds.size() * sizeof(bf128_t)) &&
-           !memcmp(x.sc.finals.data(), y.sc.finals.data(),
-                   x.sc.finals.size() * sizeof(bf128_t)) &&
-           !memcmp(x.xev, y.xev, sizeof x.xev) &&
-           x.pcs.t.size() == y.pcs.t.size() &&
-           !memcmp(x.pcs.t.data(), y.pcs.t.data(), x.pcs.t.size() * sizeof(bf128_t)) &&
-           !memcmp(x.pcs.u.data(), y.pcs.u.data(), x.pcs.u.size() * sizeof(bf128_t)) &&
+    if (memcmp(x.root, y.root, 32) || memcmp(x.lu.mroot, y.lu.mroot, 32)) return false;
+    if (!gkr_equal(x.lu.gw, y.lu.gw) || !gkr_equal(x.lu.gt, y.lu.gt) ||
+        !sc_equal(x.lu.bind, y.lu.bind) || !sc_equal(x.sc, y.sc)) return false;
+    if (x.lu.mopen.t.size() != y.lu.mopen.t.size() ||
+        memcmp(x.lu.mopen.t.data(), y.lu.mopen.t.data(),
+               x.lu.mopen.t.size() * sizeof(bf128_t)) ||
+        !(x.lu.mopen.cols == y.lu.mopen.cols) || !(x.lu.mopen.paths == y.lu.mopen.paths))
+        return false;
+    if (memcmp(x.xev, y.xev, sizeof x.xev) || memcmp(x.xev2, y.xev2, sizeof x.xev2))
+        return false;
+    if (x.pcs.t.size() != y.pcs.t.size()) return false;
+    for (size_t m = 0; m < x.pcs.t.size(); m++)
+        if (x.pcs.t[m].size() != y.pcs.t[m].size() ||
+            memcmp(x.pcs.t[m].data(), y.pcs.t[m].data(),
+                   x.pcs.t[m].size() * sizeof(bf128_t))) return false;
+    return !memcmp(x.pcs.u.data(), y.pcs.u.data(), x.pcs.u.size() * sizeof(bf128_t)) &&
            x.pcs.cols == y.pcs.cols && x.pcs.paths == y.pcs.paths;
 }
 
@@ -95,6 +114,25 @@ int main() {
     { volatile int wa = omp_get_thread_num(); (void)wa; }
 
     ck("gamma-batched constraint count == NC", count_gammas() == bhw::NC);
+
+    { // the Binius DM bit-table must be the GL DM table, bit for bit
+        p3hw::Tables T = p3hw::build_tables();
+        const std::vector<uint8_t>& tb = bhw::bhw_dm_table_bits();
+        auto B = [&](int col, uint32_t j) { return (int)(tb[(size_t)col * 65536 + j] & 1); };
+        bool same = true;
+        for (uint32_t j = 0; j < 65536 && same; j++) {
+            int64_t v[6] = {0, 0, 0, 0, 0, 0};
+            int c = 0;
+            for (int k = 0; k < 8; k++) v[0] |= (int64_t)B(c++, j) << k;
+            for (int k = 0; k < 8; k++) v[1] |= (int64_t)B(c++, j) << k;
+            for (int k = 0; k < 5; k++) v[2] |= (int64_t)B(c++, j) << k;
+            for (int k = 0; k < 15; k++) v[3] |= (int64_t)B(c++, j) << k;
+            v[4] = B(c++, j); v[5] = B(c++, j);
+            for (int t = 0; t < 6; t++)
+                if ((gl_t)v[t] != T.DM.cols[t][j]) same = false;
+        }
+        ck("Binius DM bit-table matches p3hw::build_tables().DM bitwise", same);
+    }
 
     vector<int64_t> raw[10];
     if (!load_vectors("hawkeye_prod_vectors.bin", raw)) {
@@ -204,15 +242,35 @@ int main() {
         b2[(size_t)bhw::LALS * N + i] ^= 1;
         attack("flipped al sign bit rejects (C2 sign)", b2);
     }
+    { // DM lookup: flip one a-code bit (alignment constraints untouched) --
+      // before section 21.9 a/b/eb were committed-only and this was the
+      // documented open hole; the tower logUp closes it
+        long i = find_row([&](size_t i) { return raw[5][i] != 0; });
+        auto b2 = bits;
+        b2[(size_t)(bhw::LA + 2) * N + i] ^= 1;
+        attack("flipped a-code bit rejects (DM lookup; the former open hole)", b2);
+    }
+    { // DM lookup: flipped eb bit (key unchanged, tuple no longer a table row)
+        long i = find_row([&](size_t i) { return raw[5][i] != 0; });
+        auto b2 = bits;
+        b2[(size_t)(bhw::LEB + 1) * N + i] ^= 1;
+        attack("flipped eb bit rejects (DM lookup)", b2);
+    }
     { // proof-object tampers
         auto q = pf; q.sc.finals[9].lo ^= 4;
         ck("tampered sumcheck finals reject", !bhw::bhw_verify(q));
         q = pf; q.xev[3].hi ^= 1;
         ck("tampered committed-only column eval (a/b/eb binding) rejects",
            !bhw::bhw_verify(q));
+        q = pf; q.xev2[10].lo ^= 1;
+        ck("tampered lookup-point column eval rejects", !bhw::bhw_verify(q));
         q = pf; q.root[11] ^= 1;
         ck("tampered commitment root rejects", !bhw::bhw_verify(q));
-        q = pf; q.pcs.t[5].lo ^= 2;
+        q = pf; q.lu.mroot[3] ^= 1;
+        ck("tampered multiplicity root rejects", !bhw::bhw_verify(q));
+        q = pf; q.lu.gw.root.lo ^= 1;
+        ck("tampered lookup product root rejects", !bhw::bhw_verify(q));
+        q = pf; q.pcs.t[0][5].lo ^= 2;
         ck("tampered PCS opening rejects", !bhw::bhw_verify(q));
     }
 
@@ -234,12 +292,12 @@ int main() {
         bhw::BhwProof pbh; bhw::BhwStats sbh;
         bhw::bhw_prove(lB, bb, pbh, sbh, false);
         ck("big-witness GPU proof byte-identical to host proof", proofs_equal(pb, pbh));
-        double bin_prove = sb.commit_ms + sb.sc_ms + sb.open_ms;
-        printf("  [meas] BINIUS  lN=%d: committed %.2f MB | commit %.0f ms, sc %.0f ms "
-               "(host A/B %.0f ms), open %.0f ms -> prove %.0f ms | proof %.2f MB | "
-               "verify %.0f ms\n",
-               lB, sb.committed / 1048576.0, sb.commit_ms, sb.sc_ms, sbh.sc_ms,
-               sb.open_ms, bin_prove, pb.bytes() / 1048576.0, sv.verify_ms);
+        double bin_prove = sb.commit_ms + sb.lu_ms + sb.sc_ms + sb.open_ms;
+        printf("  [meas] BINIUS  lN=%d: committed %.2f MB | commit %.0f ms, "
+               "lu %.0f ms, sc %.0f ms (host A/B %.0f ms), open %.0f ms -> "
+               "prove %.0f ms | proof %.2f MB | verify %.0f ms\n",
+               lB, sb.committed / 1048576.0, sb.commit_ms, sb.lu_ms, sb.sc_ms,
+               sbh.sc_ms, sb.open_ms, bin_prove, pb.bytes() / 1048576.0, sv.verify_ms);
 
         // Goldilocks side: the production gadget on the same vectors
         const uint32_t R = 2, Q = 24;
@@ -272,13 +330,13 @@ int main() {
         }
         double gl_dm = bhw::bhw_now_ms() - t0;
         printf("  [meas] GL      lN=%d: committed %.2f MB (11 witness cols only, "
-               "lookup aux excluded) | commit %.0f ms, prove %.0f ms (DM lookup alone "
-               "%.0f ms; Binius covers everything but DM)\n",
+               "lookup aux excluded) | commit %.0f ms, prove %.0f ms (DM lookup "
+               "share %.0f ms)\n",
                lB, gl_bytes / 1048576.0, gl_commit, gl_prove, gl_dm);
-        printf("  [meas] ratios: committed-data %.1fx  commit-time %.1fx  "
-               "prove(GL total)/%.0fms=%.1fx  prove(GL excl DM)=%.1fx\n",
+        printf("  [meas] ratios (FULL per-product scope both sides, DM included): "
+               "committed-data %.1fx  commit-time %.1fx  prove %.0f/%.0f ms = %.1fx\n",
                (double)gl_bytes / sb.committed, gl_commit / sb.commit_ms,
-               bin_prove, gl_prove / bin_prove, (gl_prove - gl_dm) / bin_prove);
+               gl_prove, bin_prove, gl_prove / bin_prove);
     }
 
     printf("\nBINIUS-HAWKEYE: %d passed, %d failed -> %s\n", np_, nf_,

@@ -22,10 +22,15 @@
 //   SH lookup (sh -> pw)  -> the h/sh linkage above (in-circuit)
 //   C2  (al = pr*(1-2sg)*q) in sign-magnitude: almag_j = pr * q_j [15],
 //        alsg = sg * pr                                           [1]
-// Only the DM decode-multiply lookup (a,b -> eb,mag,sg,pr) remains for the
-// logUp-over-towers step; a/b/eb are committed here at true width and their
-// evals at the sumcheck endpoint are transcript-bound to the SAME stacked
-// opening (proof carries the 21 extra column evals).
+//   DM lookup (a,b -> eb,mag,sg,pr; the 65536-row fused decode-multiply-scale
+//        table) via logUp over towers (p3_binius_logup.cuh, section 21.9):
+//        the 38 tuple bit-slices are fingerprinted per row and proven a
+//        multiset of table-row fingerprints by the multiplicative grand-
+//        product argument (char-2-sound; binary multiplicities, Frobenius
+//        exponents).  The lookup's leaf claim binds to the SAME stacked
+//        commitment through a second point of one multi-point opening.
+// With the DM lookup landed the gadget covers the FULL p3_hawkeye_prod.cuh
+// per-product semantics.
 //
 // Teeth + measured A/B vs the Goldilocks p3hw gadget: p3_binius_hawkeye_test.cu.
 #pragma once
@@ -33,7 +38,7 @@
 #include <cstring>
 #include <chrono>
 #include <vector>
-#include "p3_binius_sumcheck.cuh"
+#include "p3_binius_logup.cuh"
 
 namespace bhw {
 
@@ -61,6 +66,49 @@ enum {
     LOGSTK = 7, NSTK = 128  // stacked slots
 };
 static const int NC = 401;  // batched constraint count
+
+// ---- DM lookup wiring: tuple column order a[8] b[8] eb[5] mag[15] sg pr ----
+static const int DMJ = 38;
+static inline void bhw_dm_cols(int* out) {
+    int c = 0;
+    for (int j = 0; j < 8; j++) out[c++] = LA + j;
+    for (int j = 0; j < 8; j++) out[c++] = LB + j;
+    for (int j = 0; j < 5; j++) out[c++] = LEB + j;
+    for (int j = 0; j < 15; j++) out[c++] = LMAG + j;
+    out[c++] = LSG; out[c++] = LPR;
+}
+static inline void bhw_decode_e4m3(uint32_t raw, int& exp_eff, int& sig_abs, int& sign) {
+    sign = (raw >> 7) & 1;
+    int eb = (raw >> 3) & 15, mant = raw & 7;
+    sig_abs = eb != 0 ? (mant | 8) : mant;
+    exp_eff = eb != 0 ? eb : 1;
+}
+// the 65536-row DM table as DMJ public bit-columns (col-major, 2^16 each);
+// bitwise-identical content to p3hw::build_tables().DM (cross-checked by a
+// tooth in the selftest)
+static inline const std::vector<uint8_t>& bhw_dm_table_bits() {
+    static std::vector<uint8_t> tb = [] {
+        std::vector<uint8_t> t((size_t)DMJ * 65536, 0);
+        auto B = [&](int col, uint32_t j) -> uint8_t& { return t[(size_t)col * 65536 + j]; };
+        for (uint32_t j = 0; j < 65536; j++) {
+            uint32_t ca = j >> 8, cb = j & 255;
+            int ea, siga, sna, ebx, sigb, snb;
+            bhw_decode_e4m3(ca, ea, siga, sna); bhw_decode_e4m3(cb, ebx, sigb, snb);
+            uint32_t eb = (uint32_t)(ea + ebx - 2);               // in [0,28]
+            uint32_t mag = (uint32_t)(siga * sigb) << 7;          // < 2^15
+            uint32_t pr = (siga != 0 && sigb != 0) ? 1 : 0;
+            uint32_t sg = (pr && (sna ^ snb)) ? 1 : 0;
+            int c = 0;
+            for (int k = 0; k < 8; k++) B(c++, j) = (ca >> k) & 1;
+            for (int k = 0; k < 8; k++) B(c++, j) = (cb >> k) & 1;
+            for (int k = 0; k < 5; k++) B(c++, j) = (eb >> k) & 1;
+            for (int k = 0; k < 15; k++) B(c++, j) = (mag >> k) & 1;
+            B(c++, j) = (uint8_t)sg; B(c++, j) = (uint8_t)pr;
+        }
+        return t;
+    }();
+    return tb;
+}
 
 // ---- witness bit build from the raw integer vectors (numpy ref layout:
 // a,b,eb,mag,sg,pr,sh,q,r,al).  Pads to 2^lN with the all-zero product row
@@ -229,16 +277,18 @@ static inline size_t bhw_validate(const std::vector<uint8_t>& bits, int lN) {
 struct BhwProof {
     int lN = 0;
     uint8_t root[32];
+    bflu::BfLuProof lu;          // DM lookup (multiplicative logUp over towers)
     BfScProof sc;
     bf128_t xev[NCOLB - NCON];   // a/b/eb column evals at zeta (bound by the opening)
-    BfPcsProof pcs;
+    bf128_t xev2[NCOLB];         // ALL column evals at the lookup point rfin_w
+    BfPcsProofM pcs;             // ONE multi-point opening: (zeta,rho) + (rfin_w,rho)
     size_t bytes() const {
-        return 32 + sc.rounds.size() * 16 + sc.finals.size() * 16 +
-               sizeof(xev) + pcs.bytes();
+        return 32 + lu.bytes() + sc.rounds.size() * 16 + sc.finals.size() * 16 +
+               sizeof(xev) + sizeof(xev2) + pcs.bytes();
     }
 };
-struct BhwStats { double commit_ms = 0, sc_ms = 0, open_ms = 0, verify_ms = 0;
-                  size_t committed = 0; };
+struct BhwStats { double commit_ms = 0, lu_ms = 0, sc_ms = 0, open_ms = 0,
+                  verify_ms = 0; size_t committed = 0; };
 
 static inline BfPcsParams bhw_params(int lN) {
     BfPcsParams p;
@@ -265,12 +315,35 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
     bfpcs_commit(p, bits.data(), tr, C);
     st.commit_ms = C.commit_ms; st.committed = C.committed_bytes;
     memcpy(pf.root, C.root, 32);
+    // DM lookup: the 38 tuple columns against the public decode-multiply table
+    double t0 = bhw_now_ms();
+    std::vector<bf128_t> rfin_w;
+    {
+        int dmc[DMJ]; bhw_dm_cols(dmc);
+        const uint8_t* wc[DMJ];
+        for (int k = 0; k < DMJ; k++) wc[k] = bits.data() + (size_t)dmc[k] * N;
+        std::vector<uint32_t> idx(N);
+        #pragma omp parallel for schedule(static)
+        for (int64_t i = 0; i < (int64_t)N; i++) {
+            uint32_t a = 0, b = 0;
+            for (int j = 0; j < 8; j++) {
+                a |= (uint32_t)(bits[(size_t)(LA + j) * N + i] & 1) << j;
+                b |= (uint32_t)(bits[(size_t)(LB + j) * N + i] & 1) << j;
+            }
+            idx[i] = (a << 8) | b;
+        }
+        size_t mbytes = 0;
+        bflu::bflu_prove(tr, lN, 16, DMJ, wc, idx.data(), bhw_dm_table_bits().data(),
+                         pf.lu, rfin_w, gpu, nullptr, nullptr, &mbytes);
+        st.committed += mbytes;
+    }
+    st.lu_ms = bhw_now_ms() - t0;
     std::vector<bf128_t> rz(lN);
     for (auto& x : rz) x = bf_chal128(tr);
     std::vector<bf128_t> g;
     bhw_gammas(tr, g);
     std::vector<bf128_t> zeta;
-    double t0 = bhw_now_ms();
+    t0 = bhw_now_ms();
     if (gpu) {
         BfScDev dv; bfsc_dev_alloc(dv, HwF::K, lN);
         bfsc_dev_eq(dv.a, rz.data(), lN);
@@ -315,19 +388,33 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
         pf.xev[j - NCON] = acc;
     }
     tr.absorb("bhw-xev", pf.xev, sizeof pf.xev);
-    // one stacked opening at (zeta, rho)
-    std::vector<bf128_t> rho(LOGSTK), eqsel, R(p.l);
+    // ALL column evals at the lookup point rfin_w (binds the DM leaf claim)
+    std::vector<bf128_t> eqw;
+    bf_eq_table(rfin_w.data(), lN, eqw);
+    #pragma omp parallel for schedule(static)
+    for (int j = 0; j < NCOLB; j++) {
+        bf128_t acc = bf128_zero();
+        const uint8_t* col = bits.data() + (size_t)j * N;
+        for (size_t x = 0; x < N; x++)
+            if (col[x] & 1) acc = bf128_add(acc, eqw[x]);
+        pf.xev2[j] = acc;
+    }
+    tr.absorb("bhw-xev2", pf.xev2, sizeof pf.xev2);
+    // one stacked MULTI-POINT opening at (zeta, rho) and (rfin_w, rho)
+    std::vector<bf128_t> rho(LOGSTK), eqsel, R1(p.l), R2(p.l);
     for (auto& x : rho) x = bf_chal128(tr);
     bf_eq_table(rho.data(), LOGSTK, eqsel);
-    bf128_t V = bf128_zero();
+    bf128_t V1 = bf128_zero(), V2 = bf128_zero();
     for (int j = 0; j < NCON; j++)
-        V = bf128_add(V, bf128_mul(eqsel[j], pf.sc.finals[1 + j]));
+        V1 = bf128_add(V1, bf128_mul(eqsel[j], pf.sc.finals[1 + j]));
     for (int j = NCON; j < NCOLB; j++)
-        V = bf128_add(V, bf128_mul(eqsel[j], pf.xev[j - NCON]));
-    for (int t = 0; t < lN; t++) R[t] = zeta[t];
-    for (int t = 0; t < LOGSTK; t++) R[lN + t] = rho[t];
+        V1 = bf128_add(V1, bf128_mul(eqsel[j], pf.xev[j - NCON]));
+    for (int j = 0; j < NCOLB; j++)
+        V2 = bf128_add(V2, bf128_mul(eqsel[j], pf.xev2[j]));
+    for (int t = 0; t < lN; t++) { R1[t] = zeta[t]; R2[t] = rfin_w[t]; }
+    for (int t = 0; t < LOGSTK; t++) R1[lN + t] = R2[lN + t] = rho[t];
     t0 = bhw_now_ms();
-    bfpcs_open(C, R.data(), V, tr, pf.pcs);
+    bfpcs_open_multi(C, {R1.data(), R2.data()}, {V1, V2}, tr, pf.pcs);
     st.open_ms = bhw_now_ms() - t0;
 }
 
@@ -338,6 +425,10 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
     fs::Transcript tr("binius-hawkeye");
     tr.absorb("stmt-bhw", &lN, sizeof lN);
     tr.absorb("bfpcs-root", pf.root, 32);
+    // DM lookup chain; its leaf claim is bound against xev2 below
+    std::vector<bf128_t> rfin_w, bk; bf128_t cw, alpha;
+    if (!bflu::bflu_verify(tr, lN, 16, DMJ, bhw_dm_table_bits().data(), pf.lu,
+                           rfin_w, cw, alpha, bk)) return false;
     std::vector<bf128_t> rz(lN);
     for (auto& x : rz) x = bf_chal128(tr);
     std::vector<bf128_t> g;
@@ -352,17 +443,29 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
         eqv = bf128_mul(eqv, bf128_add(bf128_one(), bf128_add(rz[t], zeta[t])));
     if (!bf128_eq(pf.sc.finals[0], eqv)) return false;
     tr.absorb("bhw-xev", pf.xev, sizeof pf.xev);
-    std::vector<bf128_t> rho(LOGSTK), eqsel, R(p.l);
+    tr.absorb("bhw-xev2", pf.xev2, sizeof pf.xev2);
+    // lookup leaf binding: cw == alpha + sum_k bk[k] * tuple-col-eval at rfin_w
+    {
+        int dmc[DMJ]; bhw_dm_cols(dmc);
+        bf128_t exp = alpha;
+        for (int k = 0; k < DMJ; k++)
+            exp = bf128_add(exp, bf128_mul(bk[k], pf.xev2[dmc[k]]));
+        if (!bf128_eq(cw, exp)) return false;
+    }
+    std::vector<bf128_t> rho(LOGSTK), eqsel, R1(p.l), R2(p.l);
     for (auto& x : rho) x = bf_chal128(tr);
     bf_eq_table(rho.data(), LOGSTK, eqsel);
-    bf128_t V = bf128_zero();
+    bf128_t V1 = bf128_zero(), V2 = bf128_zero();
     for (int j = 0; j < NCON; j++)
-        V = bf128_add(V, bf128_mul(eqsel[j], pf.sc.finals[1 + j]));
+        V1 = bf128_add(V1, bf128_mul(eqsel[j], pf.sc.finals[1 + j]));
     for (int j = NCON; j < NCOLB; j++)
-        V = bf128_add(V, bf128_mul(eqsel[j], pf.xev[j - NCON]));
-    for (int t = 0; t < lN; t++) R[t] = zeta[t];
-    for (int t = 0; t < LOGSTK; t++) R[lN + t] = rho[t];
-    bool ok = bfpcs_verify(p, pf.root, R.data(), V, tr, pf.pcs);
+        V1 = bf128_add(V1, bf128_mul(eqsel[j], pf.xev[j - NCON]));
+    for (int j = 0; j < NCOLB; j++)
+        V2 = bf128_add(V2, bf128_mul(eqsel[j], pf.xev2[j]));
+    for (int t = 0; t < lN; t++) { R1[t] = zeta[t]; R2[t] = rfin_w[t]; }
+    for (int t = 0; t < LOGSTK; t++) R1[lN + t] = R2[lN + t] = rho[t];
+    bool ok = bfpcs_verify_multi(p, pf.root, {R1.data(), R2.data()}, {V1, V2},
+                                 tr, pf.pcs);
     if (st) st->verify_ms = bhw_now_ms() - t0;
     return ok;
 }

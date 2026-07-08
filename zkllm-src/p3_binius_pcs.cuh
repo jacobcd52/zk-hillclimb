@@ -376,6 +376,137 @@ static inline void bfpcs_open(const BfPcsCommit& C, const bf128_t* r, bf128_t v,
     }
 }
 
+// ---- multi-point opening: M evaluation claims on ONE commitment share the
+// proximity row, the spot-column draw, the column data and the Merkle paths
+// (the expensive O(sqrt n) part); only the per-point combined eval rows are
+// extra.  Soundness is the same Ligero argument: u ties the matrix to a
+// nearby codeword once, and each t_m is checked against the SAME opened
+// columns.  Transcript schedule: (point,value) x M, t x M, rho, u, queries. ----
+struct BfPcsProofM {
+    std::vector<std::vector<bf128_t>> t;  // M eval rows, each length 2^lcol
+    std::vector<bf128_t> u;               // shared proximity row
+    std::vector<bf16_t> cols;             // Q * n_rows shared column data
+    std::vector<uint8_t> paths;           // Q * depth * 32 shared sibling hashes
+    size_t bytes() const {
+        size_t s = u.size() * sizeof(bf128_t) + cols.size() * sizeof(bf16_t) + paths.size();
+        for (auto& tm : t) s += tm.size() * sizeof(bf128_t);
+        return s;
+    }
+};
+static inline void bfpcs_open_multi(const BfPcsCommit& C,
+                                    const std::vector<const bf128_t*>& rs,
+                                    const std::vector<bf128_t>& vs,
+                                    fs::Transcript& tr, BfPcsProofM& pf) {
+    const BfPcsParams& p = C.p;
+    const int M = (int)rs.size();
+    for (int m = 0; m < M; m++) {
+        tr.absorb("bfpcs-point", rs[m], p.l * sizeof(bf128_t));
+        tr.absorb("bfpcs-value", &vs[m], sizeof(bf128_t));
+    }
+    bf16_t* d_msg; bf128_t *d_coef, *d_out;
+    cudaMalloc(&d_msg, C.msg.size() * sizeof(bf16_t));
+    cudaMalloc(&d_coef, (size_t)C.n_rows * sizeof(bf128_t));
+    cudaMalloc(&d_out, ((size_t)C.pc * 16) * sizeof(bf128_t));
+    cudaMemcpy(d_msg, C.msg.data(), C.msg.size() * sizeof(bf16_t), cudaMemcpyHostToDevice);
+    pf.t.resize(M);
+    for (int m = 0; m < M; m++) {
+        std::vector<bf128_t> eqrow;
+        bf_eq_table(rs[m] + p.lcol, p.lrow, eqrow);
+        bfpcs_combine_gpu(d_msg, C.n_rows, C.pc, eqrow, d_coef, d_out, pf.t[m]);
+        tr.absorb("bfpcs-t", pf.t[m].data(), pf.t[m].size() * sizeof(bf128_t));
+    }
+    std::vector<bf128_t> rho;
+    bfpcs_rho(tr, C.n_rows, rho);
+    bfpcs_combine_gpu(d_msg, C.n_rows, C.pc, rho, d_coef, d_out, pf.u);
+    tr.absorb("bfpcs-u", pf.u.data(), pf.u.size() * sizeof(bf128_t));
+    cudaFree(d_msg); cudaFree(d_coef); cudaFree(d_out);
+    std::vector<uint32_t> q;
+    bfpcs_queries(tr, C.nc, p.Q, q);
+    int depth = 0; while ((1u << depth) < C.nc) depth++;
+    pf.cols.assign((size_t)p.Q * C.n_rows, 0);
+    pf.paths.assign((size_t)p.Q * depth * 32, 0);
+    for (int k = 0; k < p.Q; k++) {
+        uint32_t j = q[k];
+        for (uint32_t i = 0; i < C.n_rows; i++)
+            pf.cols[(size_t)k * C.n_rows + i] = C.cw[(size_t)i * C.nc + j];
+        uint32_t idx = j;
+        for (int dl = 0; dl < depth; dl++) {
+            memcpy(pf.paths.data() + ((size_t)k * depth + dl) * 32,
+                   C.lvl[dl].data() + (size_t)(idx ^ 1u) * 32, 32);
+            idx >>= 1;
+        }
+    }
+}
+static inline bool bfpcs_verify_multi(const BfPcsParams& p, const uint8_t root[32],
+                                      const std::vector<const bf128_t*>& rs,
+                                      const std::vector<bf128_t>& vs,
+                                      fs::Transcript& tr, const BfPcsProofM& pf) {
+    const int M = (int)rs.size();
+    uint32_t n_rows = 1u << p.lrow, pc = 1u << (p.lcol - 4), nc = pc << BFPCS_RATE_LOG;
+    size_t nu = (size_t)1 << p.lcol;
+    if ((int)pf.t.size() != M || pf.u.size() != nu) return false;
+    for (int m = 0; m < M; m++) if (pf.t[m].size() != nu) return false;
+    if (pf.cols.size() != (size_t)p.Q * n_rows) return false;
+    for (int m = 0; m < M; m++) {
+        tr.absorb("bfpcs-point", rs[m], p.l * sizeof(bf128_t));
+        tr.absorb("bfpcs-value", &vs[m], sizeof(bf128_t));
+    }
+    for (int m = 0; m < M; m++)
+        tr.absorb("bfpcs-t", pf.t[m].data(), pf.t[m].size() * sizeof(bf128_t));
+    std::vector<bf128_t> rho;
+    bfpcs_rho(tr, n_rows, rho);
+    tr.absorb("bfpcs-u", pf.u.data(), pf.u.size() * sizeof(bf128_t));
+    std::vector<uint32_t> q;
+    bfpcs_queries(tr, nc, p.Q, q);
+    int depth = 0; while ((1u << depth) < nc) depth++;
+    if (pf.paths.size() != (size_t)p.Q * depth * 32) return false;
+    BfNtt nt; bfntt_init(nt, p.lcol - 4 + BFPCS_RATE_LOG);
+    std::vector<std::vector<bf128_t>> W(M);
+    std::vector<bf128_t> U;
+    for (int m = 0; m < M; m++) {
+        bf_pack128(pf.t[m].data(), nu, W[m]);
+        W[m].resize(nc, bf128_zero()); bfntt_fwd_host128(nt, W[m].data());
+    }
+    bf_pack128(pf.u.data(), nu, U); U.resize(nc, bf128_zero()); bfntt_fwd_host128(nt, U.data());
+    std::vector<std::vector<bf128_t>> eqrow(M);
+    for (int m = 0; m < M; m++) bf_eq_table(rs[m] + p.lcol, p.lrow, eqrow[m]);
+    for (int k = 0; k < p.Q; k++) {
+        uint32_t j = q[k];
+        const bf16_t* col = pf.cols.data() + (size_t)k * n_rows;
+        uint8_t h[32];
+        fs::sha256(col, n_rows * sizeof(bf16_t), h);
+        uint32_t idx = j;
+        for (int dl = 0; dl < depth; dl++) {
+            uint8_t cat[64];
+            const uint8_t* sib = pf.paths.data() + ((size_t)k * depth + dl) * 32;
+            if (idx & 1) { memcpy(cat, sib, 32); memcpy(cat + 32, h, 32); }
+            else         { memcpy(cat, h, 32);   memcpy(cat + 32, sib, 32); }
+            p3_sha256_compress64(cat, h);
+            idx >>= 1;
+        }
+        if (memcmp(h, root, 32)) return false;
+        bf128_t sr = bf128_zero();
+        for (uint32_t i = 0; i < n_rows; i++)
+            sr = bf128_add(sr, bf128_smul16(rho[i], col[i]));
+        if (!bf128_eq(sr, U[j])) return false;
+        for (int m = 0; m < M; m++) {
+            bf128_t se = bf128_zero();
+            for (uint32_t i = 0; i < n_rows; i++)
+                se = bf128_add(se, bf128_smul16(eqrow[m][i], col[i]));
+            if (!bf128_eq(se, W[m][j])) return false;
+        }
+    }
+    for (int m = 0; m < M; m++) {
+        std::vector<bf128_t> eqcol;
+        bf_eq_table(rs[m], p.lcol, eqcol);
+        bf128_t acc = bf128_zero();
+        for (size_t jp = 0; jp < nu; jp++)
+            acc = bf128_add(acc, bf128_mul(eqcol[jp], pf.t[m][jp]));
+        if (!bf128_eq(acc, vs[m])) return false;
+    }
+    return true;
+}
+
 static inline bool bfpcs_verify(const BfPcsParams& p, const uint8_t root[32],
                                 const bf128_t* r, bf128_t v,
                                 fs::Transcript& tr, const BfPcsProof& pf) {

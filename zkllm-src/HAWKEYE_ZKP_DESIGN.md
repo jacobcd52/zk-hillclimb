@@ -1897,3 +1897,95 @@ Goldilocks-hybrid, for the dot-product accumulation.  Measured basis:
 The accumulation gadget itself (even/odd-restriction chaining of tree
 levels) is the next increment, folded into item 3 (logUp over towers) since
 the group sums feed the max_exp gadget that consumes the lookups.
+
+### 21.9 logUp over towers + the DM lookup landed (2026-07-08, session 3) [VERIFIED]
+
+Handoff item 3 of 21.6, done -- and with it the Binius Hawkeye gadget now
+covers the FULL p3_hawkeye_prod.cuh per-product semantics (the DM
+decode-multiply lookup was the one missing piece).  Files:
+p3_binius_logup.cuh + p3_binius_logup_test.cu (battery suite 24,
+BINIUS-LOGUP 23/23); p3_binius_pcs.cuh gains a multi-point opening;
+p3_binius_hawkeye.cuh/[_test] integrate the lookup (BINIUS-HAWKEYE 22->28).
+
+THE CHAR-2 TRAP (why this is not a port of p3_logup.cuh).  Additive logUp
+proves sum_i 1/(alpha+v_i) == sum_j m_j/(alpha+t_j); over a prime field the
+formal rational identity forces integer multiset equality.  In char 2 the
+identity only sees multiplicities MOD 2: a value OUTSIDE the table inserted
+an EVEN number of times XOR-cancels from the fractional sum and additive
+logUp accepts the forgery.  This is not hypothetical -- the selftest
+constructs the attack and asserts by direct field computation that the
+additive identity HOLDS for it ("VULN DEMO" tooth), then that the shipped
+argument rejects it.
+
+The sound tower form is MULTIPLICATIVE:
+
+    prod_i (alpha + v_i)  ==  prod_j (alpha + t_j)^{m_j}
+
+(unique factorization in F[alpha] forces integer multiset equality in any
+characteristic; committed BEFORE alpha,beta are drawn, so soundness never
+touches GF(2^128) discrete logs, which are weak).  Three char-2-specific
+constructions make it cheap:
+* Fingerprints are F_2-LINEAR in committed bits: v_i = sum_k beta^{k+1} *
+  wbit_k(i).  The witness-side leaf MLE at the GKR endpoint is therefore
+  alpha + sum_k beta^{k+1} * wbitcol_k~(rfin_w) -- a linear combination of
+  column evals of the EXISTING stacked commitment.  No new witness columns.
+* Multiplicities are committed in BINARY (lN+1 bit-slices over the table
+  domain, one extra small PCS commit) and the 2^b exponents are absorbed by
+  FROBENIUS: (alpha+t_j)^{2^b} = alpha^{2^b} + sum_k beta_k^{2^b} Tbit_k(j)
+  because squaring is linear in char 2.  The table-side product becomes ONE
+  grand product over the (bit-slice, table-row) cube with leaves
+  L(b,j) = 1 + m_{j,b} * u(b,j), u PUBLIC and degree-1 in the m bits.
+* The verifier evaluates u~ at the binding endpoint from public data alone
+  via the tensor split u~(zb,zj) = sum_b eq(zb) [alpha^{2^b}+1 +
+  sum_k beta_k^{2^b} Tbit_k~(zj)] -- 2^lT eq table + J XOR-selects, ~10 ms.
+
+Machinery: a grand-product GKR (bfgkr_*) reducing a published root through
+layer sumchecks  claim = sum_y eq(z,y) lo(y) hi(y)  -- every sumcheck in the
+argument (GKR layers AND the m-binding  cl+1 = sum eq*m*u) is the SAME
+degree-3 K=3 functor through the generic 21.4/21.7 host+GPU provers, so GPU
+and host chains emit byte-identical proofs (tooth).  The GPU path keeps the
+whole product tree DEVICE-RESIDENT (one upload; comb/split/eq/round kernels
+on device; small top layers downloaded for the host loop), the pattern
+p3_gkr.cuh established on the GL side.  Two perf notes found by measurement:
+(a) per-layer host trees + pageable re-uploads cost ~90 ms/layer in chain
+context (isolated layer = 6-16 ms) -- the device tree removes it; (b) at 128
+cores, full-team OMP regions on small sumcheck domains cost more than the
+rows -- bf_sumcheck_prove now clamps threads to the work (bfsc_nthr), bytes
+identical since every reduction is XOR.  Steady-state lookup cost at 2^18
+rows / 2^16 table / 38 columns: m-commit 12 + witness chain ~150 + table
+leaves ~120 + table chain ~230 + binding 60 + m-open 3 ~= 0.6 s.
+
+Hawkeye integration: the 38 DM tuple bit-slices (a8 b8 eb5 mag15 sg pr) are
+fingerprinted per row; the table bits are built from the same decode as
+p3hw::build_tables().DM (tooth: bitwise-equal across all 65536 rows).  The
+lookup's leaf claim binds through pf.xev2 (all 110 column evals at rfin_w)
+and the stacked commitment is now opened by ONE multi-point opening
+(bfpcs_open_multi: shared proximity row + shared spot columns/paths, the
+O(sqrt n) part paid once; extra cost per point = one 2^lcol eval row).
+Proof grows 1.72 -> 2.26 MB, committed 16.06 -> 17.08 MB (the m commit).
+
+Teeth: BINIUS-LOGUP 23/23 (gkr unit + honest + GPU==host bytes + single
+out-of-table + VULN-DEMO/even-count pair + wrong multiplicities + m
+commit/tree inconsistency both ways + 10 proof-object tampers);
+BINIUS-HAWKEYE 28/28 -- adds the DM-table cross-check, "flipped a-code bit
+rejects" and "flipped eb bit rejects" (the FORMER OPEN HOLE: before 21.9
+a/b/eb were committed-only and a consistent a/b/eb forgery was accepted),
+and lookup-side tampers (mroot, product root, xev2).
+
+MEASURED A/B, same protocol as 21.8 (262144 real products, RTX 4090), now
+at EQUAL SCOPE -- both sides prove decode-multiply AND alignment:
+
+    BINIUS: committed 17.08 MB | commit 22 ms, lookup 1631 ms (steady ~0.6 s),
+            zerocheck 2053 ms, open 16 ms -> prove 3.72 s | proof 2.26 MB
+            | verify 157 ms
+    GL:     committed 792 MB | prove 43.74 s (DM share 14.07 s)
+    ratios: committed data 46.4x | prove 11.7x FULL-SCOPE (was 20.7x on the
+            alignment-only comparison of 21.8; the honest number today)
+
+Full 24-suite battery ALL GREEN at this HEAD (battery_s21_9.log).
+
+Remaining known levers (documented, not blockers): device residency for the
+witness-side leaf build + binding-sumcheck columns (~0.3 s), the 21.6
+round-0 packed-bit trick for the K=90 zerocheck (~2 s, now the dominant
+term), FRI-Binius opening (proof MB), ZK layer (salted leaves + blinds),
+and the accumulation gadget (next increment: the 21.8 carry-save decision).
