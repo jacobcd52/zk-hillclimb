@@ -1989,3 +1989,107 @@ witness-side leaf build + binding-sumcheck columns (~0.3 s), the 21.6
 round-0 packed-bit trick for the K=90 zerocheck (~2 s, now the dominant
 term), FRI-Binius opening (proof MB), ZK layer (salted leaves + blinds),
 and the accumulation gadget (next increment: the 21.8 carry-save decision).
+
+### 21.10 The accumulation gadget: pos/neg carry-save adder trees (2026-07-08, session 3) [VERIFIED]
+
+The 21.8 carry-save decision, built -- the last RELATIONAL piece before a
+composed Binius matmul: the per-group Hawkeye dot-product sums
+`contribution_g = sum_{kk<32} al_{g,kk}` are now proven over the tower on
+top of the full per-product gadget, in ONE composed proof against the SAME
+commitments.  Files: p3_binius_acc.cuh (+ bhw integration in
+p3_binius_hawkeye.cuh), p3_binius_acc_test.cu (battery suite 25,
+BINIUS-ACC 26/26).
+
+THE CONSTRUCTION.  Integer addition does not exist in char 2, so the sum is
+a binary tree of ripple-carry adders with COMMITTED sum/carry bit-slices,
+split into a POSITIVE and a NEGATIVE tree (sign-magnitude al has no cheap
+char-2 negation; P and N are summed separately and the consumer gets both):
+
+* Level l (1..5) halves the domain: node y adds nodes 2y, 2y+1 of level
+  l-1.  Per side, input width win = 14+l: committed s[0..win-1] and
+  c[0..win-1] (output value = s | c[win-1]<<win; c[0..win-2] internal).
+  Constraints, 4*win per level, gamma-batched into ONE eq-weighted
+  zerocheck per level:  s_j + a_j + b_j + c_{j-1}  and
+  c_j + a_j*b_j + c_{j-1}*(a_j+b_j).
+* Level-l INPUTS are the even/odd RESTRICTIONS of the level-(l-1) outputs
+  (the zerocheck runs on the (lN-l)-cube; input column k's final is the
+  parent MLE at (0/1, zeta_l)).  This REQUIRES group-contiguous row order
+  (row = group*32 + kk, kk in the low 5 index bits) -- a pure relabeling:
+  the per-product zerocheck and the DM lookup are row-order-agnostic
+  (regression tooth).  hawkeye_ref.py grew group_witness_rows /
+  dump_acc_witness (--dumpacc), emitting the SAME rows group-ordered plus
+  golden per-group P/N/S sums.
+* At level 1 the inputs are the sign-mux of the committed level-0 columns:
+  a_j = almag_j*(1+alsg) (P side) / almag_j*alsg (N side) -- degree-4
+  carry constraints, so level 1 is a D=5 zerocheck; levels 2..5 are D=3.
+  This trades ~2.6 s of prove for 30 slots of committed data (committing
+  the muxes would make everything D=3 but does not fit the 64-slot stack).
+* PACKING: levels 1..4 (62 slots) go in a SECOND 64-slot stack -- 2^l
+  columns of length N/2^l per slot, packing bits = top l bits of the
+  slot-local index; sum and carry columns of one level NEVER share a slot.
+  Level 5 (the group sums P[20]/N[20] + carries, 4 slots) lives in the
+  MAIN stack's free slots 110..113, next to the per-product witness.
+* BINDING, per level: point A_l = (zeta_l, tau_l) checks the committed-
+  column finals against the stack (tau_l are l packing challenges drawn
+  post-finals: eq(tau)-combinations of finals must equal the packed-slot
+  evals); point B_l = (sigma_l, zeta_l, taup_l) checks the INPUT finals
+  against the level-(l-1) output slots.  B_1 lands on the main stack's
+  almag/alsg columns -- the weld that makes it impossible to accumulate
+  anything but the per-product-proven values.  For slots a point cannot
+  derive from finals the prover SUPPLIES the evals (transcript-absorbed
+  BEFORE the stacking challenge rho is drawn); lying there shifts the
+  claimed stacked eval and the multi-point PCS opening rejects
+  (Schwartz-Zippel over rho).  Sum-vs-carry slot disjointness exists
+  exactly so every derived slot is derived COMPLETELY -- a partially
+  derived slot would let a cheater compensate a bound column with an
+  unbound one in the same slot.
+* Everything lands in the EXISTING openings: the main stack goes from 2 to
+  4 points (adds B_1, A_5), the acc stack gets one 8-point opening
+  (A_1..A_4, B_2..B_5).  xev/xev2 now cover 114 slots so the level-5
+  columns are also bound at the original two points.
+
+Teeth (BINIUS-ACC 26/26, real golden vectors, 3776 products/118 groups +
+262144 products/8192 groups): every golden group sum reproduced bitwise at
+level 5 (P, N, and P-N==S) + packing decode check; level functors zero on
+honest rows / nonzero after a flip at ALL 5 levels; honest accept; GPU
+proof byte-identical to host (all 5 acc levels + both openings); acc=off
+regression on the group-ordered witness; flipped sum/internal-carry/
+level-3/level-5 witness bits each reject; THE WELD TOOTH -- a fully
+CONSISTENT adder tree built over tampered inputs (one almag bit flipped
+only in the tree's view, all five zerochecks pass, tampered level-5
+grafted into the main commitment so A_5 binds too) is rejected by the B_1
+restriction binding alone; 8 proof-object tampers incl. acc root,
+finals/rounds, supplied evals at B_1/A_3/B_5, acc PCS row, and stripping
+acc.on from the statement.
+
+MEASURED, 262144 real products = 8192 groups (hawkeye_acc_big.bin,
+regenerable -- see the test header; RTX 4090; GL side = the standalone
+p3hw gadget, R=2 Q=24, same rows):
+
+    BINIUS+ACC: committed 25.14 MB (17.08 products + 8.06 acc stack)
+                | commit 100 ms, lu 710 ms, sc 2052 ms, ACC 4991 ms,
+                open 33 ms -> prove 7.89 s | proof 3.78 MB | verify 262 ms
+    GL:         committed 792 MB | prove 45.4 s -- and the GL gadget proves
+                NO accumulation (native field addition in the composed GL
+                prover); the Binius side proves strictly MORE here
+    ratios:     committed data 31.5x | prove 5.8x (the equal-scope
+                per-product ratio stays 11.7x, suite 24)
+
+The 25.14 MB confirms the 21.8 projection (~26 MB total) that drove the
+carry-save-over-GL-hybrid decision.  ACC time breakdown (measured,
+dbg_acc_prof.cu): level-1 zerocheck 2.64 s (D=5, K=93), levels 2-5 ~0.26 s
+EACH at 65536..8192 rows -- the generic GPU round kernel is register-spill
+bound at these K (3K bf128 of local arrays; ~7x fewer field ops per second
+than the K=91 main zerocheck) -- plus commit2 ~0.1 s, supplied-eval
+XOR-selects ~0.3 s.  The split-K / round-0 packed-bit rewrite of the
+generic round kernel (21.6) is now THE lever: it attacks the main 2.05 s
+zerocheck, the 2.64 s level-1, and the levels-2..5 spill floor at once.
+Also landed: bf_eq_table thread clamp (full-team spawn on a 4 MB table
+measured 190 ms vs 10 ms clamped -- the bfsc_nthr lesson again) and a
+shared device workspace for the five level zerochecks.
+
+What accumulation does NOT yet cover (next increments): the signed
+reconciliation (cmag = |P-N| with sign, one more adder row per group), the
+acc-chain/max_exp/normalize transition gadget consuming these sums
+(section 21.6 item "the rest of hwl"), FRI-Binius opening, and ZK.  Full
+25-suite battery ALL GREEN at this HEAD (battery_s21_10.log).

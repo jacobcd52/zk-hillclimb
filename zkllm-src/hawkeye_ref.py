@@ -205,6 +205,49 @@ def dump_product_witness(path, layers):
     return n, allc
 
 
+def group_witness_rows(x_codes, w_codes, **kw):
+    """Like product_witness_rows but GROUP-CONTIGUOUS: rows reordered to
+    (group, kk) with kk INNERMOST, group enumerating (g, m, n) -- the order the
+    Binius accumulation gadget requires (the adder-tree pairing coordinate is
+    row-index bit 0).  Also returns the golden per-group sums:
+    P = sum of positive al, N = sum of |negative al|, S = P - N = sum(al)."""
+    G = kw.get('products_per_group', 32)
+    cols = product_witness_rows(x_codes, w_codes, **kw)
+    M, N = x_codes.shape[0], w_codes.shape[0]
+    nk = len(cols['a']) // (G * M * N)
+    out = {}
+    for k, v in cols.items():
+        out[k] = v.reshape(nk, G, M * N).transpose(0, 2, 1).reshape(-1).copy()
+    al = out['al'].reshape(-1, G)
+    P = np.where(al > 0, al, 0).sum(axis=1)
+    Nn = np.where(al < 0, -al, 0).sum(axis=1)
+    return out, P.astype(I64), Nn.astype(I64), al.sum(axis=1).astype(I64)
+
+
+def dump_acc_witness(path, layers):
+    """Group-ordered witness + golden group sums for the accumulation gadget.
+    Format: int64 n_rows; 10 int64 col arrays (a,b,eb,mag,sg,pr,sh,q,r,al) in
+    group-contiguous order; int64 magic 0x41434332 ('ACC2'); int64 n_groups;
+    then P, N, S int64 arrays of length n_groups."""
+    allc, P, Nn, S = None, [], [], []
+    for (x, w) in layers:
+        c, p, nn, s = group_witness_rows(x, w)
+        allc = c if allc is None else {k: np.concatenate([allc[k], c[k]]) for k in c}
+        P.append(p); Nn.append(nn); S.append(s)
+    P, Nn, S = np.concatenate(P), np.concatenate(Nn), np.concatenate(S)
+    n = len(allc['a'])
+    assert n == 32 * len(P)
+    # cross-check the reorder: per-group sums of al match P - N
+    assert (allc['al'].reshape(-1, 32).sum(axis=1) == S).all()
+    with open(path, 'wb') as f:
+        np.array([n], I64).tofile(f)
+        for k in 'a b eb mag sg pr sh q r al'.split():
+            allc[k].tofile(f)
+        np.array([0x41434332, len(P)], I64).tofile(f)
+        P.tofile(f); Nn.tofile(f); S.tofile(f)
+    return n, len(P)
+
+
 # ---------------- golden full-layer battery for the composed ZKP ----------------
 
 def layer_battery():
@@ -358,6 +401,22 @@ if __name__ == '__main__':
         n, cols = dump_product_witness(path, layers)
         mx = {k: int(v.max()) for k, v in cols.items()}
         print(f"wrote {n} product-witness rows to {path}; col maxima: {mx}")
+        assert nfail == 0, "REFUSING to bless vectors: Triton mismatch above"
+    if '--dumpacc' in sys.argv:
+        path = sys.argv[sys.argv.index('--dumpacc') + 1]
+        rng = np.random.default_rng(7)
+        layers = []
+        for (M, K, N) in [(4, 64, 8), (2, 40, 4), (3, 96, 4)]:
+            layers.append((rng.integers(0, 256, (M, K)).astype(np.uint8),
+                           rng.integers(0, 256, (N, K)).astype(np.uint8)))
+        x = np.full((1, 32), 0x08, np.uint8); x[0, 0] = 0x78
+        w = np.full((1, 32), 0x08, np.uint8); w[0, 0] = 0x78
+        layers.append((x, w))
+        x = np.tile(np.array([0x3F, 0xBF, 0x00, 0x40], np.uint8), (1, 8))
+        w = np.tile(np.array([0xBF, 0x3F, 0x40, 0x00], np.uint8), (1, 8))
+        layers.append((x, w))
+        n, ng = dump_acc_witness(path, layers)
+        print(f"wrote {n} group-ordered rows ({ng} groups) to {path}")
         assert nfail == 0, "REFUSING to bless vectors: Triton mismatch above"
     if '--dumplayers' in sys.argv:
         assert nfail == 0, "REFUSING to bless layers: Triton mismatch above"

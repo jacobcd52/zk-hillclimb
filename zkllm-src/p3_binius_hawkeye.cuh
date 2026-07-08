@@ -39,6 +39,7 @@
 #include <chrono>
 #include <vector>
 #include "p3_binius_logup.cuh"
+#include "p3_binius_acc.cuh"
 
 namespace bhw {
 
@@ -63,6 +64,8 @@ enum {
     LB = 97,                // 8
     LEB = 105,              // 5
     NCOLB = 110,
+    L5BASE = 110,           // 4   accumulation level-5 group sums (acc mode)
+    NCOLA = 114,            // slots covered by the xev/xev2 bindings
     LOGSTK = 7, NSTK = 128  // stacked slots
 };
 static const int NC = 401;  // batched constraint count
@@ -279,16 +282,17 @@ struct BhwProof {
     uint8_t root[32];
     bflu::BfLuProof lu;          // DM lookup (multiplicative logUp over towers)
     BfScProof sc;
-    bf128_t xev[NCOLB - NCON];   // a/b/eb column evals at zeta (bound by the opening)
-    bf128_t xev2[NCOLB];         // ALL column evals at the lookup point rfin_w
-    BfPcsProofM pcs;             // ONE multi-point opening: (zeta,rho) + (rfin_w,rho)
+    bf128_t xev[NCOLA - NCON];   // committed-only col evals at zeta (opening-bound)
+    bf128_t xev2[NCOLA];         // ALL column evals at the lookup point rfin_w
+    BfPcsProofM pcs;             // ONE multi-point main-stack opening
+    bacc::AccProof acc;          // accumulation gadget (section 21.10), if on
     size_t bytes() const {
         return 32 + lu.bytes() + sc.rounds.size() * 16 + sc.finals.size() * 16 +
-               sizeof(xev) + sizeof(xev2) + pcs.bytes();
+               sizeof(xev) + sizeof(xev2) + pcs.bytes() + acc.bytes();
     }
 };
 struct BhwStats { double commit_ms = 0, lu_ms = 0, sc_ms = 0, open_ms = 0,
-                  verify_ms = 0; size_t committed = 0; };
+                  verify_ms = 0, acc_ms = 0; size_t committed = 0; };
 
 static inline BfPcsParams bhw_params(int lN) {
     BfPcsParams p;
@@ -304,17 +308,34 @@ static inline void bhw_gammas(fs::Transcript& tr, std::vector<bf128_t>& g) {
     for (int c = 1; c < NC; c++) g[c] = bf128_mul(g[c - 1], gamma);
 }
 
+// acc_in (test/attack hook): alternate main-bit array the accumulation
+// sumchecks READ from (default: bits, the committed array).  An attacker
+// proving a consistent adder tree over inputs that differ from the committed
+// almag/alsg columns is exactly what the B_1 restriction binding must catch.
 static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
-                             BhwProof& pf, BhwStats& st, bool gpu = true) {
+                             BhwProof& pf, BhwStats& st, bool gpu = true,
+                             const bacc::Wit* aw = nullptr,
+                             const uint8_t* acc_in = nullptr) {
     size_t N = (size_t)1 << lN;
     pf.lN = lN;
+    pf.acc.on = aw ? 1 : 0;
     BfPcsParams p = bhw_params(lN);
     fs::Transcript tr("binius-hawkeye");
     tr.absorb("stmt-bhw", &lN, sizeof lN);
+    tr.absorb("stmt-acc", &pf.acc.on, sizeof pf.acc.on);
     BfPcsCommit C;
     bfpcs_commit(p, bits.data(), tr, C);
     st.commit_ms = C.commit_ms; st.committed = C.committed_bytes;
     memcpy(pf.root, C.root, 32);
+    // accumulation stack committed up front (levels 1..4; level 5 is in `bits`)
+    BfPcsCommit C2;
+    if (aw) {
+        double ta = bhw_now_ms();
+        bfpcs_commit(bacc::acc_params(lN), aw->bits.data(), tr, C2);
+        memcpy(pf.acc.root2, C2.root, 32);
+        st.committed += C2.committed_bytes;
+        st.acc_ms += bhw_now_ms() - ta;
+    }
     // DM lookup: the 38 tuple columns against the public decode-multiply table
     double t0 = bhw_now_ms();
     std::vector<bf128_t> rfin_w;
@@ -380,7 +401,7 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
     std::vector<bf128_t> eqz;
     bf_eq_table(zeta.data(), lN, eqz);
     #pragma omp parallel for schedule(static)
-    for (int j = NCON; j < NCOLB; j++) {
+    for (int j = NCON; j < NCOLA; j++) {
         bf128_t acc = bf128_zero();
         const uint8_t* col = bits.data() + (size_t)j * N;
         for (size_t x = 0; x < N; x++)
@@ -392,7 +413,7 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
     std::vector<bf128_t> eqw;
     bf_eq_table(rfin_w.data(), lN, eqw);
     #pragma omp parallel for schedule(static)
-    for (int j = 0; j < NCOLB; j++) {
+    for (int j = 0; j < NCOLA; j++) {
         bf128_t acc = bf128_zero();
         const uint8_t* col = bits.data() + (size_t)j * N;
         for (size_t x = 0; x < N; x++)
@@ -400,21 +421,141 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
         pf.xev2[j] = acc;
     }
     tr.absorb("bhw-xev2", pf.xev2, sizeof pf.xev2);
-    // one stacked MULTI-POINT opening at (zeta, rho) and (rfin_w, rho)
+    // ---- accumulation gadget (section 21.10): one zerocheck per tree level,
+    // then the binding challenges and the supplied slot evals ----
+    std::vector<bf128_t> az[5];
+    bf128_t asig[5];
+    std::vector<bf128_t> atau[5], ataup[5];
+    if (aw) {
+        double ta = bhw_now_ms();
+        const uint8_t* asrc = acc_in ? acc_in : bits.data();
+        // one shared device workspace for all five levels (level 1 is largest)
+        BfScDev ws; ws.a = nullptr;
+        uint8_t* d_sb = nullptr;
+        if (gpu) {
+            bfsc_dev_reserve(ws, (size_t)bacc::AccF<1>::K << (lN - 1));
+            cudaMalloc(&d_sb, (size_t)(bacc::AccF<1>::K - 1) << (lN - 1));
+        }
+        for (int l = 1; l <= bacc::ACCL; l++) {
+            std::vector<bf128_t> g2;
+            bacc::acc_gammas(tr, l, g2);
+            std::vector<uint8_t> sb;
+            bacc::acc_sc_bytes(lN, l, asrc, LALM, LALS, L5BASE,
+                               aw->bits.data(), sb);
+            BfScDev* w = gpu ? &ws : nullptr;
+            switch (l) {
+            case 1: bacc::acc_zc<1>(lN, sb, tr, pf.acc.sc[0], az[0], g2, gpu, w, d_sb); break;
+            case 2: bacc::acc_zc<2>(lN, sb, tr, pf.acc.sc[1], az[1], g2, gpu, w, d_sb); break;
+            case 3: bacc::acc_zc<3>(lN, sb, tr, pf.acc.sc[2], az[2], g2, gpu, w, d_sb); break;
+            case 4: bacc::acc_zc<4>(lN, sb, tr, pf.acc.sc[3], az[3], g2, gpu, w, d_sb); break;
+            case 5: bacc::acc_zc<5>(lN, sb, tr, pf.acc.sc[4], az[4], g2, gpu, w, d_sb); break;
+            }
+        }
+        if (gpu) { bfsc_dev_free(ws); cudaFree(d_sb); }
+        for (int l = 1; l <= bacc::ACCL; l++) {
+            asig[l - 1] = bf_chal128(tr);
+            ataup[l - 1].resize(l - 1);
+            for (auto& x : ataup[l - 1]) x = bf_chal128(tr);
+            atau[l - 1].resize(l);
+            for (auto& x : atau[l - 1]) x = bf_chal128(tr);
+        }
+        // supplied slot evals at every binding point
+        std::vector<bf128_t> rB1(lN), rA5(lN);
+        rB1[0] = asig[0];
+        for (int t = 0; t < lN - 1; t++) rB1[1 + t] = az[0][t];
+        for (int t = 0; t < lN - 5; t++) rA5[t] = az[4][t];
+        for (int t = 0; t < 5; t++) rA5[lN - 5 + t] = atau[4][t];
+        pf.acc.evB1.resize(NCOLA);
+        bacc::acc_stack_evals(bits.data(), NCOLA, lN, rB1.data(), pf.acc.evB1.data());
+        pf.acc.evA5.resize(NCOLA);
+        bacc::acc_stack_evals(bits.data(), NCOLA, lN, rA5.data(), pf.acc.evA5.data());
+        tr.absorb("bacc-evB1", pf.acc.evB1.data(), NCOLA * sizeof(bf128_t));
+        tr.absorb("bacc-evA5", pf.acc.evA5.data(), NCOLA * sizeof(bf128_t));
+        for (int l = 1; l <= 4; l++) {
+            std::vector<bf128_t> rA(lN);
+            for (int t = 0; t < lN - l; t++) rA[t] = az[l - 1][t];
+            for (int t = 0; t < l; t++) rA[lN - l + t] = atau[l - 1][t];
+            pf.acc.evA[l - 1].resize(bacc::NSTK2);
+            bacc::acc_stack_evals(aw->bits.data(), bacc::NSTK2, lN, rA.data(),
+                                  pf.acc.evA[l - 1].data());
+            tr.absorb("bacc-evA", pf.acc.evA[l - 1].data(),
+                      bacc::NSTK2 * sizeof(bf128_t));
+        }
+        for (int l = 2; l <= 5; l++) {
+            std::vector<bf128_t> rB(lN);
+            rB[0] = asig[l - 1];
+            for (int t = 0; t < lN - l; t++) rB[1 + t] = az[l - 1][t];
+            for (int t = 0; t < l - 1; t++) rB[lN - l + 1 + t] = ataup[l - 1][t];
+            pf.acc.evB[l - 2].resize(bacc::NSTK2);
+            bacc::acc_stack_evals(aw->bits.data(), bacc::NSTK2, lN, rB.data(),
+                                  pf.acc.evB[l - 2].data());
+            tr.absorb("bacc-evB", pf.acc.evB[l - 2].data(),
+                      bacc::NSTK2 * sizeof(bf128_t));
+        }
+        st.acc_ms += bhw_now_ms() - ta;
+    }
+    // one stacked MULTI-POINT opening per commitment
     std::vector<bf128_t> rho(LOGSTK), eqsel, R1(p.l), R2(p.l);
     for (auto& x : rho) x = bf_chal128(tr);
     bf_eq_table(rho.data(), LOGSTK, eqsel);
     bf128_t V1 = bf128_zero(), V2 = bf128_zero();
     for (int j = 0; j < NCON; j++)
         V1 = bf128_add(V1, bf128_mul(eqsel[j], pf.sc.finals[1 + j]));
-    for (int j = NCON; j < NCOLB; j++)
+    for (int j = NCON; j < NCOLA; j++)
         V1 = bf128_add(V1, bf128_mul(eqsel[j], pf.xev[j - NCON]));
-    for (int j = 0; j < NCOLB; j++)
+    for (int j = 0; j < NCOLA; j++)
         V2 = bf128_add(V2, bf128_mul(eqsel[j], pf.xev2[j]));
     for (int t = 0; t < lN; t++) { R1[t] = zeta[t]; R2[t] = rfin_w[t]; }
     for (int t = 0; t < LOGSTK; t++) R1[lN + t] = R2[lN + t] = rho[t];
     t0 = bhw_now_ms();
-    bfpcs_open_multi(C, {R1.data(), R2.data()}, {V1, V2}, tr, pf.pcs);
+    if (!aw) {
+        bfpcs_open_multi(C, {R1.data(), R2.data()}, {V1, V2}, tr, pf.pcs);
+    } else {
+        std::vector<bf128_t> RB1(p.l), RA5(p.l);
+        RB1[0] = asig[0];
+        for (int t = 0; t < lN - 1; t++) RB1[1 + t] = az[0][t];
+        for (int t = 0; t < lN - 5; t++) RA5[t] = az[4][t];
+        for (int t = 0; t < 5; t++) RA5[lN - 5 + t] = atau[4][t];
+        for (int t = 0; t < LOGSTK; t++) RB1[lN + t] = RA5[lN + t] = rho[t];
+        bf128_t VB1 = bf128_zero(), VA5 = bf128_zero();
+        for (int j = 0; j < NCOLA; j++) {
+            VB1 = bf128_add(VB1, bf128_mul(eqsel[j], pf.acc.evB1[j]));
+            VA5 = bf128_add(VA5, bf128_mul(eqsel[j], pf.acc.evA5[j]));
+        }
+        bfpcs_open_multi(C, {R1.data(), R2.data(), RB1.data(), RA5.data()},
+                         {V1, V2, VB1, VA5}, tr, pf.pcs);
+        // acc-stack opening: points [A_1, A_2, A_3, A_4, B_2, B_3, B_4, B_5]
+        BfPcsParams p2 = bacc::acc_params(lN);
+        std::vector<bf128_t> rho2(bacc::LOGSTK2), eqsel2;
+        for (auto& x : rho2) x = bf_chal128(tr);
+        bf_eq_table(rho2.data(), bacc::LOGSTK2, eqsel2);
+        std::vector<std::vector<bf128_t>> RR;
+        std::vector<bf128_t> VV;
+        for (int l = 1; l <= 4; l++) {
+            std::vector<bf128_t> R(p2.l);
+            for (int t = 0; t < lN - l; t++) R[t] = az[l - 1][t];
+            for (int t = 0; t < l; t++) R[lN - l + t] = atau[l - 1][t];
+            for (int t = 0; t < bacc::LOGSTK2; t++) R[lN + t] = rho2[t];
+            bf128_t V = bf128_zero();
+            for (int s = 0; s < bacc::NSTK2; s++)
+                V = bf128_add(V, bf128_mul(eqsel2[s], pf.acc.evA[l - 1][s]));
+            RR.push_back(std::move(R)); VV.push_back(V);
+        }
+        for (int l = 2; l <= 5; l++) {
+            std::vector<bf128_t> R(p2.l);
+            R[0] = asig[l - 1];
+            for (int t = 0; t < lN - l; t++) R[1 + t] = az[l - 1][t];
+            for (int t = 0; t < l - 1; t++) R[lN - l + 1 + t] = ataup[l - 1][t];
+            for (int t = 0; t < bacc::LOGSTK2; t++) R[lN + t] = rho2[t];
+            bf128_t V = bf128_zero();
+            for (int s = 0; s < bacc::NSTK2; s++)
+                V = bf128_add(V, bf128_mul(eqsel2[s], pf.acc.evB[l - 2][s]));
+            RR.push_back(std::move(R)); VV.push_back(V);
+        }
+        std::vector<const bf128_t*> rp;
+        for (auto& R : RR) rp.push_back(R.data());
+        bfpcs_open_multi(C2, rp, VV, tr, pf.acc.pcs2);
+    }
     st.open_ms = bhw_now_ms() - t0;
 }
 
@@ -424,7 +565,9 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
     BfPcsParams p = bhw_params(lN);
     fs::Transcript tr("binius-hawkeye");
     tr.absorb("stmt-bhw", &lN, sizeof lN);
+    tr.absorb("stmt-acc", &pf.acc.on, sizeof pf.acc.on);
     tr.absorb("bfpcs-root", pf.root, 32);
+    if (pf.acc.on) tr.absorb("bfpcs-root", pf.acc.root2, 32);
     // DM lookup chain; its leaf claim is bound against xev2 below
     std::vector<bf128_t> rfin_w, bk; bf128_t cw, alpha;
     if (!bflu::bflu_verify(tr, lN, 16, DMJ, bhw_dm_table_bits().data(), pf.lu,
@@ -452,20 +595,144 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
             exp = bf128_add(exp, bf128_mul(bk[k], pf.xev2[dmc[k]]));
         if (!bf128_eq(cw, exp)) return false;
     }
+    // ---- accumulation levels: replay + finals-vs-integrand, then bindings ----
+    std::vector<bf128_t> az[5];
+    bf128_t asig[5];
+    std::vector<bf128_t> atau[5], ataup[5];
+    if (pf.acc.on) {
+        if (lN < bacc::ACCL + 1) return false;
+        for (int l = 1; l <= bacc::ACCL; l++) {
+            std::vector<bf128_t> g2;
+            bacc::acc_gammas(tr, l, g2);
+            bool ok = false;
+            switch (l) {
+            case 1: ok = bacc::acc_zc_verify<1>(lN, pf.acc.sc[0], tr, az[0], g2); break;
+            case 2: ok = bacc::acc_zc_verify<2>(lN, pf.acc.sc[1], tr, az[1], g2); break;
+            case 3: ok = bacc::acc_zc_verify<3>(lN, pf.acc.sc[2], tr, az[2], g2); break;
+            case 4: ok = bacc::acc_zc_verify<4>(lN, pf.acc.sc[3], tr, az[3], g2); break;
+            case 5: ok = bacc::acc_zc_verify<5>(lN, pf.acc.sc[4], tr, az[4], g2); break;
+            }
+            if (!ok) return false;
+        }
+        if ((int)pf.acc.evB1.size() != NCOLA || (int)pf.acc.evA5.size() != NCOLA)
+            return false;
+        for (int i = 0; i < 4; i++)
+            if ((int)pf.acc.evA[i].size() != bacc::NSTK2 ||
+                (int)pf.acc.evB[i].size() != bacc::NSTK2) return false;
+        for (int l = 1; l <= bacc::ACCL; l++) {
+            asig[l - 1] = bf_chal128(tr);
+            ataup[l - 1].resize(l - 1);
+            for (auto& x : ataup[l - 1]) x = bf_chal128(tr);
+            atau[l - 1].resize(l);
+            for (auto& x : atau[l - 1]) x = bf_chal128(tr);
+        }
+        tr.absorb("bacc-evB1", pf.acc.evB1.data(), NCOLA * sizeof(bf128_t));
+        tr.absorb("bacc-evA5", pf.acc.evA5.data(), NCOLA * sizeof(bf128_t));
+        for (int l = 1; l <= 4; l++)
+            tr.absorb("bacc-evA", pf.acc.evA[l - 1].data(),
+                      bacc::NSTK2 * sizeof(bf128_t));
+        for (int l = 2; l <= 5; l++)
+            tr.absorb("bacc-evB", pf.acc.evB[l - 2].data(),
+                      bacc::NSTK2 * sizeof(bf128_t));
+    }
     std::vector<bf128_t> rho(LOGSTK), eqsel, R1(p.l), R2(p.l);
     for (auto& x : rho) x = bf_chal128(tr);
     bf_eq_table(rho.data(), LOGSTK, eqsel);
     bf128_t V1 = bf128_zero(), V2 = bf128_zero();
     for (int j = 0; j < NCON; j++)
         V1 = bf128_add(V1, bf128_mul(eqsel[j], pf.sc.finals[1 + j]));
-    for (int j = NCON; j < NCOLB; j++)
+    for (int j = NCON; j < NCOLA; j++)
         V1 = bf128_add(V1, bf128_mul(eqsel[j], pf.xev[j - NCON]));
-    for (int j = 0; j < NCOLB; j++)
+    for (int j = 0; j < NCOLA; j++)
         V2 = bf128_add(V2, bf128_mul(eqsel[j], pf.xev2[j]));
     for (int t = 0; t < lN; t++) { R1[t] = zeta[t]; R2[t] = rfin_w[t]; }
     for (int t = 0; t < LOGSTK; t++) R1[lN + t] = R2[lN + t] = rho[t];
-    bool ok = bfpcs_verify_multi(p, pf.root, {R1.data(), R2.data()}, {V1, V2},
-                                 tr, pf.pcs);
+    bool ok;
+    if (!pf.acc.on) {
+        ok = bfpcs_verify_multi(p, pf.root, {R1.data(), R2.data()}, {V1, V2},
+                                tr, pf.pcs);
+    } else {
+        // derived slot evals OVERRIDE the supplied ones wherever a binding
+        // point's slots are fully determined by sumcheck finals -- this is
+        // what forces the finals to be true column evals of the commitments
+        std::vector<bf128_t> RB1(p.l), RA5(p.l);
+        RB1[0] = asig[0];
+        for (int t = 0; t < lN - 1; t++) RB1[1 + t] = az[0][t];
+        for (int t = 0; t < lN - 5; t++) RA5[t] = az[4][t];
+        for (int t = 0; t < 5; t++) RA5[lN - 5 + t] = atau[4][t];
+        for (int t = 0; t < LOGSTK; t++) RB1[lN + t] = RA5[lN + t] = rho[t];
+        bf128_t derB1[NCOLA], derA5[NCOLA];
+        uint8_t hvB1[NCOLA] = {0}, hvA5[NCOLA] = {0};
+        {   // B_1: the level-1 input finals against the almag/alsg columns
+            const bf128_t* f1 = pf.acc.sc[0].finals.data();
+            for (int k = 0; k < 16; k++) {
+                int slot = (k < 15) ? LALM + k : LALS;
+                bf128_t fe = f1[1 + k], fo = f1[1 + 16 + k];
+                derB1[slot] = bf128_add(fe, bf128_mul(asig[0], bf128_add(fe, fo)));
+                hvB1[slot] = 1;
+            }
+        }
+        {   // A_5: the level-5 committed finals against main slots 110..113
+            std::vector<bf128_t> eqt;
+            bf_eq_table(atau[4].data(), 5, eqt);
+            bacc::acc_derive_A(5, L5BASE, pf.acc.sc[4].finals.data(),
+                               bacc::AccF<5>::NI, eqt.data(), derA5, hvA5);
+        }
+        bf128_t VB1 = bf128_zero(), VA5 = bf128_zero();
+        for (int j = 0; j < NCOLA; j++) {
+            VB1 = bf128_add(VB1, bf128_mul(eqsel[j], hvB1[j] ? derB1[j] : pf.acc.evB1[j]));
+            VA5 = bf128_add(VA5, bf128_mul(eqsel[j], hvA5[j] ? derA5[j] : pf.acc.evA5[j]));
+        }
+        ok = bfpcs_verify_multi(p, pf.root,
+                                {R1.data(), R2.data(), RB1.data(), RA5.data()},
+                                {V1, V2, VB1, VA5}, tr, pf.pcs);
+        if (!ok) return false;
+        BfPcsParams p2 = bacc::acc_params(lN);
+        std::vector<bf128_t> rho2(bacc::LOGSTK2), eqsel2;
+        for (auto& x : rho2) x = bf_chal128(tr);
+        bf_eq_table(rho2.data(), bacc::LOGSTK2, eqsel2);
+        std::vector<std::vector<bf128_t>> RR;
+        std::vector<bf128_t> VV;
+        for (int l = 1; l <= 4; l++) {       // A_l: all level-l slots derived
+            std::vector<bf128_t> R(p2.l);
+            for (int t = 0; t < lN - l; t++) R[t] = az[l - 1][t];
+            for (int t = 0; t < l; t++) R[lN - l + t] = atau[l - 1][t];
+            for (int t = 0; t < bacc::LOGSTK2; t++) R[lN + t] = rho2[t];
+            bf128_t der[bacc::NSTK2];
+            uint8_t hv[bacc::NSTK2] = {0};
+            std::vector<bf128_t> eqt;
+            bf_eq_table(atau[l - 1].data(), l, eqt);
+            int ni = (l == 1) ? bacc::AccF<1>::NI : 4 * bacc::A_WIN[l];
+            bacc::acc_derive_A(l, L5BASE, pf.acc.sc[l - 1].finals.data(), ni,
+                               eqt.data(), der, hv);
+            bf128_t V = bf128_zero();
+            for (int s = 0; s < bacc::NSTK2; s++)
+                V = bf128_add(V, bf128_mul(eqsel2[s],
+                                           hv[s] ? der[s] : pf.acc.evA[l - 1][s]));
+            RR.push_back(std::move(R)); VV.push_back(V);
+        }
+        for (int l = 2; l <= 5; l++) {       // B_l: level-(l-1) out slots derived
+            std::vector<bf128_t> R(p2.l);
+            R[0] = asig[l - 1];
+            for (int t = 0; t < lN - l; t++) R[1 + t] = az[l - 1][t];
+            for (int t = 0; t < l - 1; t++) R[lN - l + 1 + t] = ataup[l - 1][t];
+            for (int t = 0; t < bacc::LOGSTK2; t++) R[lN + t] = rho2[t];
+            bf128_t der[bacc::NSTK2];
+            uint8_t hv[bacc::NSTK2] = {0};
+            std::vector<bf128_t> eqt;
+            bf_eq_table(ataup[l - 1].data(), l - 1, eqt);
+            bacc::acc_derive_B(l, L5BASE, pf.acc.sc[l - 1].finals.data(),
+                               asig[l - 1], eqt.data(), der, hv);
+            bf128_t V = bf128_zero();
+            for (int s = 0; s < bacc::NSTK2; s++)
+                V = bf128_add(V, bf128_mul(eqsel2[s],
+                                           hv[s] ? der[s] : pf.acc.evB[l - 2][s]));
+            RR.push_back(std::move(R)); VV.push_back(V);
+        }
+        std::vector<const bf128_t*> rp;
+        for (auto& R : RR) rp.push_back(R.data());
+        ok = bfpcs_verify_multi(p2, pf.acc.root2, rp, VV, tr, pf.acc.pcs2);
+    }
     if (st) st->verify_ms = bhw_now_ms() - t0;
     return ok;
 }

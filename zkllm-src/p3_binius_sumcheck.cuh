@@ -114,6 +114,16 @@ static inline void bfsc_dev_free(BfScDev& d) {
     cudaFree(d.a); cudaFree(d.b); cudaFree(d.part);
     d.a = d.b = d.part = nullptr;
 }
+// reserve once, retarget per use: one allocation big enough for `elems`
+// column elements serves several (K, l) shapes without malloc/free churn
+static inline void bfsc_dev_reserve(BfScDev& d, size_t elems) {
+    cudaMalloc(&d.a, elems * sizeof(bf128_t));
+    cudaMalloc(&d.b, elems * sizeof(bf128_t));
+    cudaMalloc(&d.part, (size_t)BFSC_MAXBLK * 8 * sizeof(bf128_t));
+}
+static inline void bfsc_dev_shape(BfScDev& d, int K, int l) {
+    d.K = K; d.l = l; d.n = (size_t)1 << l;
+}
 
 // eq(r, .) table built in place on device -- the bf_eq_table recurrence level
 // by level (same multiplication tree, so identical field values)

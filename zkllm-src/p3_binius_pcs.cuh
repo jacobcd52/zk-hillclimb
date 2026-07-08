@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <omp.h>
 #include "fs_transcript.hpp"
 #include "p3_binius_ntt.cuh"
 #include "p3_merkle.cuh"          // host-callable p3_sha256_compress64
@@ -38,7 +39,14 @@ static inline void bf_eq_table(const bf128_t* r, int k, std::vector<bf128_t>& ou
     out[0] = bf128_one();
     for (int t = 0; t < k; t++) {
         size_t half = (size_t)1 << t;
-        for (size_t x = 0; x < half; x++) {
+        // each x is independent (reads out[x], writes out[x] and out[x|half]),
+        // so the parallel result is bitwise-identical to the serial one; the
+        // thread count is clamped to the work (full-team spawn on a small
+        // level costs more than the rows -- same lesson as bfsc_nthr)
+        int nt = (int)(half / 32768); if (nt < 1) nt = 1;
+        if (nt > omp_get_max_threads()) nt = omp_get_max_threads();
+        #pragma omp parallel for schedule(static) num_threads(nt) if(nt > 1)
+        for (int64_t x = 0; x < (int64_t)half; x++) {
             bf128_t e = out[x];
             bf128_t hi = bf128_mul(e, r[t]);              // x_t = 1 branch
             out[x | half] = hi;
