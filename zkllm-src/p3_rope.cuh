@@ -547,7 +547,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const RopeProof& 
         std::vector<gl_t> rE; gl_t claim;
         if (!sc5_verify(pf.mE, p3zkc::vfull(ln), gl_mul(rho, pf.zbl[0].H),
                         tr, "rop-scE", rE, claim)) return fail("De sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE)) return fail("sc5 blind ip");
         std::vector<gl_t> v(13 + NDR);
         v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
         std::vector<gl_t> rlow(rE.begin(), rE.begin() + ln);

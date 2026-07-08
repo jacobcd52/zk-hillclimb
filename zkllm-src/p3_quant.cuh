@@ -457,7 +457,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const QntProof& p
         std::vector<gl_t> rE; gl_t claim;
         if (!sc5_verify(pf.mDe, p3zkc::vfull(dm.le), gl_mul(rho, pf.zbl[0].H),
                         tr, "qnt-scE", rE, claim)) return fail("De sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE)) return fail("sc5 blind ip");
         gl_t v[3 + NDE + 1]; v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
         v[1] = claimv(tr, vlg, rX, rE, pf.yDeX);
         v[2] = claimv(tr, vlg, rCODES, rE, pf.yDeC);
@@ -477,7 +477,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const QntProof& p
         std::vector<gl_t> rB; gl_t claim;
         if (!sc5_verify(pf.mDb, p3zkc::vfull(dm.lb), gl_mul(rho, pf.zbl[1].H),
                         tr, "qnt-scB", rB, claim)) return fail("Db sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[1], rB);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[1], rB)) return fail("sc5 blind ip");
         gl_t v[2 + NDB]; v[0] = p3bf::eq_point(rB, p3zkc::zpt(zB));
         v[1] = claimv(tr, vlg, rSCALES, rB, pf.yDbS);
         for (int c = 0; c < NDB; c++) v[2 + c] = claimv(tr, vlg, pf.rdb[c], rB, pf.yDb[c]);
@@ -497,7 +497,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const QntProof& p
         std::vector<gl_t> rS; gl_t claim;
         if (!sc5_verify(pf.mBind, p3zkc::vfull(dm.le), claim0, tr, "qnt-scS", rS, claim))
             return fail("bind sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[2], rS);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[2], rS)) return fail("sc5 blind ip");
         gl_t ySEL = claimv(tr, vlg, pf.rde[D_SEL], rS, pf.yBSEL);
         std::vector<gl_t> rSb(rS.begin() + ld, rS.begin() + dm.le);
         rSb.insert(rSb.end(), rS.begin() + dm.le, rS.end());

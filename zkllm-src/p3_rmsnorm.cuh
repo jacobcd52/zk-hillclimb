@@ -815,7 +815,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
         std::vector<gl_t> rE; gl_t claim;
         if (!sc5_verify(pf.mDe, p3zkc::vfull(dm.le), gl_mul(rho, pf.zbl[0].H),
                         tr, "rms-scE", rE, claim)) return fail("De sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE)) return fail("sc5 blind ip");
         gl_t v[3 + NDE + 5]; v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
         v[1] = claimv(tr, vlg, rX, rE, pf.yDeX);
         v[2] = claimv(tr, vlg, rY, rE, pf.yDeY);
@@ -840,7 +840,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
         std::vector<gl_t> rB; gl_t claim;
         if (!sc5_verify(pf.mDb, p3zkc::vfull(dm.lb), gl_mul(rho, pf.zbl[1].H),
                         tr, "rms-scB", rB, claim)) return fail("Db sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[1], rB);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[1], rB)) return fail("sc5 blind ip");
         gl_t v[1 + NDB]; v[0] = p3bf::eq_point(rB, p3zkc::zpt(zB));
         for (int c = 0; c < NDB; c++) v[1 + c] = claimv(tr, vlg, pf.rdb[c], rB, pf.yDb[c]);
         gl_t end = gl_add(F_db(v, lamBv, (gl_t)a.EMIN, (gl_t)(284 + ld)),
@@ -858,7 +858,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
         std::vector<gl_t> rW; gl_t claim;
         if (!sc5_verify(pf.mDw, p3zkc::vfull(dm.ld), gl_mul(rho, pf.zbl[2].H),
                         tr, "rms-scW", rW, claim)) return fail("Dw sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[2], rW);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[2], rW)) return fail("sc5 blind ip");
         gl_t v[2 + NDW]; v[0] = p3bf::eq_point(rW, p3zkc::zpt(zW));
         v[1] = claimv(tr, vlg, rG, rW, pf.yDwG);
         for (int c = 0; c < NDW; c++) v[2 + c] = claimv(tr, vlg, pf.rdw[c], rW, pf.yDw[c]);
@@ -880,7 +880,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const Art& a,
         std::vector<gl_t> rS; gl_t claim;
         if (!sc5_verify(pf.mBind, p3zkc::vfull(dm.le), claim0, tr, "rms-scS", rS, claim))
             return fail("bind sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[3], rS);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[3], rS)) return fail("sc5 blind ip");
         gl_t yXZ = claimv(tr, vlg, pf.rde[D_XZ], rS, pf.yBXZ);
         gl_t yQ = claimv(tr, vlg, pf.rde[D_Q], rS, pf.yBQ);
         gl_t ySEL = claimv(tr, vlg, pf.rde[D_SEL], rS, pf.yBSEL);

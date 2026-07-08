@@ -1287,6 +1287,18 @@ static inline size_t proof_size(const TfProof& pf) {
     for (auto& g : pf.lug) s += p3lu::sz_group(g);
     s += pf.seam.size() * 8;
     for (auto& b : pf.batches) s += p3bo::sz_batch(b);
+    if (getenv("P3_SZDBG")) {
+        size_t smm = 0, slug = 0, sbat = 0;
+        for (auto& m : pf.mm) smm += p3hwl::proof_size(m);
+        for (auto& g : pf.lug) slug += p3lu::sz_group(g);
+        for (auto& b : pf.batches) sbat += p3bo::sz_batch(b);
+        fprintf(stderr, "# SZDBG total=%.2fMB mm=%.2f lug=%.2f batch=%.2f rest=%.2f\n",
+                s / 1048576.0, smm / 1048576.0, slug / 1048576.0, sbat / 1048576.0,
+                (s - smm - slug - sbat) / 1048576.0);
+        for (size_t i = 0; i < pf.batches.size(); i++)
+            fprintf(stderr, "# SZDBG batch[%zu] v=%u %.2fMB\n", i, pf.batches[i].v,
+                    p3bo::sz_batch(pf.batches[i]) / 1048576.0);
+    }
     return s;
 }
 

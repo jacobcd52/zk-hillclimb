@@ -1326,3 +1326,56 @@ Post-lever d=1024 zk profile (260.8 s): mm=108.6 lug=100.3 batch=47.0
 (q0=31.8 of which enc=27.6 -- now NTT-bound: ~100-130 ms per 2^28 re-encode
 x ~170 distinct columns), sc5z/blind=35.5 commit_salt=30.2 lug/hcommit=36.9
 lug/scA=31.4 lug/claims=22.6 mask_gen=16.2.
+
+### 20.3 Lever: STRUCTURED Libra blinds (sum-of-univariates) [VERIFIED]
+
+The Libra blind of a big quartic zero-check was four FULL-DOMAIN committed
+columns (B1 + E*B2 + E^2*B3 + E^3*B4): at d=1024 that is 24 separate-layout
+2^26 columns + 8 merged ones -- 35.4 s of salted commits (sc5z/blind), plus
+~32 of the 95 columns of the giant v=26 batch class (their q0 re-encodes,
+G/ys uses and 512 MB regens).  Replaced for big chains by the LIBRA
+sum-of-univariates mask (Xie et al.):
+
+    g(x) = sum_j g_j(x_j),  g_j uniform univariate degree 4
+
+* ONE small commitment: w[5j+k] = c_{j,k} (5*vfull values) + >=64 fresh
+  uniform SLACK slots, padded to 2^u (u = ceil log2(5v+64), >= 8), committed
+  via commit_col_nc (mask-augmented + salted).  bl.nb = 6 tags the layout
+  (public rule: vfull >= G.sblind_min = 22, like the merged/separate tag).
+* H = 2^(v-1) * sum_j (g_j(0)+g_j(1))  -- closed form, no O(2^v) pass.
+* Chain messages get  += rho * B_rd(t),
+      B_rd(t) = 2^(v-1-rd) (pref + g_rd(t)) + 2^(v-2-rd) suf[rd+1]
+  (pref = sum_{i<rd} g_i(a_i), suf = suffix sums) via a new per-round hook
+  (p3sg::ScFix) in sc5_prove / sc5_prove_srcs / sc_prove_gpu -- the GPU chain
+  no longer carries 4 extra 512 MB columns.  Telescoping: B_rd(a) =
+  B_{rd+1}(0) + B_{rd+1}(1), start = claim + rho*H, end = F + rho*g(r).
+* Terminal ystar = g(r) is absorbed and BOUND to the commitment by a tiny
+  inner-product sumcheck  sum_x W_aug(x) Phi(x) = ystar  (Phi = [phi|0],
+  phi[5j+k] = r_j^k, public from r) whose terminal W~(rip) rides the shared
+  hiding ledger; verifier checks the chain and claim == yw * Phi~(rip)
+  (sc5vz_claims now returns bool; all 20 gadget-verifier call sites check).
+* ZK budget: the chain reveals <= 4 fresh functionals of g per round + H +
+  ystar (Libra's counting); the IP messages reveal <= 3*(u+e) more, covered
+  by the >=64 slack slots + the mask slice; w's opening itself is hiding by
+  the standard mask-slice + salt mechanisms.  VALIDATED EMPIRICALLY: the
+  entire battery ALSO passes with P3_SBLIND_MIN=6 forcing structured blinds
+  into EVERY zk chain at the test dims -- incl. HAWKEYE-ZK-HIDING 19/19
+  (12000-draw uniformity + F2 weight-recovery attack), FULL-LAYER 16/16,
+  FULL-MODEL 11/11, all soundness teeth.
+
+Results (verify_ok=1):
+
+    d=1024 zk: prove 260.8 -> 213.5 s (1.22x)   mm 108.6 -> 69.2
+               sc5z/blind 35.4 -> 1.5   sc5z/chain 8.0 -> 4.8
+               bo/q0 31.8 -> 23.9 (enc 27.6 -> 19.9; v=26 class nc 95 -> 63)
+    d=256  zk: prove 27.0 -> 23.7 s
+    proof_mb 134.4 -> 140.3 (d=1024) / 115.2 -> 121.6 (d=256): the delta is
+    pruned-subset-stream POSITION variance in the giant small-column classes
+    (tf-bo2 at d=256: identical nc=9239/k=15220/T=997, +6.2 MB from ~21 more
+    stream nodes per column at the new transcript's query positions), not
+    structural growth -- the big classes SHRANK (v=24: 0.94 -> 0.75 MB).
+    Batteries: ALL 17 green normally AND with P3_SBLIND_MIN=6 (forced).
+
+Session cumulative: 344.3 -> 213.5 = 1.61x (486.6 baseline -> 213.5 = 2.28x).
+Post-lever profile (213.5 s): lug=100.3 (hcommit 37.2 + scA 31.6 + claims
+22.2 + Am 7.9)  mm=69.2  batch=39.3 (q0 23.9)  commit_salt=30.1  mask_gen=15.8.

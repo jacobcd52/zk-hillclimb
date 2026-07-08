@@ -365,7 +365,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const SwgProof& p
         std::vector<gl_t> rE; gl_t claim;
         if (!sc5_verify(pf.mE, p3zkc::vfull(ln), gl_mul(rho, pf.zbl[0].H),
                         tr, "swg-scE", rE, claim)) return fail("De sumcheck");
-        p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE);
+        if (!p3hwl::sc5vz_claims(tr, vlg, pf.zbl[0], rE)) return fail("sc5 blind ip");
         gl_t v[3 + NDS]; v[0] = p3bf::eq_point(rE, p3zkc::zpt(zE));
         v[1] = claimv(tr, vlg, rUP, rE, pf.yUP);
         v[2] = claimv(tr, vlg, rM, rE, pf.yM);

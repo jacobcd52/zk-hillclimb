@@ -83,6 +83,9 @@ struct Ctx {
     uint32_t Q = 24;            // query budget the e_of policy is sized for
     uint64_t seed = 1;          // master randomness (masks, blinds, salts)
     uint64_t ctr = 0;           // per-draw counter (fresh randomness per commit)
+    uint32_t sblind_min = 22;   // structured Libra blinds for chains with
+                                // vfull >= this (a public protocol constant;
+                                // tests lower it to exercise the path)
 };
 static Ctx G;
 
@@ -454,6 +457,13 @@ struct Blind {
     gl_t H = 0;
     gl_t yB[4] = {};
     uint32_t nb = 0;
+    // STRUCTURED layout (nb == 6, design doc section 20.3): the blind is
+    // g(x) = sum_j g_j(x_j) with g_j uniform univariate degree 4, committed
+    // as ONE small coefficient column (root rt[0]).  yB[0] = ystar = g(r);
+    // ip/yw = the inner-product sumcheck binding ystar to the commitment
+    // (terminal MLE claim yw rides the shared ledger).
+    std::vector<std::array<gl_t, 3>> ip;
+    gl_t yw = 0;
 };
 // blind terminal term rho*(yB1 + w*yB2 + ... ) with w = the terminal weight value
 static inline gl_t blind_term(const Blind& bl, gl_t rho, gl_t w) {

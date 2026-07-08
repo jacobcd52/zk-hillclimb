@@ -581,7 +581,8 @@ static inline gl_t quartic_eval(const Msg5& m, gl_t t) {
 // generic quartic sumcheck of  sum_b F(cols(b))  (deg(F) <= 4 per variable pair)
 typedef std::function<gl_t(const gl_t*)> CFn;
 static inline std::vector<gl_t> sc5_prove(fs::Transcript& tr, const char* tag,
-        std::vector<std::vector<gl_t>> cols, const CFn& F, std::vector<Msg5>& msgs) {
+        std::vector<std::vector<gl_t>> cols, const CFn& F, std::vector<Msg5>& msgs,
+        const p3sg::ScFix* fx = nullptr) {
     uint32_t v = ilog2(cols[0].size());
     size_t nc = cols.size();
     std::vector<gl_t> r(v);
@@ -607,9 +608,11 @@ static inline std::vector<gl_t> sc5_prove(fs::Transcript& tr, const char* tag,
         }
         for (int p = 0; p < P; p++)
             for (int t = 0; t < 5; t++) s[t] = gl_add(s[t], part[p][t]);
+        if (fx && fx->fix) fx->fix(rd, s, 5);
         Msg5 m{s[0], s[1], s[2], s[3], s[4]};
         msgs.push_back(m); tr.absorb(tag, &m, sizeof m);
         gl_t a = chal(tr); r[rd] = a;
+        if (fx && fx->bound) fx->bound(rd, a);
         for (auto& c : cols) bind_lsb(c, a);
     }
     return r;
@@ -627,7 +630,8 @@ struct ColSrc {
     const std::vector<gl_t>& get() const { return bor ? *bor : own; }
 };
 static inline std::vector<gl_t> sc5_prove_srcs(fs::Transcript& tr, const char* tag,
-        std::vector<ColSrc> cols, const CFn& F, std::vector<Msg5>& msgs) {
+        std::vector<ColSrc> cols, const CFn& F, std::vector<Msg5>& msgs,
+        const p3sg::ScFix* fx = nullptr) {
     uint32_t v = ilog2(cols[0].get().size());
     size_t nc = cols.size();
     std::vector<gl_t> r(v);
@@ -653,9 +657,11 @@ static inline std::vector<gl_t> sc5_prove_srcs(fs::Transcript& tr, const char* t
         }
         for (int p = 0; p < P; p++)
             for (int t = 0; t < 5; t++) s[t] = gl_add(s[t], part[p][t]);
+        if (fx && fx->fix) fx->fix(rd, s, 5);
         Msg5 m{s[0], s[1], s[2], s[3], s[4]};
         msgs.push_back(m); tr.absorb(tag, &m, sizeof m);
         gl_t a = chal(tr); r[rd] = a;
+        if (fx && fx->bound) fx->bound(rd, a);
         for (auto& c : cols) {
             const gl_t* src = c.get().data();
             std::vector<gl_t> nf(half);
@@ -943,13 +949,82 @@ static inline std::vector<gl_t> sc5_run(fs::Transcript& tr, const char* tag,
 static inline bool mblind_merged(uint32_t vreal) {
     return p3zkc::vfull(vreal) + 2 <= 26;
 }
+// STRUCTURED Libra blinds (design doc section 20.3): for big chains the blind
+// is g(x) = sum_j g_j(x_j), g_j uniform univariate degree 4 -- 5*v committed
+// coefficients (+ slack entropy) in ONE small column instead of four full-
+// domain columns.  Public layout rule (a function of the chain's variable
+// count, like the merged/separate split).
+static inline bool mblind_structured(uint32_t vreal) {
+    static int env = -1;      // P3_SBLIND_MIN: test override of the threshold
+    if (env == -1) { const char* e = getenv("P3_SBLIND_MIN"); env = e ? atoi(e) : -2; }
+    uint32_t thr = env >= 0 ? (uint32_t)env : p3zkc::G.sblind_min;
+    return p3zkc::vfull(vreal) >= thr;
+}
 struct MBlind { std::vector<std::vector<gl_t>> Bv; p3lu::Col MB;
                 p3fri::Hash rts[4]; uint64_t sseeds[4] = {0, 0, 0, 0};
-                uint64_t bseed[4]; uint32_t vreal = 0; bool merged = true; };
+                uint64_t bseed[4]; uint32_t vreal = 0; bool merged = true;
+                // structured layout state
+                bool structured = false;
+                uint32_t v = 0;                        // chain rounds = vfull
+                std::vector<std::array<gl_t, 5>> sc;   // g_j coefficients
+                std::vector<gl_t> suf;                 // suf[j]=sum_{i>=j} g_i(0)+g_i(1)
+                p3lu::Col W;                           // committed coeff column
+                gl_t rho = 0, pref = 0; };             // running prefix g_i(a_i)
+// g_j evaluated at a point (Horner)
+static inline gl_t sb_geval(const MBlind& mb, uint32_t j, gl_t t) {
+    const std::array<gl_t, 5>& c = mb.sc[j];
+    return gl_add(c[0], gl_mul(t, gl_add(c[1], gl_mul(t, gl_add(c[2],
+                   gl_mul(t, gl_add(c[3], gl_mul(t, c[4]))))))));
+}
+// per-round message fixup: msg_rd(t) += rho * B_rd(t) with
+// B_rd(t) = 2^(v-1-rd) * (pref + g_rd(t)) + 2^(v-2-rd) * suf[rd+1]
+static inline p3sg::ScFix sb_fix(MBlind& mb) {
+    p3sg::ScFix fx;
+    MBlind* m = &mb;
+    fx.fix = [m](uint32_t rd, gl_t* s, int nt) {
+        gl_t f1 = gl_pow(2ULL, m->v - 1 - rd);
+        gl_t f2s = (rd + 1 < m->v)
+                 ? gl_mul(gl_pow(2ULL, m->v - 2 - rd), m->suf[rd + 1]) : 0;
+        for (int t = 0; t < nt; t++) {
+            gl_t B = gl_add(gl_mul(f1, gl_add(m->pref, sb_geval(*m, rd, (gl_t)t))), f2s);
+            s[t] = gl_add(s[t], gl_mul(m->rho, B));
+        }
+    };
+    fx.bound = [m](uint32_t rd, gl_t a) {
+        m->pref = gl_add(m->pref, sb_geval(*m, rd, a));
+    };
+    return fx;
+}
 static inline MBlind mblind_commit(fs::Transcript& tr, uint32_t vreal, uint32_t R,
                                    p3zkc::Blind& bl) {
     MBlind mb; mb.Bv.resize(4); mb.vreal = vreal;
     mb.merged = mblind_merged(vreal);
+    mb.structured = mblind_structured(vreal);
+    if (mb.structured) {
+        const uint32_t v = p3zkc::vfull(vreal);
+        mb.v = v;
+        mb.sc.assign(v, {0, 0, 0, 0, 0});
+        // coefficient column: real slots [5j+k] = c_{j,k}, remaining slots up
+        // to 2^u fresh uniform SLACK entropy (covers the IP-sumcheck reveals)
+        uint32_t u = 8; while ((1u << u) < 5 * v + 64) u++;
+        std::vector<gl_t> w((size_t)1 << u, 0);
+        if (p3zkc::G.blind_on) {
+            uint64_t s = p3zkc::next_seed();
+            for (uint32_t j = 0; j < v; j++)
+                for (int k = 0; k < 5; k++) mb.sc[j][k] = p3zkc::zprng(s);
+            for (uint32_t j = 0; j < v; j++)
+                for (int k = 0; k < 5; k++) w[(size_t)5 * j + k] = mb.sc[j][k];
+            for (size_t i = (size_t)5 * v; i < w.size(); i++) w[i] = p3zkc::zprng(s);
+        }
+        mb.suf.assign(v + 1, 0);
+        for (int j = (int)v - 1; j >= 0; j--)
+            mb.suf[j] = gl_add(mb.suf[j + 1],
+                               gl_add(sb_geval(mb, j, 0ULL), sb_geval(mb, j, 1ULL)));
+        mb.W = p3lu::commit_col_nc(std::move(w), R);
+        bl.rt[0] = mb.W.root; bl.nb = 6;
+        tr.absorb("sc5-bl", mb.W.root.data(), 32);
+        return mb;
+    }
     for (int j = 0; j < 4; j++) {
         mb.bseed[j] = p3zkc::G.blind_on ? p3zkc::next_seed() : 0;
         mb.Bv[j] = p3zkc::blind_col_aug(vreal, mb.bseed[j]);
@@ -981,6 +1056,52 @@ static inline void mblind_claims(fs::Transcript& tr, MBlind&& mb,
                                  const std::vector<gl_t>& r, p3zkc::Blind& bl,
                                  p3bo::PLedger& lg, std::deque<p3lu::Col>& keep,
                                  size_t N) {
+    if (mb.structured) {
+        // terminal blind eval ystar = g(r) = the fixup's running prefix,
+        // bound to the committed coefficient column by a tiny inner-product
+        // sumcheck  sum_x W_aug(x)*Phi(x) = ystar,  Phi = [phi | 0] with
+        // phi[5j+k] = r_j^k (public, both sides derive it from r).
+        gl_t ystar = mb.pref;
+        bl.yB[0] = ystar;
+        tr.absorb("sc5-yB", &ystar, 8);
+        std::vector<gl_t> Wb = mb.W.v;              // augmented column copy
+        std::vector<gl_t> Pb(Wb.size(), 0);
+        for (uint32_t j = 0; j < mb.v; j++) {
+            gl_t p = 1ULL;
+            for (int k = 0; k < 5; k++) { Pb[(size_t)5 * j + k] = p; p = gl_mul(p, r[j]); }
+        }
+        const uint32_t uf = ilog2(Wb.size());
+        std::vector<gl_t> rip; rip.reserve(uf);
+        bl.ip.clear();
+        for (uint32_t rd = 0; rd < uf; rd++) {
+            size_t half = Wb.size() / 2;
+            gl_t s[3] = {0, 0, 0};
+            for (size_t i = 0; i < half; i++) {
+                gl_t w0 = Wb[2*i], dw = gl_sub(Wb[2*i+1], w0);
+                gl_t p0 = Pb[2*i], dp = gl_sub(Pb[2*i+1], p0);
+                s[0] = gl_add(s[0], gl_mul(w0, p0));
+                gl_t w1 = gl_add(w0, dw), p1 = gl_add(p0, dp);
+                s[1] = gl_add(s[1], gl_mul(w1, p1));
+                gl_t w2 = gl_add(w1, dw), p2 = gl_add(p1, dp);
+                s[2] = gl_add(s[2], gl_mul(w2, p2));
+            }
+            std::array<gl_t, 3> m{s[0], s[1], s[2]};
+            bl.ip.push_back(m); tr.absorb("sc5-ip", m.data(), 24);
+            gl_t a = chal(tr); rip.push_back(a);
+            for (size_t i = 0; i < half; i++) {
+                Wb[i] = gl_add(Wb[2*i], gl_mul(a, gl_sub(Wb[2*i+1], Wb[2*i])));
+                Pb[i] = gl_add(Pb[2*i], gl_mul(a, gl_sub(Pb[2*i+1], Pb[2*i])));
+            }
+            Wb.resize(half); Pb.resize(half);
+        }
+        gl_t yw = Wb[0];
+        bl.yw = yw;
+        tr.absorb("sc5-yw", &yw, 8);
+        uint64_t ss = mb.W.sseed;
+        keep.push_back(std::move(mb.W));
+        lg.add(&keep.back().v, bl.rt[0], rip, yw, ss);
+        return;
+    }
     uint32_t vr = mb.vreal;
     if (!mb.merged) {                          // per-blind layout (huge domains)
         for (int j = 0; j < 4; j++) {
@@ -1040,7 +1161,9 @@ static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32
         mb = mblind_commit(tr, vreal, R, bl);
     }
     gl_t H = 0;
-    {
+    if (mb.structured) {
+        H = gl_mul(gl_pow(2ULL, mb.v - 1), mb.suf[0]);
+    } else {
         p3zp::T zt(p3zp::g.sc5_H);
         const std::vector<gl_t>& E = cols[0];
         const int P = N >= 65536 ? 128 : 1;
@@ -1087,20 +1210,29 @@ static inline std::vector<gl_t> sc5z(fs::Transcript& tr, const char* tag, uint32
     bl.H = H;
     tr.absorb("sc5-H", &H, 8);
     gl_t rho = chal(tr);
-    size_t i0 = cols.size();
-    for (int j = 0; j < 4; j++) cols.push_back(mb.Bv[j]);
-    CFn F2 = [&F, rho, i0](const gl_t* v) {
-        gl_t e = v[0];
-        gl_t b_ = gl_add(v[i0], gl_mul(e, gl_add(v[i0 + 1],
-                    gl_mul(e, gl_add(v[i0 + 2], gl_mul(e, v[i0 + 3]))))));
-        return gl_add(F(v), gl_mul(rho, b_));
-    };
+    mb.rho = rho;
     double zt_ch0 = p3zp::nowms();
-    std::vector<gl_t> r = sc5_prove(tr, tag, std::move(cols), F2, msgs);
+    std::vector<gl_t> r;
+    if (mb.structured) {
+        p3sg::ScFix fx = sb_fix(mb);
+        r = sc5_prove(tr, tag, std::move(cols), F, msgs, &fx);
+    } else {
+        size_t i0 = cols.size();
+        for (int j = 0; j < 4; j++) cols.push_back(mb.Bv[j]);
+        CFn F2 = [&F, rho, i0](const gl_t* v) {
+            gl_t e = v[0];
+            gl_t b_ = gl_add(v[i0], gl_mul(e, gl_add(v[i0 + 1],
+                        gl_mul(e, gl_add(v[i0 + 2], gl_mul(e, v[i0 + 3]))))));
+            return gl_add(F(v), gl_mul(rho, b_));
+        };
+        r = sc5_prove(tr, tag, std::move(cols), F2, msgs);
+    }
     if (p3zp::on()) { p3zp::g.sc5_chain.ms += p3zp::nowms() - zt_ch0; p3zp::g.sc5_chain.n++; }
     p3zp::T zt_yb(p3zp::g.sc5_yB);
-    std::vector<gl_t> eqr = p3bf::build_eq(r);
-    for (int j = 0; j < 4; j++) bl.yB[j] = p3bf::eval_h(mb.Bv[j], eqr);
+    if (!mb.structured) {
+        std::vector<gl_t> eqr = p3bf::build_eq(r);
+        for (int j = 0; j < 4; j++) bl.yB[j] = p3bf::eval_h(mb.Bv[j], eqr);
+    }
     mblind_claims(tr, std::move(mb), r, bl, lg, keep, N);
     return r;
 }
@@ -1118,16 +1250,51 @@ static inline gl_t sc5vz_pre(fs::Transcript& tr, const p3zkc::Blind& bl) {
 // gadget's terminal claimv calls -- the prover absorbs these blind evals and
 // registers their ledger claims inside sc5z right after the sumcheck, so the
 // transcript+ledger order must match here).
-static inline void sc5vz_claims(fs::Transcript& tr, p3bo::VLedger& vlg,
+static inline bool sc5vz_claims(fs::Transcript& tr, p3bo::VLedger& vlg,
                                 const p3zkc::Blind& bl, const std::vector<gl_t>& r) {
-    if (!p3zkc::G.on) return;
+    if (!p3zkc::G.on) return true;
+    if (bl.nb == 6) {                           // STRUCTURED layout (20.3)
+        // ystar = g(r) is bound to the committed coefficient column by the
+        // inner-product sumcheck: verify its chain, then check the terminal
+        // against yw * Phi~(rip) with Phi the PUBLIC weight vector derived
+        // from r; yw becomes an ordinary ledger claim.
+        gl_t ystar = bl.yB[0];
+        tr.absorb("sc5-yB", &ystar, 8);
+        const uint32_t v = (uint32_t)r.size();
+        uint32_t u = 8; while ((1u << u) < 5 * v + 64) u++;
+        const uint32_t uf = u + p3zkc::e_of(u);
+        std::vector<gl_t> Pb((size_t)1 << uf, 0);
+        for (uint32_t j = 0; j < v; j++) {
+            gl_t p = 1ULL;
+            for (int k = 0; k < 5; k++) { Pb[(size_t)5 * j + k] = p; p = gl_mul(p, r[j]); }
+        }
+        if (bl.ip.size() != uf) return false;
+        gl_t claim = ystar;
+        std::vector<gl_t> rip; rip.reserve(uf);
+        for (uint32_t rd = 0; rd < uf; rd++) {
+            const std::array<gl_t, 3>& m = bl.ip[rd];
+            if (gl_add(m[0], m[1]) != claim) return false;
+            tr.absorb("sc5-ip", m.data(), 24);
+            gl_t a = p3lu::chal(tr); rip.push_back(a);
+            claim = p3bf::quad_eval(m[0], m[1], m[2], a);
+            size_t half = Pb.size() / 2;
+            for (size_t i = 0; i < half; i++)
+                Pb[i] = gl_add(Pb[2*i], gl_mul(a, gl_sub(Pb[2*i+1], Pb[2*i])));
+            Pb.resize(half);
+        }
+        gl_t yw = bl.yw;
+        tr.absorb("sc5-yw", &yw, 8);
+        if (claim != gl_mul(yw, Pb[0])) return false;
+        vlg.add(bl.rt[0], rip, yw);
+        return true;
+    }
     if (bl.nb == 5) {                           // separate layout (huge domains)
         for (int j = 0; j < 4; j++) {
             gl_t yb = bl.yB[j];
             tr.absorb("sc5-yB", &yb, 8);
             vlg.add(bl.rt[j], r, yb);
         }
-        return;
+        return true;
     }
     for (int j = 0; j < 4; j++) {
         gl_t yb = bl.yB[j];
@@ -1139,11 +1306,13 @@ static inline void sc5vz_claims(fs::Transcript& tr, p3bo::VLedger& vlg,
     gl_t ystar = gl_add(y01, gl_mul(t1, gl_sub(y23, y01)));
     std::vector<gl_t> pt = r; pt.push_back(t0); pt.push_back(t1);
     vlg.add(bl.rt[0], pt, ystar);
+    return true;
 }
 // terminal add-on rho*(yB0 + w*yB1 + w^2*yB2 + w^3*yB3), w = the terminal weight
 // value (verifier-computed value of cols[0] at r) -- pure arithmetic, no absorb
 static inline gl_t sc5_blindterm(const p3zkc::Blind& bl, gl_t rho, gl_t w) {
     if (!p3zkc::G.on) return 0;
+    if (bl.nb == 6) return gl_mul(rho, bl.yB[0]);   // structured: rho * g(r)
     return gl_mul(rho, gl_add(bl.yB[0], gl_mul(w, gl_add(bl.yB[1],
                    gl_mul(w, gl_add(bl.yB[2], gl_mul(w, bl.yB[3])))))));
 }
@@ -1189,7 +1358,9 @@ static inline std::vector<gl_t> sc5z_srcs(fs::Transcript& tr, const char* tag, u
         mb = mblind_commit(tr, vreal, R, bl);
     }
     gl_t H = 0;
-    {
+    if (mb.structured) {
+        H = gl_mul(gl_pow(2ULL, mb.v - 1), mb.suf[0]);
+    } else {
         p3zp::T zt(p3zp::g.sc5_H);
         const std::vector<gl_t>& E = cols[0].get();
         const int P = N >= 65536 ? 128 : 1;
@@ -1225,20 +1396,29 @@ static inline std::vector<gl_t> sc5z_srcs(fs::Transcript& tr, const char* tag, u
     bl.H = H;
     tr.absorb("sc5-H", &H, 8);
     gl_t rho = chal(tr);
-    size_t i0 = cols.size();
-    for (int j = 0; j < 4; j++) cols.push_back(ColSrc(&mb.Bv[j]));   // borrowed blinds
-    CFn F2 = [&F, rho, i0](const gl_t* v) {
-        gl_t e = v[0];
-        gl_t b_ = gl_add(v[i0], gl_mul(e, gl_add(v[i0 + 1],
-                    gl_mul(e, gl_add(v[i0 + 2], gl_mul(e, v[i0 + 3]))))));
-        return gl_add(F(v), gl_mul(rho, b_));
-    };
+    mb.rho = rho;
     double zt_ch0 = p3zp::nowms();
-    std::vector<gl_t> r = sc5_prove_srcs(tr, tag, std::move(cols), F2, msgs);
+    std::vector<gl_t> r;
+    if (mb.structured) {
+        p3sg::ScFix fx = sb_fix(mb);
+        r = sc5_prove_srcs(tr, tag, std::move(cols), F, msgs, &fx);
+    } else {
+        size_t i0 = cols.size();
+        for (int j = 0; j < 4; j++) cols.push_back(ColSrc(&mb.Bv[j]));   // borrowed blinds
+        CFn F2 = [&F, rho, i0](const gl_t* v) {
+            gl_t e = v[0];
+            gl_t b_ = gl_add(v[i0], gl_mul(e, gl_add(v[i0 + 1],
+                        gl_mul(e, gl_add(v[i0 + 2], gl_mul(e, v[i0 + 3]))))));
+            return gl_add(F(v), gl_mul(rho, b_));
+        };
+        r = sc5_prove_srcs(tr, tag, std::move(cols), F2, msgs);
+    }
     if (p3zp::on()) { p3zp::g.sc5_chain.ms += p3zp::nowms() - zt_ch0; p3zp::g.sc5_chain.n++; }
     p3zp::T zt_yb(p3zp::g.sc5_yB);
-    std::vector<gl_t> eqr = p3bf::build_eq(r);
-    for (int j = 0; j < 4; j++) bl.yB[j] = p3bf::eval_h(mb.Bv[j], eqr);
+    if (!mb.structured) {
+        std::vector<gl_t> eqr = p3bf::build_eq(r);
+        for (int j = 0; j < 4; j++) bl.yB[j] = p3bf::eval_h(mb.Bv[j], eqr);
+    }
     mblind_claims(tr, std::move(mb), r, bl, lg, keep, N);
     if (N >= ((size_t)1 << 24)) p3bf::trim_heap();
     return r;
@@ -1279,7 +1459,9 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
         mb = mblind_commit(tr, vreal, R, bl);
     }
     gl_t H = 0;
-    {
+    if (mb.structured) {
+        H = gl_mul(gl_pow(2ULL, mb.v - 1), mb.suf[0]);
+    } else {
         p3zp::T zt(p3zp::g.sc5_H);
         const std::vector<gl_t>& E = cols[0].get();
         const int P = N >= 65536 ? 128 : 1;
@@ -1300,27 +1482,36 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
     bl.H = H;
     tr.absorb("sc5-H", &H, 8);
     gl_t rho = chal(tr);
+    mb.rho = rho;
     double zt_ch0 = p3zp::nowms();
     const uint32_t ncb = (uint32_t)cols.size();
-    std::vector<gl_t*> dc(ncb + 4);
+    const uint32_t nbl = mb.structured ? 0 : 4;
+    std::vector<gl_t*> dc(ncb + nbl);
     for (uint32_t k = 0; k < ncb; k++) {
         dc[k] = p3bf::dmalloc(N, "sc5zg:col");
         cudaMemcpy(dc[k], cols[k].get().data(), N * 8, cudaMemcpyHostToDevice);
         std::vector<gl_t>().swap(cols[k].own); cols[k].bor = nullptr;
     }
-    for (int j = 0; j < 4; j++) {
+    for (uint32_t j = 0; j < nbl; j++) {
         dc[ncb + j] = p3bf::dmalloc(N, "sc5zg:blind");
         cudaMemcpy(dc[ncb + j], mb.Bv[j].data(), N * 8, cudaMemcpyHostToDevice);
         std::vector<gl_t>().swap(mb.Bv[j]);      // merged copy lives in mb.MB
     }
-    std::vector<gl_t> par(2 + nlam);
-    par[0] = rho; par[1] = (gl_t)ncb;
-    for (uint32_t i = 0; i < nlam; i++) par[2 + i] = lam[i];
-    std::vector<gl_t> r = p3sg::sc_prove_gpu<FF5Zk<FF>, Msg5, 5, 40>(
-        tr, tag, dc, (uint32_t)N, par.data(), 2 + nlam, msgs);
+    std::vector<gl_t> r;
+    if (mb.structured) {
+        p3sg::ScFix fx = sb_fix(mb);
+        r = p3sg::sc_prove_gpu<FF, Msg5, 5, 40>(
+            tr, tag, dc, (uint32_t)N, lam, nlam, msgs, &fx);
+    } else {
+        std::vector<gl_t> par(2 + nlam);
+        par[0] = rho; par[1] = (gl_t)ncb;
+        for (uint32_t i = 0; i < nlam; i++) par[2 + i] = lam[i];
+        r = p3sg::sc_prove_gpu<FF5Zk<FF>, Msg5, 5, 40>(
+            tr, tag, dc, (uint32_t)N, par.data(), 2 + nlam, msgs);
+    }
     if (p3zp::on()) { p3zp::g.sc5_chain.ms += p3zp::nowms() - zt_ch0; p3zp::g.sc5_chain.n++; }
     p3zp::T zt_yb(p3zp::g.sc5_yB);
-    for (int j = 0; j < 4; j++)
+    for (uint32_t j = 0; j < nbl; j++)
         cudaMemcpy(&bl.yB[j], dc[ncb + j], 8, cudaMemcpyDeviceToHost);
     mblind_claims(tr, std::move(mb), r, bl, lg, keep, N);
     for (auto p : dc) cudaFreeAsync(p, 0);
@@ -1924,7 +2115,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         std::vector<gl_t> rC; gl_t claim;
         if (!sc5_verify(pf.mDp, p3zkc::vfull(d.lp), gl_mul(rho, pf.zbl[0].H),
                         tr, "hwl-scP", rC, claim)) return fail("Dp sumcheck");
-        sc5vz_claims(tr, vlg, pf.zbl[0], rC);
+        if (!sc5vz_claims(tr, vlg, pf.zbl[0], rC)) return fail("sc5 blind ip");
         gl_t v[2 + NDP]; v[0] = p3bf::eq_point(rC, p3zkc::zpt(zC));
         for (int c = 0; c < NDP; c++)
             v[1 + c] = claimv(tr, vlg, pf.rdp[c], rC, pf.yDp[c]);
@@ -1943,7 +2134,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         std::vector<gl_t> rG; gl_t claim;
         if (!sc5_verify(pf.mDg, p3zkc::vfull(d.lgi), gl_mul(rho, pf.zbl[1].H),
                         tr, "hwl-scG", rG, claim)) return fail("Dg sumcheck");
-        sc5vz_claims(tr, vlg, pf.zbl[1], rG);
+        if (!sc5vz_claims(tr, vlg, pf.zbl[1], rG)) return fail("sc5 blind ip");
         gl_t v[1 + NDG]; v[0] = p3bf::eq_point(rG, p3zkc::zpt(zG));
         for (int c = 0; c < NDG; c++)
             v[1 + c] = claimv(tr, vlg, pf.rdg[c], rG, pf.yDg[c]);
@@ -1960,7 +2151,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         std::vector<gl_t> rH; gl_t claim;
         if (!sc5_verify(pf.mCh, p3zkc::vfull(d.lgi), gl_mul(rho, pf.zbl[2].H),
                         tr, "hwl-scH", rH, claim)) return fail("chain sumcheck");
-        sc5vz_claims(tr, vlg, pf.zbl[2], rH);
+        if (!sc5vz_claims(tr, vlg, pf.zbl[2], rH)) return fail("sc5 blind ip");
         static const int CH_COLS[8] = {G_ASIG, G_BEXP, G_ASGN, G_TZ, G_S14, G_MAX, G_WD, G_TSGN};
         gl_t v[11];
         for (int j = 0; j < 8; j++)
@@ -1999,7 +2190,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         std::vector<gl_t> rS; gl_t claim;
         if (!sc5_verify(pf.mGS, p3zkc::vfull(d.lp), claim0, tr, "hwl-scS", rS, claim))
             return fail("gsum sumcheck");
-        sc5vz_claims(tr, vlg, pf.zbl[3], rS);
+        if (!sc5vz_claims(tr, vlg, pf.zbl[3], rS)) return fail("sc5 blind ip");
         gl_t yal = claimv(tr, vlg, pf.rdp[P_AL], rS, pf.yGSal);
         gl_t ysel = claimv(tr, vlg, pf.rdp[P_SEL], rS, pf.yGSsel);
         // weight terminal: the eq of (z2 || zex2 || 0..) against the group+ex
@@ -2023,7 +2214,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         std::vector<gl_t> rO; gl_t claim;
         if (!sc5_verify(pf.mDo, p3zkc::vfull(d.lo), gl_mul(rho, pf.zbl[4].H),
                         tr, "hwl-scO", rO, claim)) return fail("Do sumcheck");
-        sc5vz_claims(tr, vlg, pf.zbl[4], rO);
+        if (!sc5vz_claims(tr, vlg, pf.zbl[4], rO)) return fail("sc5 blind ip");
         gl_t v[1 + NDO + NVO]; v[0] = p3bf::eq_point(rO, p3zkc::zpt(zO));
         for (int c = 0; c < NDO; c++)
             v[1 + c] = claimv(tr, vlg, pf.rdo[c], rO, pf.yDo[c]);
@@ -2047,7 +2238,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         std::vector<gl_t> rB; gl_t claim;
         if (!sc5_verify(pf.mDb, p3zkc::vfull(d.lb), gl_mul(rho, pf.zbl[5].H),
                         tr, "hwl-scB", rB, claim)) return fail("Db sumcheck");
-        sc5vz_claims(tr, vlg, pf.zbl[5], rB);
+        if (!sc5vz_claims(tr, vlg, pf.zbl[5], rB)) return fail("sc5 blind ip");
         static const int SC[6] = {S_SS, S_SE, S_SEI, S_ZS, S_SMH, S_SML};
         gl_t v[8]; v[0] = p3bf::eq_point(rB, p3zkc::zpt(zB));
         for (int j = 0; j < 6; j++)
@@ -2064,7 +2255,7 @@ static inline bool verify(fs::Transcript& tr, const Tables& T, const LayerProof&
         std::vector<gl_t> rN; gl_t claim;
         if (!sc5_verify(pf.mDn, p3zkc::vfull(d.ln), gl_mul(rho, pf.zbl[6].H),
                         tr, "hwl-scN", rN, claim)) return fail("Dn sumcheck");
-        sc5vz_claims(tr, vlg, pf.zbl[6], rN);
+        if (!sc5vz_claims(tr, vlg, pf.zbl[6], rN)) return fail("sc5 blind ip");
         static const int SC[6] = {S_SS, S_SE, S_SEI, S_ZS, S_SMH, S_SML};
         gl_t v[8]; v[0] = p3bf::eq_point(rN, p3zkc::zpt(zN));
         for (int j = 0; j < 6; j++)

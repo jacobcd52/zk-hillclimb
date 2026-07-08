@@ -13,11 +13,20 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <vector>
 #include "p3_goldilocks.cuh"
 #include "fs_transcript.hpp"
 
 namespace p3sg {
+
+// optional per-round message fixup (structured Libra blinds): fix(rd, s, NT)
+// mutates the round sums BEFORE they are absorbed; bound(rd, a) sees each
+// drawn challenge (running-prefix state for later rounds' fixups).
+struct ScFix {
+    std::function<void(uint32_t, gl_t*, int)> fix;
+    std::function<void(uint32_t, gl_t)> bound;
+};
 
 static inline gl_t chal(fs::Transcript& tr) {
     uint8_t b[32]; tr.challenge_bytes(b);
@@ -79,7 +88,7 @@ __global__ void p3sg_msg_kernel(gl_t* const* cols, uint32_t nc, const gl_t* par,
 template <typename FF, typename MsgT, int NT, int MAXC>
 static inline std::vector<gl_t> sc_prove_gpu(fs::Transcript& tr, const char* tag,
         std::vector<gl_t*>& dcols, uint32_t N, const gl_t* par, uint32_t npar,
-        std::vector<MsgT>& msgs) {
+        std::vector<MsgT>& msgs, const ScFix* fx = nullptr) {
     static_assert(sizeof(MsgT) == (size_t)NT * sizeof(gl_t), "msg layout");
     uint32_t v = 0; while ((1u << v) < N) v++;
     const uint32_t nc = (uint32_t)dcols.size(), NB = 256;
@@ -102,9 +111,11 @@ static inline std::vector<gl_t> sc_prove_gpu(fs::Transcript& tr, const char* tag
             s[t] = 0;
             for (uint32_t b = 0; b < NB; b++) s[t] = gl_add(s[t], hout[(size_t)t * NB + b]);
         }
+        if (fx && fx->fix) fx->fix(rd, s, NT);
         memcpy(&m, s, sizeof m);
         msgs.push_back(m); tr.absorb(tag, &m, sizeof m);
         gl_t a = chal(tr); r.push_back(a);
+        if (fx && fx->bound) fx->bound(rd, a);
         for (uint32_t k = 0; k < nc; k++) cudaMallocAsync(&ncols[k], (size_t)half * 8, 0);
         cudaMemcpy(d_optrs, ncols.data(), (size_t)nc * sizeof(gl_t*), cudaMemcpyHostToDevice);
         p3sg_bindn_kernel<<<((size_t)nc * half + 255) / 256, 256>>>(d_ptrs, d_optrs, nc, half, a);
