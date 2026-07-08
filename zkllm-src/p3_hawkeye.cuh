@@ -2041,6 +2041,12 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
     }
     P.batch += now_ms() - tp;
     P.total += now_ms() - tall;
+    if (p3zp::on() && d.P >= (1u << 22))
+        fprintf(stderr, "# hwl prof P=2^%u: cwit=%.0f zcdp=%.0f zcdg=%.0f chain=%.0f "
+                "gsum=%.0f zcdo=%.0f zcds=%.0f slice=%.0f ybind=%.0f ludp=%.0f "
+                "ludg=%.0f ludo=%.0f total=%.0f ms\n",
+                d.lp, P.commit_wit, P.zc_dp, P.zc_dg, P.chain, P.gsum, P.zc_do,
+                P.zc_ds, P.slice, P.ybind, P.lu_dp, P.lu_dg, P.lu_do, P.total);
     p3bf::trim_heap();
     return pf;
 }

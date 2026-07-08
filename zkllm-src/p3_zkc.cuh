@@ -136,10 +136,18 @@ static inline std::vector<gl_t> fresh_mask(uint32_t v) {
     if (G.mask_on) { uint64_t s = next_seed(); for (auto& x : m) x = zprng(s); }
     return m;
 }
+// parallel zprng fill: chunks jump-ahead to their start state via the LCG
+// ladder (s_{i+k} = A_k s_i + C_k mod 2^64) -- BIT-IDENTICAL to the serial
+// chain.  Serial below 2^22 (OpenMP fork/join overhead dominated the fill for
+// the many small masks, section 19.3); the ~30 multi-hundred-MB masks of a
+// d=1024 proof take the parallel path.
+struct LcgLadder;                                 // fwd decl (defined below)
+static inline LcgLadder lcg_ladder();
+static inline void zprng_fill(uint64_t s, gl_t* out, size_t n);
 // fresh_mask written into a caller-provided (already zeroed) region -- same
 // seed draw + values, none of the mask-vector + augment-copy churn
 static inline void fresh_mask_into(gl_t* out, size_t n) {
-    if (G.mask_on) { uint64_t s = next_seed(); for (size_t i = 0; i < n; i++) out[i] = zprng(s); }
+    if (G.mask_on) { uint64_t s = next_seed(); zprng_fill(s, out, n); }
 }
 // [real | mask]: mask slices at the HIGH addresses (ex = high variables)
 static inline std::vector<gl_t> augment(const std::vector<gl_t>& vals, std::vector<gl_t> mask) {
@@ -372,8 +380,8 @@ static inline std::vector<gl_t> mk_linked(uint32_t vc, const std::vector<gl_t>& 
     size_t Nc = (size_t)1 << vc;
     std::vector<gl_t> m(Nc * ((1ull << ec) - 1), 0);
     for (size_t i = 0; i < Nc && i < cons1.size(); i++) m[i] = cons1[i];   // slice 1
-    if (G.mask_on) { uint64_t s = next_seed();
-        for (size_t i = Nc; i < m.size(); i++) m[i] = zprng(s); }          // slices 2..
+    if (G.mask_on) { uint64_t s = next_seed();                             // slices 2..
+        if (m.size() > Nc) zprng_fill(s, m.data() + Nc, m.size() - Nc); }
     return m;
 }
 
@@ -404,7 +412,7 @@ static inline std::vector<gl_t> blind_col_aug(uint32_t v, uint64_t s) {
     // region first, mask region continuing the same stream) -- identical
     // values to blind_col_seeded + augment without the extra alloc + copies
     std::vector<gl_t> a((size_t)1 << vfull(v), 0);
-    if (G.blind_on) { uint64_t ss = s; for (auto& x : a) x = zprng(ss); }
+    if (G.blind_on) zprng_fill(s, a.data(), a.size());
     return a;
 }
 // blind_col_aug written into a caller-provided buffer of n = 2^vfull(v) slots
@@ -414,7 +422,7 @@ static inline std::vector<gl_t> blind_col_aug(uint32_t v, uint64_t s) {
 static inline void blind_col_aug_into(uint32_t v, uint64_t s, gl_t* out, size_t n) {
     (void)v;
     if (!G.blind_on) { memset(out, 0, n * 8); return; }
-    for (size_t i = 0; i < n; i++) out[i] = zprng(s);
+    zprng_fill(s, out, n);
 }
 
 // ---- DEVICE-side zprng chain (LCG jump-ahead) ----
@@ -447,6 +455,29 @@ __global__ void p3zkc_lcgchain_kernel(gl_t* out, uint64_t s0, size_t n, LcgLadde
 static inline void blind_col_aug_dev(uint64_t s, gl_t* dout, size_t n) {
     if (!G.blind_on) { cudaMemsetAsync(dout, 0, n * 8, 0); return; }
     p3zkc_lcgchain_kernel<<<(uint32_t)((n + 255) / 256), 256>>>(dout, s, n, lcg_ladder());
+}
+
+// host jump-ahead: state after k more zprng steps from s
+static inline uint64_t lcg_jump(uint64_t s, uint64_t k, const LcgLadder& L) {
+    for (int b = 0; k; b++, k >>= 1)
+        if (k & 1) s = L.A[b] * s + L.C[b];
+    return s;
+}
+static inline void zprng_fill(uint64_t s, gl_t* out, size_t n) {
+    if (n < ((size_t)1 << 22)) {
+        for (size_t i = 0; i < n; i++) out[i] = zprng(s);
+        return;
+    }
+    static const LcgLadder L = lcg_ladder();
+    const int C = 32;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(C)
+#endif
+    for (int c = 0; c < C; c++) {
+        size_t lo = n * (size_t)c / C, hi = n * (size_t)(c + 1) / C;
+        uint64_t sc = lcg_jump(s, lo, L);
+        for (size_t i = lo; i < hi; i++) out[i] = zprng(sc);
+    }
 }
 
 // ---- Libra blind material for one sumcheck instance ----

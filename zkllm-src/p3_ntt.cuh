@@ -58,6 +58,50 @@ __global__ void p3_ntt_stage_batch_kernel(gl_t* a, const gl_t* W, uint32_t n,
     a[base + half] = gl_sub(u, v);
 }
 
+// FUSED pair of consecutive DIT stages (spans m/2 and m): each thread computes
+// the EXACT same mul/add sequence the two radix-2 stage launches would, on 4
+// elements -- bitwise-identical results, HALF the global-memory traffic.
+__global__ void p3_ntt_stage4_kernel(gl_t* a, const gl_t* W, uint32_t n, uint32_t m) {
+    uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t q = m >> 2;
+    if (tid >= (n >> 2)) return;
+    uint32_t blk = tid / q;
+    uint32_t i   = tid - blk * q;
+    uint32_t base = blk * m + i;
+    gl_t x0 = a[base], x1 = a[base + q], x2 = a[base + 2*q], x3 = a[base + 3*q];
+    gl_t w1 = W[(size_t)i * (n / (m >> 1))];
+    gl_t v1 = gl_mul(x1, w1), v3 = gl_mul(x3, w1);
+    gl_t t0 = gl_add(x0, v1), t1 = gl_sub(x0, v1);
+    gl_t t2 = gl_add(x2, v3), t3 = gl_sub(x2, v3);
+    gl_t u2 = gl_mul(t2, W[(size_t)i * (n / m)]);
+    gl_t u3 = gl_mul(t3, W[(size_t)(i + q) * (n / m)]);
+    a[base]         = gl_add(t0, u2);
+    a[base + 2*q]   = gl_sub(t0, u2);
+    a[base + q]     = gl_add(t1, u3);
+    a[base + 3*q]   = gl_sub(t1, u3);
+}
+__global__ void p3_ntt_stage4_batch_kernel(gl_t* a, const gl_t* W, uint32_t n,
+                                           uint32_t m, uint32_t B) {
+    uint32_t t = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t q = m >> 2, per = n >> 2;
+    if (t >= per * B) return;
+    uint32_t b = t / per, tid = t - b * per;
+    uint32_t blk = tid / q;
+    uint32_t i   = tid - blk * q;
+    size_t base = (size_t)b * n + blk * m + i;
+    gl_t x0 = a[base], x1 = a[base + q], x2 = a[base + 2*q], x3 = a[base + 3*q];
+    gl_t w1 = W[(size_t)i * (n / (m >> 1))];
+    gl_t v1 = gl_mul(x1, w1), v3 = gl_mul(x3, w1);
+    gl_t t0 = gl_add(x0, v1), t1 = gl_sub(x0, v1);
+    gl_t t2 = gl_add(x2, v3), t3 = gl_sub(x2, v3);
+    gl_t u2 = gl_mul(t2, W[(size_t)i * (n / m)]);
+    gl_t u3 = gl_mul(t3, W[(size_t)(i + q) * (n / m)]);
+    a[base]         = gl_add(t0, u2);
+    a[base + 2*q]   = gl_sub(t0, u2);
+    a[base + q]     = gl_add(t1, u3);
+    a[base + 3*q]   = gl_sub(t1, u3);
+}
+
 __global__ void p3_scale_kernel(gl_t* a, gl_t c, uint32_t n) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) a[i] = gl_mul(a[i], c);
@@ -96,20 +140,33 @@ struct P3Ntt {
     // out and in may differ; both length n on device. forward=true => evaluate.
     void run(const gl_t* d_in, gl_t* d_out, bool forward) const {
         uint32_t halfblocks = (n/2 + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
+        uint32_t qblocks    = (n/4 + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         uint32_t nblocks     = (n   + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         p3_bitrev_kernel<<<nblocks, P3_NTT_THREADS>>>(d_in, d_out, n, logn);
         const gl_t* W = forward ? d_Wf : d_Wi;
-        for (uint32_t m = 2; m <= n; m <<= 1)
+        // fused stage pairs (radix-4 traffic); odd logn takes one radix-2 first
+        uint32_t m = 2;
+        if (logn & 1) {
             p3_ntt_stage_kernel<<<halfblocks, P3_NTT_THREADS>>>(d_out, W, n, m);
+            m <<= 1;
+        }
+        for (m <<= 1; m <= n; m <<= 2)
+            p3_ntt_stage4_kernel<<<qblocks, P3_NTT_THREADS>>>(d_out, W, n, m);
         if (!forward) p3_scale_kernel<<<nblocks, P3_NTT_THREADS>>>(d_out, ninv, n);
     }
     // B contiguous same-size columns in one launch series (forward only);
     // per-column results bitwise identical to run()
     void run_batch(const gl_t* d_in, gl_t* d_out, uint32_t B) const {
         uint32_t halfblocks = (n / 2 * B + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
+        uint32_t qblocks    = (n / 4 * B + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         uint32_t nblocks    = (n * B     + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
         p3_bitrev_batch_kernel<<<nblocks, P3_NTT_THREADS>>>(d_in, d_out, n, logn, B);
-        for (uint32_t m = 2; m <= n; m <<= 1)
+        uint32_t m = 2;
+        if (logn & 1) {
             p3_ntt_stage_batch_kernel<<<halfblocks, P3_NTT_THREADS>>>(d_out, d_Wf, n, m, B);
+            m <<= 1;
+        }
+        for (m <<= 1; m <= n; m <<= 2)
+            p3_ntt_stage4_batch_kernel<<<qblocks, P3_NTT_THREADS>>>(d_out, d_Wf, n, m, B);
     }
 };

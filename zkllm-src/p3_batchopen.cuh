@@ -310,7 +310,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         p3zp::T zt(p3zp::g.bo_blinder);
         blv.resize(N);
         { uint64_t s = p3zkc::next_seed();
-          if (p3zkc::G.blind_on) for (auto& x : blv) x = p3zkc::zprng(s); }
+          if (p3zkc::G.blind_on) p3zkc::zprng_fill(s, blv.data(), N); }
         uint64_t blseed = p3zkc::next_seed();
         pf.bl_root = p3zkc::salted_commit_root(blv, R, blseed);
         tr.absorb("bo-blr", pf.bl_root.data(), 32);

@@ -1410,3 +1410,26 @@ Results (proof bytes identical at both dims, verify_ok=1):
 Session cumulative: 344.3 -> 150.8 = 2.28x (486.6 pre-session -> 150.8 = 3.23x).
 Post-lever profile (150.8 s): mm=69.3  batch=39.5 (q0/enc 19.9)  lug=37.2
 (inv=22.4 commit NTT+SHA, Am=8.0)  commit_salt=30.1  mask_gen=16.0.
+
+### 20.5 Lever: radix-4 NTT stages + parallel LCG mask fills [VERIFIED]
+
+* NTT: consecutive DIT stage PAIRS fused into one kernel (p3_ntt_stage4_kernel,
+  + batch variant; odd log-sizes take one radix-2 stage first).  Each thread
+  performs EXACTLY the field ops of the two radix-2 launches on 4 elements --
+  bitwise-identical outputs (ntt4_selftest: 8 sizes x fwd/inv-roundtrip/batch,
+  ALL PASS), HALF the global-memory traffic.  Benefits every commit, q0
+  re-encode and Basefold encode.
+* Host zprng chains: `zprng_fill` parallelizes fills >= 2^22 by LCG ladder
+  jump-ahead (bit-identical; small fills stay serial per the 19.3 lesson).
+  Wired into fresh_mask_into, mk_linked, blind_col_aug(_into), and the bo
+  blinder fill.  (One care point: mk_linked still draws its next_seed() even
+  when e=1 leaves no slices-2+ region -- preserves the global seed sequence.)
+
+Results (proof bytes identical at both dims, verify_ok=1, ALL 17 suites green):
+
+    d=1024 zk: prove 150.8 -> 135.8 s (1.11x)   q0/enc 19.9 -> 13.5
+               commit_salt 30.1 -> 26.9   lug/inv 22.4 -> 19.5
+               batch 39.5 -> 32.3   mm 69.3 -> 64.8   mask_gen 16.0 -> 14.6
+    d=256  zk: prove 19.3 -> 18.2 s
+
+Session cumulative: 344.3 -> 135.8 = 2.54x (486.6 pre-session -> 135.8 = 3.58x).
