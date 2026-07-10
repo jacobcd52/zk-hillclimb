@@ -5,17 +5,23 @@
 // p3_zkc.cuh core (mechanisms 1/3/4) but specialised to the packed-T_16 tower
 // Ligero code:
 //
-//  (A) MASK-COLUMN AUGMENTATION.  The witness multilinear over l = lrow+lcol
-//      bit-variables is committed over lcol_a = lcol + e augmented column
-//      variables; the extra e coordinates (ex) index MASK columns filled with
-//      fresh uniform bits.  The evaluation point is zero-extended in the ex
-//      coordinates -- eq(0^e, ex) selects ONLY the real slice, so the augmented
-//      eval equals the real v EXACTLY (soundness/correctness untouched).  Every
-//      opened codeword column is a codeword symbol of [real | mask]: the
-//      additive-NTT code mixes every message symbol into every codeword
-//      position, so each opened symbol is one-time-padded by the mask and is
-//      uniform.  e is sized so the mask packed-symbol dimension (2^e-1)*pc
-//      exceeds the Q opened columns (Ligero's random-column count).
+//  (A) MASK-COLUMN AUGMENTATION + REDUNDANT-ONLY QUERIES.  The witness
+//      multilinear over l = lrow+lcol bit-variables is committed over
+//      lcol_a = lcol + e augmented column variables; the extra e coordinates
+//      (ex) index MASK columns filled with fresh uniform bits.  The evaluation
+//      point is zero-extended in the ex coordinates -- eq(0^e, ex) selects ONLY
+//      the real slice, so the augmented eval equals the real v EXACTLY
+//      (soundness/correctness untouched).  CRUCIAL (security-audit fix): the
+//      additive-NTT code is SYSTEMATIC on its low positions -- codeword symbol
+//      j < real_pc is a pure function of the REAL coefficients (position 0 is
+//      literally msg[0], since tw[0]=0 at every stage), so the mask does NOT
+//      hide those.  It hides only the REDUNDANT positions [pc_aug, nc), which
+//      mix in the mask coefficients.  Spot checks are therefore drawn ONLY from
+//      the redundant range (bfz_queries): those opened symbols are one-time-
+//      padded by the mask (uniform), while the code's MDS distance makes the
+//      redundant positions over-determine the codeword so soundness is kept.
+//      e is sized so the mask packed-symbol dimension (2^e-1)*pc exceeds Q, and
+//      hiding requires lrow >= 7 so the row-eq combination spans T_128 (below).
 //
 //  (B) MASKING-POLYNOMIAL BLIND (Brakedown-ZK).  The opening sends two full
 //      combined rows -- the eval row t = sum_i eq(r_hi,i) M[i] and the proximity
@@ -106,6 +112,33 @@ static inline uint32_t e_of(int lcol) {
     uint32_t e = 1;
     while (((1u << e) - 1) * pc < need) e++;
     return e;
+}
+
+// ---- query restriction (soundness+hiding fix, security audit finding 1) ----
+// The additive-NTT code is SYSTEMATIC on its low positions: codeword position
+// j < pc_aug depends ONLY on message coefficients whose novel-basis polynomial
+// does not vanish at x_j, and for j < real_pc that is the REAL coefficients
+// alone (position 0 is literally msg[0], since every stage's twiddle tw[0]=0).
+// So the mask-column augmentation hides only the REDUNDANT positions
+// [pc_aug, nc) (which mix in the mask coefficients).  We therefore draw spot
+// checks ONLY from the redundant range: those positions are one-time-padded by
+// the mask, and because the code is MDS (min-distance nc - pc_aug + 1) the
+// redundant positions OVER-DETERMINE the codeword -- any error of weight >=
+// distance must hit >= 2*pc_aug of the 3*pc_aug redundant positions, so a
+// random redundant query catches a cheating prover with prob >= 2/3 (soundness
+// is preserved; the systematic positions the prover never opens are irrelevant
+// to the eval/proximity checks, which only read the opened redundant columns).
+static inline void bfz_queries(fs::Transcript& tr, uint32_t lo, uint32_t nc, int Q,
+                               std::vector<uint32_t>& q) {
+    q.clear();
+    uint32_t range = nc - lo;                       // redundant positions [lo, nc)
+    while ((int)q.size() < Q) {
+        uint8_t b[32]; tr.challenge_bytes(b);
+        for (int k = 0; k < 8 && (int)q.size() < Q; k++) {
+            uint32_t v; memcpy(&v, b + 4 * k, 4);
+            q.push_back(lo + (v % range));
+        }
+    }
 }
 
 // ---- salted leaves ----
@@ -294,7 +327,7 @@ static inline void bfz_open(const ZkCommit& C, const bf128_t* r, bf128_t v,
 
     // ---- spot columns ----
     std::vector<uint32_t> q;
-    bfpcs_queries(tr, C.nc, p.Q, q);
+    bfz_queries(tr, C.pc, C.nc, p.Q, q);
     int depth = 0; while ((1u << depth) < C.nc) depth++;
     pf.cols.assign((size_t)p.Q * C.n_rows, 0);
     pf.paths.assign((size_t)p.Q * depth * 32, 0);
@@ -330,7 +363,7 @@ static inline bool bfz_verify(const ZkParams& p, const uint8_t root[32],
     for (uint32_t i = 0; i < n_rows; i++) rho[i] = bf_chal128(tr);
     tr.absorb("bfz-u", pf.u.data(), pf.u.size() * sizeof(bf128_t));
     std::vector<uint32_t> q;
-    bfpcs_queries(tr, nc, p.Q, q);
+    bfz_queries(tr, pc, nc, p.Q, q);
     int depth = 0; while ((1u << depth) < nc) depth++;
     if (pf.paths.size() != (size_t)p.Q * depth * 32) return false;
 
@@ -382,6 +415,156 @@ static inline bool bfz_verify(const ZkParams& p, const uint8_t root[32],
     bf128_t acc = bf128_zero();
     for (size_t j = 0; j < nu; j++) acc = bf128_add(acc, bf128_mul(eqcol[j], pf.t[j]));
     return bf128_eq(acc, bf128_add(v, bf128_mul(lam, pf.yg)));
+}
+
+// ---- MULTI-POINT hiding open: M eval claims on ONE ZK commitment share the
+// masking-poly high half g, the proximity row u', the spot columns and the
+// Merkle paths (the O(sqrt n) part); each point m carries its own combined row
+// tau_m and masking eval y_g^m.  ONE lambda is drawn AFTER all y_g^m are
+// absorbed, so the per-point equation <eqcol_m,tau_m> = v_m + lambda*y_g^m
+// binds every (v_m, y_g^m) pair (same soundness argument as the single open).
+// This is the drop-in the composed prover needs where it batches openings. ----
+struct ZkProofM {
+    std::vector<std::vector<bf128_t>> t;   // M combined rows tau_m
+    std::vector<bf128_t> yg;               // M masking evals
+    std::vector<bf128_t> u;                // shared proximity row
+    uint64_t sseed = 0;
+    std::vector<bf16_t> cols;              // Q * n_rows shared column data
+    std::vector<uint8_t> paths;            // Q * depth * 32 shared paths
+    size_t bytes() const {
+        size_t s = (u.size() + yg.size()) * sizeof(bf128_t) +
+                   cols.size() * sizeof(bf16_t) + paths.size() + sizeof sseed;
+        for (auto& tm : t) s += tm.size() * sizeof(bf128_t);
+        return s;
+    }
+};
+static inline void bfz_open_multi(const ZkCommit& C,
+                                  const std::vector<const bf128_t*>& rs,
+                                  const std::vector<bf128_t>& vs,
+                                  fs::Transcript& tr, ZkProofM& pf) {
+    const ZkParams& p = C.p;
+    const int M = (int)rs.size();
+    size_t nu = (size_t)1 << p.lcol_a;
+    pf.sseed = C.sseed;
+    pf.t.assign(M, {}); pf.yg.assign(M, bf128_zero());
+    std::vector<std::vector<bf128_t>> tM(M), tG(M);
+    for (int m = 0; m < M; m++) {
+        tr.absorb("bfz-point", rs[m], p.l * sizeof(bf128_t));
+        tr.absorb("bfz-value", &vs[m], sizeof(bf128_t));
+        std::vector<bf128_t> rcol_a(p.lcol_a, bf128_zero());
+        for (int i = 0; i < p.lcol; i++) rcol_a[i] = rs[m][i];
+        std::vector<bf128_t> eqcol, eqrow;
+        bf_eq_table(rcol_a.data(), p.lcol_a, eqcol);
+        bf_eq_table(rs[m] + p.lcol, p.lrow, eqrow);
+        bfz_combine(C, eqrow.data(), 0, C.n_real, tM[m]);
+        if (C.n_rows > C.n_real) {
+            std::vector<bf128_t> coef(C.n_rows, bf128_zero());
+            for (uint32_t i = 0; i < C.n_real; i++) coef[C.n_real + i] = eqrow[i];
+            bfz_combine(C, coef.data(), C.n_real, C.n_rows, tG[m]);
+        } else tG[m].assign(nu, bf128_zero());
+        for (uint32_t j = 0; j < nu; j++)
+            pf.yg[m] = bf128_add(pf.yg[m], bf128_mul(eqcol[j], tG[m][j]));
+        tr.absorb("bfz-yg", &pf.yg[m], sizeof(bf128_t));
+    }
+    bf128_t lam = bf_chal128(tr);
+    for (int m = 0; m < M; m++) {
+        pf.t[m].assign(nu, bf128_zero());
+        for (uint32_t j = 0; j < nu; j++)
+            pf.t[m][j] = bf128_add(tM[m][j], bf128_mul(lam, tG[m][j]));
+        tr.absorb("bfz-t", pf.t[m].data(), nu * sizeof(bf128_t));
+    }
+    std::vector<bf128_t> rho(C.n_rows);
+    for (uint32_t i = 0; i < C.n_rows; i++) rho[i] = bf_chal128(tr);
+    bfz_combine(C, rho.data(), 0, C.n_rows, pf.u);
+    tr.absorb("bfz-u", pf.u.data(), pf.u.size() * sizeof(bf128_t));
+    std::vector<uint32_t> q;
+    bfz_queries(tr, C.pc, C.nc, p.Q, q);
+    int depth = 0; while ((1u << depth) < C.nc) depth++;
+    pf.cols.assign((size_t)p.Q * C.n_rows, 0);
+    pf.paths.assign((size_t)p.Q * depth * 32, 0);
+    for (int k = 0; k < p.Q; k++) {
+        uint32_t j = q[k];
+        for (uint32_t i = 0; i < C.n_rows; i++)
+            pf.cols[(size_t)k * C.n_rows + i] = C.cw[(size_t)i * C.nc + j];
+        uint32_t idx = j;
+        for (int dl = 0; dl < depth; dl++) {
+            memcpy(pf.paths.data() + ((size_t)k * depth + dl) * 32,
+                   C.lvl[dl].data() + (size_t)(idx ^ 1u) * 32, 32);
+            idx >>= 1;
+        }
+    }
+}
+static inline bool bfz_verify_multi(const ZkParams& p, const uint8_t root[32],
+                                    const std::vector<const bf128_t*>& rs,
+                                    const std::vector<bf128_t>& vs,
+                                    fs::Transcript& tr, const ZkProofM& pf) {
+    const int M = (int)rs.size();
+    uint32_t n_real = 1u << p.lrow, n_rows = 1u << p.lrow_a;
+    uint32_t pc = 1u << (p.lcol_a - 4), nc = pc << BFPCS_RATE_LOG;
+    size_t nu = (size_t)1 << p.lcol_a;
+    if ((int)pf.t.size() != M || (int)pf.yg.size() != M || pf.u.size() != nu) return false;
+    if (pf.cols.size() != (size_t)p.Q * n_rows) return false;
+    std::vector<std::vector<bf128_t>> eqcol(M), eqrow(M);
+    for (int m = 0; m < M; m++) {
+        if (pf.t[m].size() != nu) return false;
+        tr.absorb("bfz-point", rs[m], p.l * sizeof(bf128_t));
+        tr.absorb("bfz-value", &vs[m], sizeof(bf128_t));
+        std::vector<bf128_t> rcol_a(p.lcol_a, bf128_zero());
+        for (int i = 0; i < p.lcol; i++) rcol_a[i] = rs[m][i];
+        bf_eq_table(rcol_a.data(), p.lcol_a, eqcol[m]);
+        bf_eq_table(rs[m] + p.lcol, p.lrow, eqrow[m]);
+        tr.absorb("bfz-yg", &pf.yg[m], sizeof(bf128_t));
+    }
+    bf128_t lam = bf_chal128(tr);
+    for (int m = 0; m < M; m++) tr.absorb("bfz-t", pf.t[m].data(), nu * sizeof(bf128_t));
+    std::vector<bf128_t> rho(n_rows);
+    for (uint32_t i = 0; i < n_rows; i++) rho[i] = bf_chal128(tr);
+    tr.absorb("bfz-u", pf.u.data(), pf.u.size() * sizeof(bf128_t));
+    std::vector<uint32_t> q;
+    bfz_queries(tr, pc, nc, p.Q, q);
+    int depth = 0; while ((1u << depth) < nc) depth++;
+    if (pf.paths.size() != (size_t)p.Q * depth * 32) return false;
+    BfNtt nt; bfntt_init(nt, p.lcol_a - 4 + BFPCS_RATE_LOG);
+    std::vector<std::vector<bf128_t>> W(M);
+    std::vector<bf128_t> U;
+    for (int m = 0; m < M; m++) {
+        bf_pack128(pf.t[m].data(), nu, W[m]); W[m].resize(nc, bf128_zero());
+        bfntt_fwd_host128(nt, W[m].data());
+    }
+    bf_pack128(pf.u.data(), nu, U); U.resize(nc, bf128_zero()); bfntt_fwd_host128(nt, U.data());
+    for (int k = 0; k < p.Q; k++) {
+        uint32_t j = q[k];
+        const bf16_t* col = pf.cols.data() + (size_t)k * n_rows;
+        uint8_t h[32];
+        bfz_leaf(col, n_rows, pf.sseed, (uint64_t)j, h);
+        uint32_t idx = j;
+        for (int dl = 0; dl < depth; dl++) {
+            uint8_t cat[64];
+            const uint8_t* sib = pf.paths.data() + ((size_t)k * depth + dl) * 32;
+            if (idx & 1) { memcpy(cat, sib, 32); memcpy(cat + 32, h, 32); }
+            else         { memcpy(cat, h, 32);   memcpy(cat + 32, sib, 32); }
+            p3_sha256_compress64(cat, h);
+            idx >>= 1;
+        }
+        if (memcmp(h, root, 32)) return false;
+        bf128_t sr = bf128_zero();
+        for (uint32_t i = 0; i < n_rows; i++) sr = bf128_add(sr, bf128_smul16(rho[i], col[i]));
+        if (!bf128_eq(sr, U[j])) return false;
+        for (int m = 0; m < M; m++) {
+            bf128_t sM = bf128_zero(), sG = bf128_zero();
+            for (uint32_t i = 0; i < n_real; i++) {
+                sM = bf128_add(sM, bf128_smul16(eqrow[m][i], col[i]));
+                if (n_rows > n_real) sG = bf128_add(sG, bf128_smul16(eqrow[m][i], col[n_real + i]));
+            }
+            if (!bf128_eq(bf128_add(sM, bf128_mul(lam, sG)), W[m][j])) return false;
+        }
+    }
+    for (int m = 0; m < M; m++) {
+        bf128_t acc = bf128_zero();
+        for (size_t j = 0; j < nu; j++) acc = bf128_add(acc, bf128_mul(eqcol[m][j], pf.t[m][j]));
+        if (!bf128_eq(acc, bf128_add(vs[m], bf128_mul(lam, pf.yg[m])))) return false;
+    }
+    return true;
 }
 
 } // namespace bfz

@@ -199,6 +199,70 @@ int main() {
            rootsSaltOn[0] != rootsSaltOn[1]);
         ck("unsalted root is fixed for a fixed witness (salt is load-bearing)",
            rootsC[0] == rootsC[1]);
+
+        // (5) SECURITY-AUDIT FIX: the additive-NTT code is SYSTEMATIC on low
+        // positions, so mask-in-message-space does NOT hide codeword columns
+        // j < real_pc.  Directly inspect the committed codeword at FIXED
+        // positions across mask seeds (the earlier probe used a VARYING query
+        // index and passed for the wrong reason).  Systematic position 0 must be
+        // DETERMINISTIC (the leak) -> which is exactly why queries must avoid it;
+        // a redundant position must be UNIFORM (the mask hides it); and
+        // bfz_queries must ONLY return redundant indices.
+        bfz::G.mask_on = bfz::G.blind_on = bfz::G.salt_on = true;
+        uint32_t real_pc = 1u << (p.lcol - 4);
+        std::vector<uint64_t> sys0, red_lo, red_hi;
+        for (int s = 0; s < N; s++) {
+            bfz::G.seed = 0x70000 + s; bfz::G.ctr = 0;
+            fs::Transcript tp("bfz-test"); bfz::ZkCommit C; bfz::bfz_commit(p, bits.data(), tp, C);
+            uint32_t pc_aug = C.pc, nc = C.nc;
+            sys0.push_back((uint16_t)C.cw[(size_t)3 * nc + 0]);              // systematic j=0
+            red_lo.push_back((uint16_t)C.cw[(size_t)3 * nc + pc_aug]);       // first redundant
+            red_hi.push_back((uint16_t)C.cw[(size_t)3 * nc + (nc - 7)]);     // another redundant
+        }
+        ck("SYSTEMATIC column 0 is DETERMINISTIC across mask seeds (the leak the audit found)",
+           std::set<uint64_t>(sys0.begin(), sys0.end()).size() == 1);
+        ck("REDUNDANT column is UNIFORM across mask seeds (mask genuinely hides it, chi2 < 16)",
+           chi2_bits(red_lo, 16) < 16.0 && chi2_bits(red_hi, 16) < 16.0);
+        ck("REDUNDANT column has ~full entropy (>=N/4 distinct)",
+           (int)std::set<uint64_t>(red_lo.begin(), red_lo.end()).size() >= N / 4);
+        // bfz_queries only ever returns redundant indices [pc_aug, nc)
+        {
+            bfz::G.seed = 0x80000; bfz::G.ctr = 0;
+            fs::Transcript tp("bfz-test"); bfz::ZkCommit C; bfz::bfz_commit(p, bits.data(), tp, C);
+            std::vector<uint32_t> qq; bfz::bfz_queries(tp, C.pc, C.nc, 400, qq);
+            bool all_red = true; for (auto j : qq) if (j < C.pc || j >= C.nc) all_red = false;
+            ck("bfz_queries draws ONLY redundant positions [pc_aug, nc) (never systematic)", all_red);
+        }
+    }
+
+    // ============ MULTI-POINT hiding open (drop-in for the composed prover) ============
+    {
+        bfz::ZkParams p; p.l = 16; p.lrow = 8; p.lcol = 8; p.Q = 100; bfz::G.Q = p.Q;
+        bfz::G.mask_on = bfz::G.blind_on = bfz::G.salt_on = true;
+        size_t n = (size_t)1 << p.l;
+        std::vector<uint8_t> bits(n); for (auto& b : bits) b = (uint8_t)(rnd() & 1);
+        const int M = 3;
+        std::vector<std::vector<bf128_t>> R(M, std::vector<bf128_t>(p.l));
+        std::vector<bf128_t> V(M);
+        for (int m = 0; m < M; m++) { for (auto& x : R[m]) x = rnd128();
+            V[m] = bf_ml_eval_bits(bits.data(), p.l, R[m].data()); }
+        bfz::G.seed = 0x9000; bfz::G.ctr = 0;
+        fs::Transcript tp("bfz-test");
+        bfz::ZkCommit C; bfz::bfz_commit(p, bits.data(), tp, C);
+        std::vector<const bf128_t*> rs; for (int m = 0; m < M; m++) rs.push_back(R[m].data());
+        bfz::ZkProofM pf; bfz::bfz_open_multi(C, rs, V, tp, pf);
+        auto vfyM = [&](const std::vector<bf128_t>& vv, const bfz::ZkProofM& q){
+            fs::Transcript tv("bfz-test");
+            tv.absorb("bfz-root", C.root, 32); tv.absorb("bfz-sseed", &C.sseed, sizeof C.sseed);
+            return bfz::bfz_verify_multi(C.p, C.root, rs, vv, tv, q);
+        };
+        char m3[128]; snprintf(m3,sizeof m3,"honest multi-point open accepts (M=%d, proof %.1f KB)",M,pf.bytes()/1024.0);
+        ck(m3, vfyM(V, pf));
+        { auto q=pf; q.t[1][rnd()%q.t[1].size()].lo^=1; ck("multi: tampered tau_1 rejects", !vfyM(V,q)); }
+        { auto q=pf; q.yg[2].lo^=1; ck("multi: tampered y_g[2] rejects", !vfyM(V,q)); }
+        { auto q=pf; q.u[rnd()%q.u.size()].hi^=1; ck("multi: tampered shared u' rejects", !vfyM(V,q)); }
+        { auto q=pf; q.cols[rnd()%q.cols.size()]^=1; ck("multi: tampered shared column rejects", !vfyM(V,q)); }
+        { auto vv=V; vv[0].lo^=1; ck("multi: wrong value v_0 rejects", !vfyM(vv,pf)); }
     }
 
     printf("\nBINIUS-ZKPCS: %d passed, %d failed -> %s\n", np_, nf_,

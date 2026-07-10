@@ -2418,3 +2418,53 @@ the §21.13 mask slices, then batch-open the B_j blind columns on the hiding
 PCS.  The two building blocks of lever 5 -- hiding PCS (§21.13) and blinded
 sumcheck (§21.14) -- are now both implemented and validated with real
 chi-square / negative-control teeth; what remains is wiring, not new crypto.
+
+### 21.13.1 SECURITY-AUDIT FIX: systematic-position leak in the hiding PCS (2026-07-10, session 5) [VERIFIED]
+
+An adversarial review (Fable red-team) found a HIGH zero-knowledge break in the
+first cut of 21.13 and a test that missed it -- fixed here.
+
+THE BREAK.  Mechanism (A) claimed "the additive-NTT code mixes every message
+symbol into every codeword position, so each opened symbol is one-time-padded
+by the mask."  FALSE: the additive-NTT (LCH novel basis) is SYSTEMATIC on its
+low positions.  Codeword position j = sum_k msg[k]*Xhat_k(x_j); for j=0 every
+stage twiddle is tw[0]=What_s(0)=0 so cw[i][0] = msg[i][0] EXACTLY = the first
+16 real bits, unmasked.  More generally, positions j < real_pc lie in the
+subspace where the mask coefficients' novel-basis polynomials vanish, so they
+are pure functions of the REAL coefficients.  Since the queries were drawn
+uniformly over [0, nc), ~real_pc/nc * Q of them landed on systematic positions
+(~1.6-3 unmasked real columns per proof) -> the witness leaks.  The old hiding
+test missed it because its probe pf.cols[3] used a query index that VARIES with
+the mask seed (the transcript depends on the root), so it measured "does the
+queried index move," not "is a FIXED opened symbol hidden."
+
+THE FIX (soundness-preserving).  Draw spot checks ONLY from the REDUNDANT
+positions [pc_aug, nc) (bfz_queries), which mix in the mask coefficients and are
+one-time-padded.  Soundness is preserved because the code is MDS (min distance
+nc - pc_aug + 1): any error of weight >= distance must hit >= 2*pc_aug of the
+3*pc_aug redundant positions, so a random redundant query catches a cheating
+prover with prob >= 2/3, and the systematic positions -- which the prover never
+opens -- are irrelevant to the eval/proximity checks (those read only the opened
+redundant columns; the redundant positions over-determine the codeword).
+
+CORRECTED TEETH (p3_binius_zkpcs_test, 34/34 ALL PASS).  Now inspects the
+committed codeword at FIXED positions across mask seeds: SYSTEMATIC column 0 is
+DETERMINISTIC (chi2 = N -- the leak, and exactly why it is never queried), a
+REDUNDANT column is UNIFORM (chi2 < 16) with ~full entropy, and bfz_queries is
+asserted to return ONLY redundant indices.  Added the MULTI-POINT hiding open
+(bfz_open_multi/verify_multi) the composed prover needs (shares g, u', spot
+columns; one lambda after all y_g; 6 teeth incl. tamper/wrong-value).
+
+HIDING CAVEAT (audit finding 3), now explicit: the tau/u' one-time-pad needs
+the row-eq combination to span T_128, i.e. lrow >= 7 (generic); the real
+transition/acc/main stacks all satisfy this, but the ZK path should assert it.
+
+### 21.12.1 COMPOSITION OBLIGATION (audit finding 5) [NOTE]
+
+The 21.12 output binding ties Yout to the proven out-state ONLY at chain-final
+groups (within-chain index CH-1); the other CH-1 Yout slots per chain are
+committed but UNCONSTRAINED, so a prover may set them arbitrarily.  This is by
+design (only chain-final Yout carries the true (m,n) output), but it is a
+composition obligation: any downstream stage consuming Yout MUST read only the
+chain-final slots (low LCH bits all 1), or add a second binding.  Nothing in
+this proof enforces it.

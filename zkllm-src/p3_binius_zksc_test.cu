@@ -32,6 +32,7 @@
 #include <vector>
 #include <set>
 #include "p3_binius_sumcheck.cuh"
+#include "p3_binius_zksc.cuh"
 
 static int np_ = 0, nf_ = 0;
 static void ck(const char* what, bool ok) {
@@ -159,6 +160,48 @@ int main() {
         ck(m, c < 16.0);
         snprintf(m,sizeof m,"round m_%d(z=%d) DETERMINISTIC without blind (leak the blind removes)",sr.first,sr.second);
         ck(m, std::set<uint64_t>(off.begin(),off.end()).size()==1);
+    }
+
+    // ---- REUSABLE HEADER (p3_binius_zksc.cuh) drop-in: same statement via
+    //      bfz_zc_prove/verify with the blind columns supplied by the caller ----
+    {
+        // user cols: 0=E, 1=W0, 2=W1, 3=W2 ; user integrand E*(W2+W0*W1)
+        auto userC = [](const bf128_t* w, const void*)->bf128_t {
+            return bf128_mul(w[0], bf128_add(w[3], bf128_mul(w[1], w[2])));
+        };
+        auto run_hdr = [&](uint64_t seed, bool blind_on, bool false_wit, BfScProof& pf,
+                           bf128_t& gamma, bool& accept){
+            std::vector<std::vector<bf128_t>> uc(4, std::vector<bf128_t>(1u<<l));
+            for (size_t i=0;i<(1u<<l);i++){ uint8_t w2=b2[i]; if(false_wit && i==77) w2^=1;
+                uc[0][i]=E[i]; uc[1][i]=b0[i]?bf128_one():bf128_zero();
+                uc[2][i]=b1[i]?bf128_one():bf128_zero(); uc[3][i]=w2?bf128_one():bf128_zero(); }
+            std::vector<std::vector<bf128_t>> B(3, std::vector<bf128_t>(1u<<l, bf128_zero()));
+            if (blind_on) for(int j=0;j<3;j++) for(size_t i=0;i<(1u<<l);i++)
+                B[j][i]=bf128_t{mix(seed+0x777*(j+1)+i*11),mix(seed*5+0x33*(j+1)+i*7)};
+            fs::Transcript tp("bfzsc-hdr"); bf128_t H; std::vector<bf128_t> zeta;
+            bfz::bfz_zc_prove(l, uc, 3, userC, nullptr, B, 0, tp, pf, zeta, H);
+            // verify
+            fs::Transcript tv("bfzsc-hdr");
+            std::vector<bf128_t> zv; bf128_t expected, g;
+            if(!bfz::bfz_zc_verify(pf, bf128_zero(), 3, 0, tv, zv, H, &expected, &g)){accept=false;return;}
+            gamma=g;
+            // E_final, user_expected = E_f*(W2_f + W0_f*W1_f) from finals (0..3), B finals 4..6
+            bf128_t ef=bf128_one(); for(int t=0;t<l;t++) ef=bf128_mul(ef,bf128_add(bf128_one(),bf128_add(rz[t],zv[t])));
+            bf128_t uexp=bf128_mul(pf.finals[0], bf128_add(pf.finals[3], bf128_mul(pf.finals[1],pf.finals[2])));
+            bf128_t term=bfz::bfz_zc_terminal(uexp, g, ef, &pf.finals[4], 3);
+            accept = bf128_eq(expected, term) && bf128_eq(ef, pf.finals[0]);
+        };
+        { BfScProof pf; bf128_t g; bool a; run_hdr(0xB1,true,false,pf,g,a);
+          ck("header bfz_zc: honest blinded zerocheck accepts", a); }
+        { BfScProof pf; bf128_t g; bool a; run_hdr(0xB1,true,true,pf,g,a);
+          ck("header bfz_zc: false witness REJECTS", !a); }
+        // header round-message uniformity in an early round
+        std::vector<uint64_t> on;
+        for(int t=0;t<N;t++){ BfScProof pf; bf128_t g; bool a; run_hdr(0x6000+t,true,false,pf,g,a);
+            on.push_back(pf.rounds[(size_t)2*(3+1)+2].lo); }
+        double c=chi2(on);
+        char hm[128]; snprintf(hm,sizeof hm,"header bfz_zc: round m_2(z=2) UNIFORM (chi2 %.1f < 16)",c);
+        ck(hm, c<16.0);
     }
 
     printf("\nBINIUS-ZKSC: %d passed, %d failed -> %s\n", np_, nf_, nf_==0?"ALL PASS":"FAIL");
