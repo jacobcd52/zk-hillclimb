@@ -2468,3 +2468,53 @@ design (only chain-final Yout carries the true (m,n) output), but it is a
 composition obligation: any downstream stage consuming Yout MUST read only the
 chain-final slots (low LCH bits all 1), or add a second binding.  Nothing in
 this proof enforces it.
+
+### 21.15 END-TO-END COMPOSED ZERO-KNOWLEDGE PROOF (2026-07-10, session 5) [VERIFIED]
+
+The two ZK building blocks -- the hiding PCS (21.13, fixed in 21.13.1) and the
+blinded zerocheck (21.14) -- are WIRED TOGETHER into one proof of a real
+committed statement (p3_binius_zkcompose_test, BINIUS-ZKCOMPOSE 5/5 ALL PASS),
+demonstrating that full-ZK composition works on the tower and giving the exact
+pattern the composed bhw prover follows per gadget.
+
+STATEMENT: a committed bit-witness with columns W0,W1,W2 satisfies W2 = W0 & W1,
+i.e. the degree-3 zerocheck E*(W2 + W0*W1) == 0 for the verifier's weight
+E = eq(rz,.).
+
+THE INTEGRATION SUBTLETY the tower forces (and how it's handled): the PCS
+commits BITS (booleanity structural), but the Libra blind columns B_j are
+T_128-VALUED (needed to hide the T_128 round messages).  So each field blind is
+committed as a BUNDLE of 128 bit-columns and reconstructed
+B_j(x) = XOR_u basis_u * bit_{j,u}(x); its terminal eval B_j(zeta) is bound by
+opening the 128 bit-columns on the hiding PCS and reconstructing
+B_j(zeta) = XOR_u basis_u * bit_{j,u}(zeta) (the MLE is F_2-linear).  This is
+mandatory: an unbound blind is adaptively forgeable after gamma (audit
+finding), and committing the blind bits before gamma fixes it.
+
+THE COMPOSED PROOF: (1) commit [W0,W1,W2 | 3*128 blind bits] in ONE hiding PCS
+commitment (column c = bit indices [c<<l,(c+1)<<l); opening column c at a
+row-point zeta = a PCS eval at (zeta || c-bits)).  (2) run the blinded zerocheck
+(bfz_zc_prove, nb=3 for the 4 degree-3 round-message coefficients).  (3) open
+every column the terminal needs -- W0,W1,W2 and all 384 blind bits -- at zeta
+with the multi-point hiding open (bfz_open_multi, one shared spot-column set).
+(4) verify: replay the blinded chain, recompute E_final = eq(rz,zeta), bind the
+W finals to the opened evals, reconstruct the blind finals from the opened bit
+evals, and check the zerocheck terminal.
+
+TEETH (5/5): the honest composed proof ACCEPTS with every final bound; a false
+witness (one W2 bit wrong) REJECTS; the proof accepts with the blind OFF
+(correctness preserved); and the COMPOSED hiding battery shows the zerocheck
+round message is UNIFORM across N=384 seeds (chi2 2.7 < 16) -- hiding survives
+composition -- while collapsing to a single deterministic value under the
+blind+mask-off negative control (the blind is load-bearing in the composed
+proof, not just the primitive).
+
+STATUS: this is the validated INTEGRATION TEMPLATE.  Threading it through the
+FULL bhw prover means applying it to every sumcheck instance (main HwF zerocheck,
+the 21.10 acc adder-tree levels, the 21.11 trans ZC-A/B/C + link + OR trees, the
+logUp/GKR grand-product chains) and routing all three commitments + four batched
+openings through the hiding PCS (with zero-extended eval points and the blind
+bit-bundles committed alongside each stack).  That is mechanical replication of
+this template per gadget -- plus GPU kernels for the blinded functors on the
+hot paths -- not new cryptography.  Remaining after that: FRI-Binius opening
+(lever 4) for polylog proof size / faster verify.
