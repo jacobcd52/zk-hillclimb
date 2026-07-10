@@ -204,6 +204,39 @@ int main() {
         ck(hm, c<16.0);
     }
 
+    // ---- DEGREE-5 zerocheck (the acc gadget's degree): E*(W4 + W0*W1*W2*W3),
+    //      nb=5 E^j blinds cover all 6 round-message coefficients ----
+    {
+        std::vector<uint8_t> c0(1u<<l),c1(1u<<l),c2(1u<<l),c3(1u<<l),c4(1u<<l);
+        for(size_t i=0;i<(1u<<l);i++){c0[i]=rnd()&1;c1[i]=rnd()&1;c2[i]=rnd()&1;c3[i]=rnd()&1;c4[i]=c0[i]&c1[i]&c2[i]&c3[i];}
+        auto user5=[](const bf128_t* w,const void*)->bf128_t{
+            bf128_t prod=bf128_mul(bf128_mul(w[1],w[2]),bf128_mul(w[3],w[4]));  // W0 W1 W2 W3
+            return bf128_mul(w[0], bf128_add(w[5], prod)); };                   // E*(W4 + prod)
+        auto run5=[&](uint64_t seed,bool blind_on,bool false_wit,BfScProof& pf,std::vector<uint64_t>* rp)->bool{
+            std::vector<std::vector<bf128_t>> uc(6,std::vector<bf128_t>(1u<<l));
+            for(size_t i=0;i<(1u<<l);i++){uint8_t w4=c4[i]; if(false_wit&&i==55)w4^=1;
+                uc[0][i]=E[i];uc[1][i]=c0[i]?bf128_one():bf128_zero();uc[2][i]=c1[i]?bf128_one():bf128_zero();
+                uc[3][i]=c2[i]?bf128_one():bf128_zero();uc[4][i]=c3[i]?bf128_one():bf128_zero();uc[5][i]=w4?bf128_one():bf128_zero();}
+            std::vector<std::vector<bf128_t>> B(5,std::vector<bf128_t>(1u<<l,bf128_zero()));
+            if(blind_on)for(int j=0;j<5;j++)for(size_t i=0;i<(1u<<l);i++)B[j][i]=bf128_t{mix(seed+0x999*(j+1)+i*13),mix(seed*7+j*17+i*3)};
+            fs::Transcript tp("bfzsc5");bf128_t H;std::vector<bf128_t> zeta;
+            bfz::bfz_zc_prove(l,uc,5,user5,nullptr,B,0,tp,pf,zeta,H);
+            if(rp){rp->push_back(pf.rounds[(size_t)3*(5+1)+2].lo);return true;}
+            fs::Transcript tv("bfzsc5");std::vector<bf128_t> zv;bf128_t expected,g;
+            if(!bfz::bfz_zc_verify(pf,bf128_zero(),5,0,tv,zv,H,&expected,&g))return false;
+            bf128_t ef=bf128_one();for(int t=0;t<l;t++)ef=bf128_mul(ef,bf128_add(bf128_one(),bf128_add(rz[t],zv[t])));
+            bf128_t prod=bf128_mul(bf128_mul(pf.finals[1],pf.finals[2]),bf128_mul(pf.finals[3],pf.finals[4]));
+            bf128_t uexp=bf128_mul(pf.finals[0],bf128_add(pf.finals[5],prod));
+            bf128_t term=bfz::bfz_zc_terminal(uexp,g,ef,&pf.finals[6],5);
+            return bf128_eq(expected,term)&&bf128_eq(ef,pf.finals[0]);
+        };
+        { BfScProof pf; ck("D=5 (acc-degree) blinded zerocheck ACCEPTS", run5(0xD5,true,false,pf,nullptr)); }
+        { BfScProof pf; ck("D=5 false witness REJECTS", !run5(0xD5,true,true,pf,nullptr)); }
+        std::vector<uint64_t> on5; for(int t=0;t<N;t++){BfScProof pf;run5(0x6000+t,true,false,pf,&on5);}
+        double c=chi2(on5); char m[128]; snprintf(m,sizeof m,"D=5 round m_3(z=2) UNIFORM (all 6 coeffs blinded, chi2 %.1f < 16)",c);
+        ck(m,c<16.0);
+    }
+
     printf("\nBINIUS-ZKSC: %d passed, %d failed -> %s\n", np_, nf_, nf_==0?"ALL PASS":"FAIL");
     return nf_==0?0:1;
 }

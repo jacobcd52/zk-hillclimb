@@ -2582,3 +2582,20 @@ MEASURED (lN=18 full BINIUS, all suites byte-identical + ALL GREEN): prove
 14.13 s -> 12.01 s; sc 2047->1657 ms, tr 6387->5267 ms, commit 105->10 ms.
 The remaining big lever is R1 (split-K / lazy-column GPU round kernel for the
 spill-bound wide zerochecks, ~6-8 s more).
+
+### 21.19 R1 GPU round-kernel register relief + D=5 ZK confirmation (2026-07-10, session 5) [VERIFIED]
+
+R1 (partial): bfsc_round_kernel no longer stages the a0[K]/ad[K] arrays -- only
+the extension row w[K] lives in registers; v0/v1 are re-read from cols inside
+the z-loop.  This removes the 3x per-thread footprint that spilled at K up to
+163.  Byte-identical (all GPU==host and cross-suite teeth pass); a safe base for
+the full R1 (lazy-column functor interface) and for R3 (GPU-enabling the wide
+trans ZC-A/B/C, still host-only).  All six suites re-measured ALL GREEN;
+hawkeye prove 2.63 s (20.0x vs GL per-product+DM), full BINIUS ~12.3 s.
+
+ZK degree coverage: the char-2 Libra blinded zerocheck is confirmed at DEGREE 5
+(the acc gadget's degree) -- BINIUS-ZKSC adds a D=5 zerocheck E*(W4+W0W1W2W3)
+with nb=5 E^j blinds; honest ACCEPTS, false witness REJECTS, and the round
+message is UNIFORM with all 6 coefficients blinded (chi2 4.1).  So the full-ZK
+pattern (21.16) covers every gadget degree in the pipeline (HwF D=3, acc D=5,
+trans D up to 5).

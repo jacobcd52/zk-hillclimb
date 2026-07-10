@@ -181,17 +181,21 @@ static __global__ void bfsc_round_kernel(const bf128_t* cols, size_t stride, siz
                                          CF cf, bf128_t* part, int zlo) {
     bf128_t acc[CF::D + 1];
     for (int z = 0; z <= CF::D; z++) acc[z] = bf128_zero();
-    bf128_t a0[CF::K], ad[CF::K], w[CF::K];
+    // R1 (21.19): only the extension row w[K] is staged in registers -- the
+    // a0[K]/ad[K] arrays are gone (they tripled the per-thread footprint and
+    // spilled at K up to 163).  v0/v1 are re-read from cols inside the z-loop;
+    // the extra L2 traffic is far cheaper than the spill it removes.  Values
+    // are identical, so the proof stays byte-identical.
+    bf128_t w[CF::K];
     for (size_t y = blockIdx.x * (size_t)blockDim.x + threadIdx.x; y < half;
          y += (size_t)gridDim.x * blockDim.x) {
-        for (int k = 0; k < CF::K; k++) {
-            bf128_t v0 = cols[(size_t)k * stride + 2 * y];
-            bf128_t v1 = cols[(size_t)k * stride + 2 * y + 1];
-            a0[k] = v0; ad[k] = bf128_add(v0, v1);
-        }
         for (int z = zlo; z <= CF::D; z++) {
-            for (int k = 0; k < CF::K; k++)
-                w[k] = z ? bf128_add(a0[k], bf128_smul16(ad[k], (uint32_t)z)) : a0[k];
+            for (int k = 0; k < CF::K; k++) {
+                bf128_t v0 = cols[(size_t)k * stride + 2 * y];
+                w[k] = z ? bf128_add(v0, bf128_smul16(bf128_add(v0, cols[(size_t)k * stride + 2 * y + 1]),
+                                                      (uint32_t)z))
+                         : v0;
+            }
             acc[z] = bf128_add(acc[z], cf(w));
         }
     }
