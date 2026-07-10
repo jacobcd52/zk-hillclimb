@@ -263,6 +263,41 @@ int main() {
            "witness accepts", bhw::bhw_verify(p0));
     }
 
+    // ---- COMPOSED OUTPUT BINDING (21.12): the committed output tensor Yout at
+    // every chain-final group must equal the proven Hawkeye out-state.  A prover
+    // that commits ANY other output (flip one Yout bit at a chain-final group,
+    // fully consistently) is rejected by the chain-final binding point. ----
+    {
+        int lG = lN - 5;
+        // Yout is a per-group copy of the out-state; the chain-final groups are
+        // g = CH-1, 2*CH-1, ...  Rebuild the transition witness flipping Yout at
+        // the first chain-final group and re-prove the whole composed statement.
+        struct { const char* what; int bit; } yf[] = {
+            {"flipped Yout SIGN at chain-final rejects (output binding)", 0},
+            {"flipped Yout EXPONENT bit at chain-final rejects (output binding)", 3},
+            {"flipped Yout SIGNIFICAND bit at chain-final rejects (output binding)", 11},
+        };
+        for (auto& f : yf) {
+            btr::Wit ty;
+            btr::build(lN, CH, bits, bhw::LEB, bhw::LPR, bhw::LSH, bhw::LTSEL,
+                       bhw::LPC, bhw::LORT, bhw::LORP, bhw::L5BASE, ty,
+                       -1, -1, 0, 0, 0, /*yflip_g=*/CH - 1, /*yflip_bit=*/f.bit);
+            bhw::BhwProof q; bhw::BhwStats sq;
+            bhw::bhw_prove(lN, bits, q, sq, true, &aw, nullptr, &ty);
+            ck(f.what, !bhw::bhw_verify(q));
+        }
+        // and the honest Yout (no flip) still accepts through the same path
+        {
+            btr::Wit ty;
+            btr::build(lN, CH, bits, bhw::LEB, bhw::LPR, bhw::LSH, bhw::LTSEL,
+                       bhw::LPC, bhw::LORT, bhw::LORP, bhw::L5BASE, ty);
+            bhw::BhwProof q; bhw::BhwStats sq;
+            bhw::bhw_prove(lN, bits, q, sq, true, &aw, nullptr, &ty);
+            ck("honest Yout == out-state accepts (output binding, all chains)",
+               bhw::bhw_verify(q));
+        }
+    }
+
     // ---- witness attacks ----
     auto attack = [&](const char* what, const vector<uint8_t>& mb2,
                       const bacc::Wit& a2, const btr::Wit& t2) {

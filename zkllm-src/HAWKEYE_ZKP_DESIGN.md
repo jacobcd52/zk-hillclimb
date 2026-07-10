@@ -2208,3 +2208,164 @@ masking -- the p3_zkc.cuh pattern), and the composed end-to-end Binius
 matmul statement (bind the per-(m,n) final out-states to a committed
 output tensor / the GL pipeline's quantize input).  Full 26-suite battery
 ALL GREEN at this HEAD (battery_s21_11.log).
+
+### 21.12 The composed end-to-end matmul statement: binding a committed OUTPUT tensor (2026-07-10, session 5) [VERIFIED]
+
+§21.11 proved every internal Hawkeye semantic (max_exp, realign, signed
+reconciliation, normalize) and the group-to-group accumulator CHAIN, so that
+the last group of each chain (within-chain index CH-1) carries the true
+(m,n) matmul output.  But nothing yet TIED that proven out-state to an
+externally-committed output tensor -- a prover could prove a correct chain
+internally and still hand the next pipeline stage (the quantize input of the
+GL forward pass) a different tensor.  §21.12 closes that gap with a
+COMPOSED OUTPUT BINDING, at zero extra challenge cost.
+
+THE COMMITTED OUTPUT TENSOR Yout.  The transition witness gains 23 new
+committed columns (TYSGO..TYNSO = sign[1] + aligned-exp[8] + normalized-
+significand[14], slots 317..339, NCOLT bumped 317 -> 340), an honest
+per-group copy of the out-state columns (TSGO..TNSO, slots 23..45).  Yout is
+what a downstream obligation reads; the binding proves Yout equals the
+proven out-state at exactly the groups that matter.
+
+THE BINDING POINT.  Recall the group cube (lG = lN-5 vars): group
+g = chain*CH + within_chain_index, with the LOW LCH bits carrying the
+within-chain index and the HIGH bits the chain.  Chain-final ==
+within-chain-index == CH-1 == "low LCH bits all 1".  So evaluating any
+group-cube MLE at the point
+
+    (1^LCH, zeta_H)          [LCH ones, then the chain-selector zeta_H]
+
+auto-selects the chain-final group of the chain picked out by zeta_H -- and
+because zeta_H is the SAME Fiat-Shamir chain-selector already drawn for the
+chain-weld head/tail points in §21.11, the binding introduces NO new
+challenge and no new sumcheck.  We add one supplied-eval point to the
+transition proof, evT[6], the group-cube MLE evaluated at (1^LCH, zeta_H),
+carried through the existing batched-opening machinery (the same XOR-select
+sweep + hash-PCS discharge as evT[0..5]).
+
+THE CHECK.  The verifier, having the opened column-evals at evT[6], asserts
+
+    for every state column c in [0, NST):  evT[6][TSGO+c] == evT[6][TYSGO+c]
+
+i.e. the committed Yout MLE and the proven out-state MLE agree at the
+chain-final binding point.  A single MLE identity at a Fiat-Shamir-random
+chain zeta_H binds the whole chain-final slice of Yout to the whole
+chain-final slice of the proven out-state (Schwartz-Zippel over the chain
+cube); combined with §21.11's proof that the out-state IS the Hawkeye
+output, this binds Yout == Hawkeye(matmul) with soundness error the usual
+|cube|/|field| over GF(2^128).  No homomorphic trick, no extra opening: the
+column-evals are already opened for the zerocheck batch, so the binding is
+literally three field comparisons per state column.
+
+SOUNDNESS TEETH (all pass, p3_binius_trans_test).  A prover that commits ANY
+other output is caught: rebuild the transition witness flipping one Yout bit
+at a chain-final group (yflip_g = CH-1) -- fully consistently re-proven --
+and verification REJECTS for a flipped SIGN bit, a flipped EXPONENT bit, and
+a flipped SIGNIFICAND bit; the honest Yout (no flip) still accepts through
+the identical path.  These join the §21.11 battery (13 witness tampers + 13
+proof-object tampers).  The flip is applied inside btr::build via the
+(yflip_g, yflip_bit) hook so the tampered Yout is otherwise perfectly
+consistent -- it is ONLY the binding point that rejects it, which is the
+point of the tooth.
+
+MEASURED.  The 23 Yout columns add 23 * (8192 groups / 8) bytes ~ 23 KB of
+committed data at the big config and one extra supplied-eval sweep to tr;
+the composed prove/verify numbers are within noise of the §21.11 figures
+(committed 27.19 MB, prove ~14.2 s, verify ~356 ms).  The composed
+statement is now genuinely end-to-end: commit the input tiles, prove the
+COMPLETE Hawkeye matmul semantics (§21.1-21.11), and hand the next stage a
+COMMITTED output tensor that is cryptographically bound to that proof.
+
+What remains for the Binius track: FRI-Binius opening (lever 4) and ZK over
+the tower (lever 5: salted leaves + witness masking + blinded sumchecks --
+the p3_zkc.cuh pattern, validated by a hiding battery with chi-square
+uniformity / negative-control / 0-bit-recovery teeth).
+
+### 21.13 ZERO-KNOWLEDGE over the tower: the hiding PCS (2026-07-10, session 5) [VERIFIED]
+
+The Ligero/Brakedown opening of §21.3 is SOUND but not HIDING: an opened
+proof discloses the Q spot columns (codeword symbols of the witness), the
+full eval row t = sum_i eq(r_hi,i) M[i] and proximity row u = sum_i rho_i
+M[i] -- each a linear functional of the witness in every column direction.
+p3_binius_zkpcs.cuh makes the opening reveal NOTHING about the witness bits
+beyond the public evaluation value v, via three mechanisms mirroring the
+Goldilocks p3_zkc.cuh core (mechanisms 1/3/4) specialised to the packed-T_16
+tower code:
+
+  (A) MASK-COLUMN AUGMENTATION.  The l = lrow+lcol multilinear is committed
+      over lcol_a = lcol + e augmented column variables; the extra e ex-coords
+      index MASK columns of fresh uniform bits.  The eval point is
+      zero-extended in the ex-coords, and eq(0^e, ex) selects ONLY the real
+      slice -- so the augmented eval equals the real v EXACTLY (correctness and
+      soundness untouched).  Every opened codeword column is a symbol of
+      [real | mask]; the additive-NTT RS code mixes every message symbol into
+      every codeword position, so each opened symbol is one-time-padded by the
+      mask.  e is sized so the mask packed dimension (2^e-1)*pc exceeds Q (the
+      Q spot-column functionals are then jointly independent over the mask).
+
+  (B) MASKING-POLYNOMIAL BLIND (Brakedown-ZK).  The row block is bumped by one
+      (lrow_a = lrow+1); the HIGH HALF is a fresh uniform matrix g.  Proximity:
+      u' = sum over ALL rows rho_i M_aug[i], so g one-time-pads u' (uniform;
+      u is a proximity test, value unconstrained).  Eval: the prover sends
+      y_g = <eqcol, t_g> FIRST, THEN a challenge lambda is drawn, THEN the
+      combined row tau = t_M + lambda*t_g is sent.  tau is uniform (t_g
+      uniform), revealing nothing; the verifier recovers v via
+      <eqcol, tau> = v + lambda*y_g.  Because lambda is drawn AFTER y_g is
+      fixed, the single random equation (v_true - v) + lambda*(y_g_true - y_g)
+      = 0 forces BOTH the public v AND the sent y_g to their true values -- the
+      prover cannot trade one against the other.  (An earlier design added the
+      blind with a free prover-chosen scalar c and a unit-vector correction;
+      that was UNSOUND -- c is a direct additive knob on the eval, so a cheating
+      prover could forge any v.  The y_g-before-lambda ordering is what closes
+      it; the tamper battery's "cheating prover / wrong claimed v" tooth guards
+      the fix.)
+
+  (C) SALTED LEAVES.  leaf_j = SHA256(column_bytes || salt_j),
+      salt_j = SHA256(sseed || j); sseed fixed before the root, sent in the
+      proof, re-derived by the verifier.  Stops a low-entropy column from being
+      recognised by its leaf hash / sibling-hash leakage; the root binds every
+      salt.
+
+The bfz::G context carries the master switch and three NEGATIVE-CONTROL flags
+(mask_on / blind_on / salt_on) that zero each mechanism's randomness while
+keeping the shapes identical -- the hiding battery flips them to prove each
+mechanism is load-bearing.  This is a HOST reference (reuses the tower helpers
+bf_eq_table / bf_pack_bits / bfntt_fwd_host{,128}, no new CUDA kernels): the
+committed-data / speed win is already measured on the non-zk path (§21.11);
+zk cost is the (2^e)*2 blow-up plus the two combined rows, quantified below.
+
+THE HIDING BATTERY (p3_binius_zkpcs_test, 24/24 ALL PASS).  Beyond the
+soundness teeth (honest accept; eval preserved == real v; every tamper --
+tau, u', y_g, column data, salted path, wrong value, wrong point -- rejects;
+a cheating prover who claims a wrong v vs the commitment rejects), the teeth
+that make "zk" REAL rather than asserted:
+  * VARIATION vs DETERMINISM: opened columns vary across mask seeds and tau/u'
+    vary across blind seeds under zk, while the SAME probes are a single
+    deterministic value under the mask_on/blind_on negative controls (the leak
+    the mechanism removes).
+  * CHI-SQUARE UNIFORMITY (N=512 seeds, per-bit, 1 dof): opened-column bits
+    max chi2 4.1, tau bits 3.8, u' bits 8.0 -- all below the 16 bound; the
+    negative control is deterministic (chi2 = N, ~512).
+  * 0-BIT RECOVERY: the opened-column probe has ~full entropy (>= N/4 distinct)
+    under zk but collapses to ONE value under the control -- an attacker
+    recovers zero bits of the witness-derived codeword symbol.
+  * SALT ISOLATED: on a FIXED codeword (mask+blind off) the salted root varies
+    with the salt seed, while the unsalted root is fixed -- salt is
+    load-bearing on its own.
+
+MEASURED (host reference):
+    l=14, lrow=7, lcol=7, Q=100:  e=4, aug lcol 7->11, rows 128->256;
+                                  committed 0.28 MB, proof 142 KB
+    l=18, lrow=9, lcol=9, Q=100:  e=3, aug lcol 9->12, rows 512->1024;
+                                  committed 2.06 MB, proof 359 KB
+The e blow-up is largest at small lcol (small pc needs a bigger 2^e to clear
+Q random columns) and shrinks as lcol grows -- at the §21.11 big-config widths
+e drops toward 1, so the asymptotic zk overhead is ~2x (the g half) plus the
+one extra combined row, on top of the non-zk committed-data win.
+
+This closes lever 5's FIRST half (the hiding PCS: salted leaves + witness
+masking).  What remains: blinded SUMCHECK rounds (the round polynomials of the
+matmul / gadget zerochecks / logUp chains are themselves witness functionals
+and must be Libra-blinded -- p3_zkc.cuh mechanism 2, the degree-matched blind
+spanning all round-message coefficients) to make the WHOLE composed proof
+zero-knowledge, and FRI-Binius opening (lever 4).

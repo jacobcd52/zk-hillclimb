@@ -1,0 +1,11 @@
+=== trans (already built) ===
+BINIUS-TRANS: 47 passed, 0 failed -> ALL PASS
+=== build acc ===
+acc: built
+=== run acc ===
+BINIUS-ACC: 26 passed, 0 failed -> ALL PASS
+=== build hawkeye ===
+hawkeye: built
+=== run hawkeye ===
+BINIUS-HAWKEYE: 28 passed, 0 failed -> ALL PASS
+BATTERY_DONE

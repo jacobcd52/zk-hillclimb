@@ -70,7 +70,10 @@ enum {
     TX = 290, TN1 = 298, TN2 = 306,              // X = MEZ+width, its carries,
                                                  // carries aeO + 14 = X
     TTAC = 314, TOG = 315, TPG = 316,            // tacc, OR(t), OR(pr)
-    NCOLT = 317,
+    TYSGO = 317, TYAEO = 318, TYNSO = 326,       // 1+8+14 committed OUTPUT tensor
+                                                 // (bound == out-state at chain-final;
+                                                 //  the composed matmul statement, 21.12)
+    NCOLT = 340,
     LOGSTK3 = 9, NSTK3 = 512
 };
 static const int NST = 23;                       // state columns per direction
@@ -461,7 +464,8 @@ static inline void build(int lN, int CH, std::vector<uint8_t>& mb,
                          int colORT, int colORP, int mainbase, Wit& w,
                          int64_t bump_g = -1, int64_t inject_g = -1,
                          uint32_t inj_sg = 0, uint32_t inj_ae = 0,
-                         uint32_t inj_ns = 0) {
+                         uint32_t inj_ns = 0,
+                         int64_t yflip_g = -1, int yflip_bit = -1) {
     size_t N = (size_t)1 << lN;
     int lG = lN - 5;
     size_t nG = N >> 5;
@@ -550,6 +554,17 @@ static inline void build(int lN, int CH, std::vector<uint8_t>& mb,
             } else nso = 0;
             put(TN2, nc2, 8);
             put(TSGO, sgo, 1); put(TAEO, aeo, 8); put(TNSO, nso, 14);
+            // committed OUTPUT tensor (21.12): honest copy of the out-state, so
+            // Yout at chain-final == Hawkeye output; yflip_g/bit tampers it (teeth)
+            {
+                uint32_t ysg = sgo, yae = aeo, yns = nso;
+                if ((int64_t)g == yflip_g) {
+                    if (yflip_bit < 1)      ysg ^= 1u;
+                    else if (yflip_bit < 9) yae ^= 1u << (yflip_bit - 1);
+                    else                    yns ^= 1u << (yflip_bit - 9);
+                }
+                put(TYSGO, ysg, 1); put(TYAEO, yae, 8); put(TYNSO, yns, 14);
+            }
             TB(TTAC, g) = (uint8_t)tacc; TB(TOG, g) = (uint8_t)ogb;
             TB(TPG, g) = (uint8_t)pgb;
             if (tsel >= 0) {
@@ -755,7 +770,7 @@ struct TrProof {
     uint8_t root3[32];
     BfScProof lk, orsc[5], A, B, C;
     std::vector<bf128_t> evMain[11];     // RTR RLK orA1..4 orB1..4 orB5
-    std::vector<bf128_t> evT[6];         // TA TB TC TLK TOR5 THEAD
+    std::vector<bf128_t> evT[7];         // TA TB TC TLK TOR5 THEAD TFINAL(21.12)
     std::vector<std::vector<bf128_t>> evTS;   // 2*LCH point evals (I,O pairs)
     BfPcsProofM pcs3;
     size_t bytes() const {
@@ -767,7 +782,7 @@ struct TrProof {
         s += sc(lk) + sc(A) + sc(B) + sc(C);
         for (int i = 0; i < 5; i++) s += sc(orsc[i]);
         for (int i = 0; i < 11; i++) s += evMain[i].size() * sizeof(bf128_t);
-        for (int i = 0; i < 6; i++) s += evT[i].size() * sizeof(bf128_t);
+        for (int i = 0; i < 7; i++) s += evT[i].size() * sizeof(bf128_t);
         for (auto& v : evTS) s += v.size() * sizeof(bf128_t);
         return s;
     }

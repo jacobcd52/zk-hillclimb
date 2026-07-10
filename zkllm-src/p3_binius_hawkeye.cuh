@@ -619,6 +619,9 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
             for (int t = 0; t < LCH; t++) R[t] = bf128_zero();     // THEAD
             for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];
             ev(pf.tr.evT[5]);
+            for (int t = 0; t < LCH; t++) R[t] = bf128_one();      // TFINAL (21.12):
+            for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];  // chain-final = OUTPUT
+            ev(pf.tr.evT[6]);
             pf.tr.evTS.resize(2 * LCH);
             for (int j = 0; j < LCH; j++) {                        // TS pairs
                 for (int t = 0; t < j; t++) R[t] = bf128_zero();
@@ -758,6 +761,9 @@ static inline void bhw_prove(int lN, const std::vector<uint8_t>& bits,
             for (int t = 0; t < LCH; t++) R[t] = bf128_zero();
             for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];
             pusht(pf.tr.evT[5]);
+            for (int t = 0; t < LCH; t++) R[t] = bf128_one();      // TFINAL (21.12)
+            for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];
+            pusht(pf.tr.evT[6]);
             for (int j = 0; j < LCH; j++) {
                 for (int t = 0; t < j; t++) R[t] = bf128_zero();
                 R[j] = bf128_one();
@@ -889,14 +895,14 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
         }
         for (int i = 0; i < 11; i++)
             if ((int)pf.tr.evMain[i].size() != NCOLA) return false;
-        for (int i = 0; i < 6; i++)
+        for (int i = 0; i < 7; i++)
             if ((int)pf.tr.evT[i].size() != btr::NCOLT) return false;
         if ((int)pf.tr.evTS.size() != 2 * LCH) return false;
         for (auto& v : pf.tr.evTS)
             if ((int)v.size() != btr::NCOLT) return false;
         for (int i = 0; i < 11; i++)
             tr.absorb("btr-evM", pf.tr.evMain[i].data(), NCOLA * sizeof(bf128_t));
-        for (int i = 0; i < 6; i++)
+        for (int i = 0; i < 7; i++)
             tr.absorb("btr-evT", pf.tr.evT[i].data(), btr::NCOLT * sizeof(bf128_t));
         for (auto& v : pf.tr.evTS)
             tr.absorb("btr-evT", v.data(), btr::NCOLT * sizeof(bf128_t));
@@ -905,6 +911,13 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
             for (int c = 0; c < btr::NST; c++)
                 if (!bf128_eq(pf.tr.evTS[2 * j][c],
                               pf.tr.evTS[2 * j + 1][btr::NST + c])) return false;
+        // the COMPOSED OUTPUT BINDING (21.12): the committed output tensor Yout
+        // equals the proven Hawkeye out-state at every chain-final group.  Both
+        // are per-column evals at the chain-final point (1^LCH, zetaH), bound to
+        // the C3 commitment by the multi-point opening below.
+        for (int c = 0; c < btr::NST; c++)
+            if (!bf128_eq(pf.tr.evT[6][btr::TSGO + c],
+                          pf.tr.evT[6][btr::TYSGO + c])) return false;
     }
     std::vector<bf128_t> rho(LOGSTK), eqsel, R1(p.l), R2(p.l);
     for (auto& x : rho) x = bf_chal128(tr);
@@ -1143,6 +1156,13 @@ static inline bool bhw_verify(const BhwProof& pf, BhwStats* st = nullptr) {
                 for (int t = 0; t < LCH; t++) R[t] = bf128_zero();
                 for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];
                 pusht(pf.tr.evT[5]);
+            }
+            {   // TFINAL (21.12): chain-final OUTPUT point, supplied evals
+                // (Yout == out-state already checked above; opening binds them)
+                memset(hv, 0, sizeof hv);
+                for (int t = 0; t < LCH; t++) R[t] = bf128_one();
+                for (int t = LCH; t < lG; t++) R[t] = zetaH[t - LCH];
+                pusht(pf.tr.evT[6]);
             }
             memset(hv, 0, sizeof hv);   // TS pairs: equality checked above
             for (int j = 0; j < LCH; j++) {
