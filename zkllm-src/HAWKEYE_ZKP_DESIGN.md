@@ -2369,3 +2369,52 @@ matmul / gadget zerochecks / logUp chains are themselves witness functionals
 and must be Libra-blinded -- p3_zkc.cuh mechanism 2, the degree-matched blind
 spanning all round-message coefficients) to make the WHOLE composed proof
 zero-knowledge, and FRI-Binius opening (lever 4).
+
+### 21.14 ZERO-KNOWLEDGE over the tower: the blinded sumcheck (2026-07-10, session 5) [VERIFIED, primitive]
+
+The hiding PCS (§21.13) stops the OPENINGS leaking, but a sumcheck's round
+polynomials m_s(z) = XOR_y C(w(y,z)) are themselves witness functionals and
+leak.  §21.14 blinds them -- the Libra "degree-matched blind" (p3_zkc.cuh
+mechanism 2) specialised to a char-2 tower ZEROCHECK, validated in isolation
+(p3_binius_zksc_test, 11/11 ALL PASS).
+
+THE CHAR-2 OBSTACLE.  A bare additive blind g(x) = sum_j B_j(x) does NOT work:
+the round-s message sums the blind over the free tail cube {0,1}^{l-1-s}, and
+in characteristic 2 that XOR of 2^(l-1-s) copies of a tail-constant term is 0
+for every round but the last.  So a naive additive blind leaves all early
+round messages UNBLINDED (still deterministic witness functionals) -- a silent
+ZK failure.
+
+THE FIX.  Multiply each blind column by a power of the zerocheck's own weight
+E(x) = eq(rz, x): blind(x) = B_0 + E*B_1 + E^2*B_2 (fresh uniform multilinear
+B_j, one per round-message coefficient up to degree D).  E is NON-CONSTANT
+over the cube, so E^j*B_j survives the tail XOR in every round; the powers
+0..D give the round message its z^0..z^D coefficients independent uniform
+blinds.  The integrand becomes E*C'(W) + gamma*blind, gamma drawn AFTER the
+prover publishes H = XOR_x blind(x) (so a cheating prover cannot adapt the
+blind to gamma); the chain runs from claim0 + gamma*H = gamma*H (the real
+zerocheck sums to 0) and ends at E_f*C'(finals) + gamma*blind(finals), with
+E_f == eq(rz,zeta) recomputed by the verifier and the W/B finals discharged by
+the (hiding) PCS.
+
+TEETH (p3_binius_zksc_test, 11/11):
+  SOUNDNESS -- honest blinded zerocheck accepts (expected == C_zk(finals) AND
+  E_f == eq(rz,zeta) independently); the same statement accepts with the blind
+  off (correctness preserved); a false witness (one W2 = W0&W1 bit wrong) makes
+  the real sum != 0 so the chain's round-0 check rp[0]+rp[1] != gamma*H and it
+  REJECTS through the blind.
+  HIDING -- the round messages m_s(z) are UNIFORM across N=512 blind seeds
+  (chi-square, 1 dof): probes in EARLY rounds m_2(z=2) chi2 9.6 and m_0(z=3)
+  4.1 -- exactly the rounds a bare additive blind would leave deterministic --
+  plus m_6(z=1) 4.1 and m_10(z=0) 4.9, all < 16; every probe collapses to a
+  SINGLE deterministic value under the blind_on negative control.
+
+STATUS: this is a validated PRIMITIVE, not yet threaded through the composed
+prover.  Making the WHOLE bhw proof zero-knowledge is the remaining
+INTEGRATION: apply this blind to every sumcheck instance (the matmul
+contraction, the 21.10/21.11 gadget zerochecks, the logUp/GKR grand-product
+chains, the batched-opening reduction) and augment every committed column with
+the §21.13 mask slices, then batch-open the B_j blind columns on the hiding
+PCS.  The two building blocks of lever 5 -- hiding PCS (§21.13) and blinded
+sumcheck (§21.14) -- are now both implemented and validated with real
+chi-square / negative-control teeth; what remains is wiring, not new crypto.
