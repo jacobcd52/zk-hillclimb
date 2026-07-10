@@ -43,7 +43,7 @@ static inline void bf_eq_table(const bf128_t* r, int k, std::vector<bf128_t>& ou
         // so the parallel result is bitwise-identical to the serial one; the
         // thread count is clamped to the work (full-team spawn on a small
         // level costs more than the rows -- same lesson as bfsc_nthr)
-        int nt = (int)(half / 32768); if (nt < 1) nt = 1;
+        int nt = (int)(half / 8192); if (nt < 1) nt = 1;   // R2 (21.16): was /32768
         if (nt > omp_get_max_threads()) nt = omp_get_max_threads();
         #pragma omp parallel for schedule(static) num_threads(nt) if(nt > 1)
         for (int64_t x = 0; x < (int64_t)half; x++) {

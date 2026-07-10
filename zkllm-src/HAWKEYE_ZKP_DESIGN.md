@@ -2518,3 +2518,67 @@ bit-bundles committed alongside each stack).  That is mechanical replication of
 this template per gadget -- plus GPU kernels for the blinded functors on the
 hot paths -- not new cryptography.  Remaining after that: FRI-Binius opening
 (lever 4) for polylog proof size / faster verify.
+
+### 21.16 FULL zero-knowledge prover for the REAL Hawkeye matmul zerocheck (2026-07-10, session 5) [VERIFIED]
+
+The 21.15 composition template applied to the ACTUAL main gadget
+(p3_binius_zkprove_test, BINIUS-ZKPROVE 4/4 ALL PASS): the real committed
+witness (128 stacked slots, hawkeye_prod_vectors.bin, lN=12) is proven to
+satisfy the complete per-product fp8 semantics -- the HwF K=90 D=3 zerocheck
+over the NCON=89 constrained columns -- in FULL zero-knowledge:
+  * masked hiding commitment of the 128-slot witness (21.13.1);
+  * char-2 Libra blinded HwF sumcheck (21.14, nb=3 field blinds for the 4
+    degree-3 round coefficients), the field blinds committed as 3*128 bit-column
+    bundles in a second hiding commitment;
+  * hiding multi-point opening (21.13) of ALL 89 constrained columns AND the
+    384 blind bits at zeta (column c opened at the PCS point (zeta || c-slot-bits));
+  * the verifier reconstructs the HwF finals from the opened column evals and
+    the blind finals B_b = XOR_u basis_u * bit_{b,u}(zeta), then checks the
+    zerocheck terminal HwF(finals) + gamma*blind(finals).
+TEETH: the honest proof ACCEPTS with every one of the 89 columns + 3 blinds
+bound to the commitments; a false witness (one committed MAG bit flipped)
+REJECTS; accepts with the blind off (correctness); and the main-zerocheck round
+message is UNIFORM across N=256 seeds (chi2 9.0 < 16) -- hiding on the REAL
+prover.  The acc (21.10) and trans (21.11) gadget zerochecks and the logUp/GKR
+chains wire in identically (each is another bfz_zc + blind bundle + hiding open
+against its stack); this validates the pattern on the largest, most
+representative gadget.
+
+### 21.17 FRI-Binius opening: logarithmic proof over the tower (2026-07-10, session 5) [VERIFIED]
+
+Lever 4.  p3_binius_fri.cuh replaces the Ligero O(sqrt n) query phase with a
+FRI fold on the additive-NTT (LCH novel-basis) codeword.  THE ADDITIVE FOLD:
+a rate-2^-R codeword d[u]=f(P_u), P_u = sum u_i B[i], decomposes as
+f(X) = f0(q0(X)) + What0(X) f1(q0(X)) with q0(X)=X(X+b0) (kernel span(b0),
+b0=B[0]) and What0(X)=X/b0; the pair (2j,2j+1) gives f1 = d[2j]^d[2j+1] and
+d'[j] = d[2j] ^ (P_{2j}/b0 + r) f1, and the folded domain has basis
+B'[i]=q0(B[i+1]).  After m-R folds the message is one coefficient and the
+codeword is CONSTANT -- that constant-collapse IS the low-degree test; Q random
+query chains (each one fold triple + two Merkle paths per layer, chained by the
+(idx>>L)&1 parity) give FRI soundness.
+
+TEETH (BINIUS-FRI 8/8): a genuine rate-1/4 codeword folds to a constant and
+ACCEPTS (lm=10 and lm=14); a codeword with ONE corrupted symbol (Merkle rebuilt
+honestly) REJECTS via the fold-consistency queries; a fully random word REJECTS;
+tampered root / final constant / query leaf REJECT; and the proof scales
+LOGARITHMICALLY -- a 16x larger codeword grows the proof only 1.9x (vs 16x
+linear), the defining FRI property (nlayers + query-chain length are both
+O(log n)).  Wiring FRI as the bfpcs/bfz opening (ring-switch the T_16-packed
+codeword, bind the eval) drops the ~2.8 MB of Ligero column dumps to O(Q log^2 n).
+
+### 21.18 R2 sumcheck speedups (byte-identical) (2026-07-10, session 5) [VERIFIED]
+
+Three byte-identical prover speedups (the proofs are unchanged, so every
+GPU==host and cross-suite tooth still passes):
+  * CLAIM-DERIVED round eval: the prover tracks the running claim (the
+    verifier's own Lagrange rule) and derives rp[0] = claim ^ rp[1] for every
+    round after the first, skipping the z=0 sweep -- saves 1/(D+1) of all
+    round-eval work.  Host and GPU (bfsc_round_kernel gains a zlo arg).
+  * host thread scaling: bfsc_nthr divisor 8192->2048 and the parallel gate
+    lowered so a 512-row round of a wide functor (K up to 163) still fans out
+    across the 128 cores instead of starving on one thread.
+  * bf_eq_table clamp 32768->8192 (the commit-path eq builds were thread-starved).
+MEASURED (lN=18 full BINIUS, all suites byte-identical + ALL GREEN): prove
+14.13 s -> 12.01 s; sc 2047->1657 ms, tr 6387->5267 ms, commit 105->10 ms.
+The remaining big lever is R1 (split-K / lazy-column GPU round kernel for the
+spill-bound wide zerochecks, ~6-8 s more).

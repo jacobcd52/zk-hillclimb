@@ -28,11 +28,31 @@ typedef bf128_t (*BfConstraintFn)(const bf128_t* w, const void* ctx);
 
 // threads proportional to the work: at high core counts (128 on this box)
 // full-team spawn + critical on a small domain costs far more than the rows;
-// the XOR accumulation makes the result identical at any thread count
+// the XOR accumulation makes the result identical at any thread count.
+// R2 speedup (21.16): the divisor is per-(row,K) UNIT work -- wide functors
+// (K up to 163, hundreds of muls each) were starving the tail rounds on one
+// thread; scale by half*K so a 512-row round of a wide functor still fans out.
 static inline int bfsc_nthr(size_t work) {
-    int t = (int)(work / 8192); if (t < 1) t = 1;
+    int t = (int)(work / 2048); if (t < 1) t = 1;
     int m = omp_get_max_threads();
     return t > m ? m : t;
+}
+// Lagrange evaluation of a round polynomial (evals rp[0..D] at nodes {0..D})
+// at zs -- the verifier's rule, used by the prover to track the running claim
+// so later rounds can DERIVE rp[0] = claim ^ rp[1] instead of computing the
+// z=0 sweep (saves 1/(D+1) of all round-eval work; byte-identical proofs).
+static inline bf128_t bfsc_lagrange(const bf128_t* rp, int D, bf128_t zs) {
+    bf128_t nxt = bf128_zero();
+    for (int z = 0; z <= D; z++) {
+        bf128_t num = bf128_one(), den = bf128_one();
+        for (int w = 0; w <= D; w++)
+            if (w != z) {
+                num = bf128_mul(num, bf128_add(zs, bf128_from64((uint64_t)w)));
+                den = bf128_mul(den, bf128_from64((uint64_t)(z ^ w)));
+            }
+        nxt = bf128_add(nxt, bf128_mul(rp[z], bf128_mul(num, bf128_inv(den))));
+    }
+    return nxt;
 }
 
 struct BfScProof {
@@ -49,16 +69,21 @@ static inline void bf_sumcheck_prove(int l, int K, std::vector<std::vector<bf128
     pf.l = l; pf.D = D; pf.K = K;
     pf.rounds.assign((size_t)l * (D + 1), bf128_zero());
     zeta.assign(l, bf128_zero());
+    bf128_t claim = bf128_zero(); bool have_claim = false;   // set after round 0
     for (int s = 0; s < l; s++) {
         size_t half = (size_t)1 << (l - 1 - s);
         bf128_t* rp = pf.rounds.data() + (size_t)s * (D + 1);
-        #pragma omp parallel if(half >= 1024) num_threads(bfsc_nthr(half * K))
+        // R2 (21.16): rounds after the first derive rp[0] = claim ^ rp[1] from
+        // the tracked claim (the verifier's own consistency rule), skipping the
+        // z=0 sweep -- values identical, so proofs stay byte-identical.
+        const int zlo = have_claim ? 1 : 0;
+        #pragma omp parallel if(half * (size_t)K >= 4096) num_threads(bfsc_nthr(half * K))
         {
             std::vector<bf128_t> acc(D + 1, bf128_zero());
             std::vector<bf128_t> w(K);
             #pragma omp for schedule(static)
             for (int64_t y = 0; y < (int64_t)half; y++) {
-                for (int z = 0; z <= D; z++) {
+                for (int z = zlo; z <= D; z++) {
                     for (int k = 0; k < K; k++) {
                         bf128_t v0 = cols[k][2 * y], v1 = cols[k][2 * y + 1];
                         w[k] = bf128_add(v0, bf128_smul16(bf128_add(v0, v1), (uint32_t)z));
@@ -67,11 +92,13 @@ static inline void bf_sumcheck_prove(int l, int K, std::vector<std::vector<bf128
                 }
             }
             #pragma omp critical
-            for (int z = 0; z <= D; z++) rp[z] = bf128_add(rp[z], acc[z]);
+            for (int z = zlo; z <= D; z++) rp[z] = bf128_add(rp[z], acc[z]);
         }
+        if (have_claim) rp[0] = bf128_add(claim, rp[1]);
         tr.absorb("bfsc-round", rp, (D + 1) * sizeof(bf128_t));
         bf128_t zs = bf_chal128(tr);
         zeta[s] = zs;
+        claim = bfsc_lagrange(rp, D, zs); have_claim = true;
         // fold in place; ascending y within one column is safe (position y is
         // last read at iteration y/2 <= y), so parallelize across columns only
         #pragma omp parallel for schedule(dynamic, 1) if((size_t)K * half >= 4096)
@@ -151,7 +178,7 @@ static __global__ void bfsc_bits_kernel(const uint8_t* bits, bf128_t* dst, size_
 
 template <class CF>
 static __global__ void bfsc_round_kernel(const bf128_t* cols, size_t stride, size_t half,
-                                         CF cf, bf128_t* part) {
+                                         CF cf, bf128_t* part, int zlo) {
     bf128_t acc[CF::D + 1];
     for (int z = 0; z <= CF::D; z++) acc[z] = bf128_zero();
     bf128_t a0[CF::K], ad[CF::K], w[CF::K];
@@ -162,14 +189,14 @@ static __global__ void bfsc_round_kernel(const bf128_t* cols, size_t stride, siz
             bf128_t v1 = cols[(size_t)k * stride + 2 * y + 1];
             a0[k] = v0; ad[k] = bf128_add(v0, v1);
         }
-        for (int z = 0; z <= CF::D; z++) {
+        for (int z = zlo; z <= CF::D; z++) {
             for (int k = 0; k < CF::K; k++)
                 w[k] = z ? bf128_add(a0[k], bf128_smul16(ad[k], (uint32_t)z)) : a0[k];
             acc[z] = bf128_add(acc[z], cf(w));
         }
     }
     __shared__ bf128_t sm[256];
-    for (int z = 0; z <= CF::D; z++) {
+    for (int z = zlo; z <= CF::D; z++) {
         sm[threadIdx.x] = acc[z];
         __syncthreads();
         for (int s = blockDim.x / 2; s; s >>= 1) {
@@ -202,20 +229,24 @@ static inline void bf_sumcheck_prove_gpu(BfScDev& dv, const CF& cf,
     zeta.assign(l, bf128_zero());
     bf128_t *cur = dv.a, *oth = dv.b;
     std::vector<bf128_t> part;
+    bf128_t claim = bf128_zero(); bool have_claim = false;   // R2 (21.16)
     for (int s = 0; s < l; s++) {
         size_t half = (size_t)1 << (l - 1 - s);
         uint32_t nb = (uint32_t)((half + 255) / 256);
         if (nb > BFSC_MAXBLK) nb = BFSC_MAXBLK;
-        bfsc_round_kernel<CF><<<nb, 256>>>(cur, dv.n, half, cf, dv.part);
+        const int zlo = have_claim ? 1 : 0;
+        bfsc_round_kernel<CF><<<nb, 256>>>(cur, dv.n, half, cf, dv.part, zlo);
         part.resize((size_t)nb * (D + 1));
         cudaMemcpy(part.data(), dv.part, part.size() * sizeof(bf128_t), cudaMemcpyDeviceToHost);
         bf128_t* rp = pf.rounds.data() + (size_t)s * (D + 1);
         for (uint32_t b = 0; b < nb; b++)
-            for (int z = 0; z <= D; z++)
+            for (int z = zlo; z <= D; z++)
                 rp[z] = bf128_add(rp[z], part[(size_t)b * (D + 1) + z]);
+        if (have_claim) rp[0] = bf128_add(claim, rp[1]);
         tr.absorb("bfsc-round", rp, (D + 1) * sizeof(bf128_t));
         bf128_t zs = bf_chal128(tr);
         zeta[s] = zs;
+        claim = bfsc_lagrange(rp, D, zs); have_claim = true;
         size_t tot = (size_t)K * half;
         bfsc_fold_kernel<<<(uint32_t)((tot + 255) / 256), 256>>>(cur, oth, dv.n, K, half, zs);
         bf128_t* t = cur; cur = oth; oth = t;
