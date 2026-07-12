@@ -2599,3 +2599,141 @@ with nb=5 E^j blinds; honest ACCEPTS, false witness REJECTS, and the round
 message is UNIFORM with all 6 coefficients blinded (chi2 4.1).  So the full-ZK
 pattern (21.16) covers every gadget degree in the pipeline (HwF D=3, acc D=5,
 trans D up to 5).
+
+## 22. ZK at scale: compact retained-column storage (2026-07-11) [VERIFIED unless marked]
+
+Goal: TRUE zk=1 numbers at large sequence length / batch under the pod's
+41 GB cgroup cap.  Session-start reality check: the section-20 HEAD was
+already far leaner than the stale binaries suggested (fresh rebuild:
+d=64/seq256 zk=1 prove 39.4 s / 12.0 GB RSS; seq512 zk=1 86.2 s / 29.1 GB,
+both fine) -- but d=64/seq1024 zk=1 was SIGKILLed by the cgroup before
+printing anything: at 1024 tokens the per-product witness of the attention
+matmuls (P = seq^2*dh = 2^25 per instance) plus its committed (augmented)
+copies exceed the cap on their own.
+
+### 22.1 Where the bytes were
+
+Three retained-buffer classes dominated (all values are SMALL integers stored
+as 8-byte gl_t, most of them twice):
+
+1. TfWit: gen_witness RESERVES the augmented capacity for every dp/dg/dob
+   column (16 B/product for the 10 dp columns) and all matmul instances'
+   witnesses coexist from build_witness until each instance's prove.
+   ~28 GB at seq1024 before proving starts.
+2. Committed columns: every commit_col_nc holds the AUGMENTED column
+   ([real | mask], 2x for e=1) on the host until the end-of-layer batched
+   opening, because the opening ledger points at it.
+3. The virtual a/b broadcast columns (bc_aug of X/W over the product domain,
+   2 x 2^(lp+e) gl_t per matmul) parked in the XCtx varena until the lookup
+   flush, plus the other gadgets' varena broadcasts.
+
+### 22.2 The levers (all value-identical: same committed bytes, same
+transcript, byte-identical proofs)
+
+* **Packed small-int storage** (`p3zkc::Packed`, `pack_ints`/`unpack_ints`):
+  sign-magnitude recoding at 1/2/4 bytes per element (canonical x < 2^32 or
+  x > p - 2^32; columns with wider values -- the inverse columns -- stay
+  raw).  Exactly invertible; nothing about the proof changes, only where the
+  bytes sit between commit and opening.
+* **Witness packing** (`p3hwl::compact_wit`): p3tf::build_witness packs each
+  matmul instance's dp/dg/dob/db/dn right after generation; p3hwl::prove
+  materializes each column transiently at commit time (and, under g_free_dp,
+  releases the packed source right after its commit -- the packed witness and
+  the compacted committed column never coexist).
+* **Committed-column compaction** (`p3lu::compact_col` + the XCtx registry +
+  `PLedger::resolve`): after a committed column's LAST direct use its real
+  region is packed, a FRESH mask region is dropped to its recorded PRNG seed
+  (fresh_mask_into now returns the seed; the AL/SEL linked masks are
+  fresh_mask_seeded chains handed to the commitments), a linked mask region
+  is retained raw, and Col.v is freed.  Readers materialize bit-identically:
+  the lookup flush through a scratch materializer (`wcol`), the batched
+  opening through a new by-root resolver hook in prove_class (threshold
+  P3_COMPACT_MIN, default 2^20 values).  Staged inside p3hwl::prove: 8 of 10
+  dp columns right after the Dp claims, AL/SEL after the group-sum binding,
+  dg/dob/db/dn after the final-state slice + ybind.
+* **Lazy virtual a/b** (`p3hwl::g_lazy_ab`, LuColSpec gains a GEN closure):
+  the DM lookup's a/b broadcast columns are materialized transiently at
+  flush time from the committed X/W columns instead of being built at prove
+  time and parked in the varena (and gen_witness no longer builds wt.va/vb
+  at all).  The flush's merged-A build was restructured column-major (one
+  member column live at a time); per-element add order is IDENTICAL, so the
+  values and transcript are unchanged.
+* **varena release**: lu_flush clears the deferred virtual-column arena when
+  it finishes -- those arrays exist only to be read by the flush.
+
+Four post-hoc scale levers landed while pushing to seq=1024 / d=256 (git
+ced1fa5; root causes + transcript-identity validation in
+scale_debug_report.md), same discipline -- placement/representation only,
+byte-identical proofs:
+
+* **Per-column sumcheck bind + eager free** (`p3_scgpu.cuh`): the fused bind
+  allocated every half-column while all full columns were still live (24 GB
+  at N=2^27 x 16 cols = the whole card) with UNCHECKED cudaMallocAsync -- the
+  garbage pointer surfaced as an illegal memory access with no output.  Bind
+  and free one column at a time when nc*half is large; checked allocs.
+* **Streamed sumcheck prefix** (`p3_hawkeye.cuh` sc5z_gpu): chains larger
+  than the device (d=256's 2^28 x 12-16 cols = 24-32 GB) run their early
+  rounds from host-resident columns staged through 2^22-elt chunks, halving
+  until resident.  Exact field sums -> transcript byte-identical
+  (forced-stream proof_mb identical in both blind modes).  Includes the rd0
+  round-offset fix: `sc_prove_gpu` now passes chain-global round numbers to
+  the ScFix callbacks -- with local rounds, structured Libra blinds diverged
+  from the verifier's replay and seq=1024 zk=1 proved but failed verification
+  (`P3_SC5ZG_CAP` test hook; scale_debug_report.md bug 1).
+* **Mixed G-parking** (`p3_batchopen.cuh`): as many per-point G_t
+  device-parked as fit, remainder host-parked (pure host parking of tf-bo11
+  at seq=1024 was 25 GB on top of a 19 GB baseline -> 41 GB cgroup kill).
+* **Split NTT twiddle tables** (`p3_ntt.cuh`, logn>=26, override
+  `P3_NTT_SPLIT_MIN`): store `[2^hb powers base^lo | powers base^(hi<<hb)]`
+  and fetch W[k] as gl_mul of the two halves -- the SAME field elements, so
+  every butterfly, Merkle root, and transcript byte is unchanged; 4 GiB ->
+  384 KiB per direction at logn=30.  Plus `run`/`run_batch` stage counter
+  widened to size_t (uint32 `m <<= 2` wrapped to 0 at n=2^30 and looped
+  forever; scale_debug_report.md bug 2).
+
+### 22.3 Gate
+
+Full 26-suite battery green at final HEAD (battery_s22.log), PLUS the
+compaction teeth run (`run_compact_teeth.sh`): the composed + hawkeye + logup
+suites re-run with P3_COMPACT_MIN=0 so every committed column takes the
+compact/resolver path even at test dims.  Identity check: old-binary vs
+new-binary BENCH lines at seq=8 d=64 (zk=0/1) have IDENTICAL proof sizes
+(33.895 / 11.663 MB) and verify_ok=1 (the change is transcript-preserving by
+construction: every materialized value is bit-identical).
+
+### 22.4 Measured memory + speed [see BENCH_ZK_AT_SCALE.md for the full table]
+
+RTX 4090, 41 GB container cap, all zk=1 rows verify_ok=1 (final binary =
+section-22 levers + ced1fa5 fixes).  One composed LAYER unless noted:
+
+| config | tokens | prove (s) | verify (s) | proof (MB) | RSS (GB) |
+|---|---|---|---|---|---|
+| seq=256 d=64 b=1 | 256 | 63.4 | 0.74 | 52.0 | 4.9 |
+| seq=512 d=64 b=1 | 512 | 118.3 | 0.83 | 57.5 | 10.0 |
+| seq=1024 d=64 b=1 | 1024 | 298.8 | 0.94 | 64.2 | 31.3 |
+| seq=128 d=256 b=1 | 128 | 259.5 | 1.00 | 77.5 | 29.0 |
+| seq=128 d=64 b=16 | 2048 | 269.4 | 4.43 | 344.4 | 30.1 |
+| MODEL 4 layers, seq=128 d=64 | 128 | 115.2 | 2.13 | 162.8 | 6.4 |
+
+Before/after the levers (same configs, zk=1): seq256 39.4 s / 12.0 GB ->
+63.4 s / 4.9 GB; seq512 86.2 s / 29.1 GB -> 118.3 s / 10.0 GB; seq1024
+SIGKILL (no output) -> 298.8 s / 31.3 GB.  I.e. 2.4-2.9x memory down for
+1.4-1.6x prove time up (flush/rematerialization) -- the honest cost of the
+trade, and what makes seq=1024 / d=256 / 2048-token / multi-layer exist at
+all under the cap.  Full tables incl. overhead-vs-forward multipliers and
+the integerized reference: BENCH_ZK_AT_SCALE.md; plot:
+overhead_zk_at_scale.png.
+
+### 22.5 Remaining walls (honest) [REASONED]
+
+Two configs still die, and the levers do NOT fix them: d=256 seq=256 zk=1
+and the 4096+-token batch configs exit 137 (cgroup SIGKILL) on HOST WITNESS
+size -- the P=2^27 dff chain's ~24 GB of committed (augmented) host columns
+land on a ~23 GB process baseline and exceed the pod's 41 GB
+container-memory cap before any of the retained-storage levers get a chance
+to bite.  This is a host-capacity wall, not a GPU wall: every GPU-side wall
+hit on the way (fused-bind exhaustion, over-device sumcheck chains, G-parking,
+the 4 GiB logn=30 twiddle tables) was fixed in ced1fa5, and within the cap
+every attempted config proves and verifies.  Lifting it means either more
+host RAM or spilling the committed-column store to disk / streaming the dff
+chain's witness generation -- not attempted here.
