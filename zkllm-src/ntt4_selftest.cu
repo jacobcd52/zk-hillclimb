@@ -22,7 +22,7 @@ int main() {
             uint32_t nblocks    = (n   + P3_NTT_THREADS - 1) / P3_NTT_THREADS;
             p3_bitrev_kernel<<<nblocks, P3_NTT_THREADS>>>(d_in, d_a, n, logn);
             for (uint32_t m = 2; m <= n; m <<= 1)
-                p3_ntt_stage_kernel<<<halfblocks, P3_NTT_THREADS>>>(d_a, ntt.d_Wf, n, m);
+                p3_ntt_stage_kernel<<<halfblocks, P3_NTT_THREADS>>>(d_a, ntt.d_Wf, ntt.hb, n, m);
         }
         ntt.run(d_in, d_b, true);
         std::vector<gl_t> a(n), b(n);

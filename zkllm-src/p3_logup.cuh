@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <deque>
 #include <functional>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -142,7 +143,45 @@ struct Col {
     std::vector<gl_t> cw;
     uint32_t vreal = 0;
     uint64_t sseed = 0;
+    // ---- compact (dropped) storage, design doc section 22 ----
+    // After a column's last direct use the owner may compact_col() it: the
+    // real region is PACKED (sign-magnitude small ints), a fresh mask region
+    // is dropped to its PRNG seed, a linked mask region is retained raw, and
+    // v is freed.  mat_col_into() reproduces v bit-identically on demand (the
+    // opening ledger resolver and the lookup flush read through it).
+    p3zkc::Packed pk;              // packed real region [0, mstart)
+    std::vector<gl_t> cmask;       // retained mask region (linked masks only)
+    uint64_t mseed = 0;            // fresh-mask chain seed (regenerable)
+    size_t mstart = 0, ctot = 0;   // real-region end, full committed length
 };
+// compact a committed column in place (no transcript effect: same values are
+// reproduced at every later read).  False = kept raw (small, or wide values).
+static inline bool compact_col(Col& c) {
+    if (c.pk.on || c.v.empty()) return false;
+    size_t ms = c.mstart ? c.mstart : c.v.size();
+    if (!p3zkc::pack_ints(c.v.data(), ms, c.pk)) return false;
+    if (ms < c.v.size() && !c.mseed)
+        c.cmask.assign(c.v.begin() + ms, c.v.end());
+    c.ctot = c.v.size();
+    std::vector<gl_t>().swap(c.v);
+    std::vector<gl_t>().swap(c.cw);
+    return true;
+}
+// reproduce the committed column into out[0..n) (bit-identical to the
+// original v, zero-extended past ctot)
+static inline void mat_col_into(const Col& c, gl_t* out, size_t n) {
+    if (!c.pk.on) throw std::runtime_error("p3lu: mat_col_into on raw column");
+    if (n < c.ctot) throw std::runtime_error("p3lu: mat_col_into short buffer");
+    p3zkc::unpack_ints(c.pk, out);
+    size_t mlen = c.ctot - c.pk.n;
+    if (mlen) {
+        if (c.mseed) p3zkc::zprng_fill(c.mseed, out + c.pk.n, mlen);
+        else if (!c.cmask.empty()) memcpy(out + c.pk.n, c.cmask.data(), mlen * 8);
+        else memset(out + c.pk.n, 0, mlen * 8);          // masks-off control
+    }
+    if (n > c.ctot) memset(out + c.ctot, 0, (n - c.ctot) * 8);
+}
+static inline size_t col_len(const Col& c) { return c.pk.on ? c.ctot : c.v.size(); }
 static inline Col commit_col(std::vector<gl_t> vals, uint32_t R, bool gpu = true) {
     Col c; c.v = std::move(vals);
     c.root = gpu ? p3bf::commit_gpu(c.v, R, c.cw) : p3bf::commit(c.v, R, c.cw);
@@ -158,6 +197,7 @@ static inline Col commit_col_nc(std::vector<gl_t> vals, uint32_t R,
     if (p3zkc::G.on) {
         uint32_t vr = 0; while ((1ull << vr) < vals.size()) vr++;
         c.vreal = vr;
+        c.mstart = vals.size();
         {
             p3zp::T zt(p3zp::g.mask_gen);
             if (zkmask) {
@@ -171,7 +211,7 @@ static inline Col commit_col_nc(std::vector<gl_t> vals, uint32_t R,
                 size_t ml = ((size_t)1 << p3zkc::vfull(vr)) - ((size_t)1 << vr);
                 c.v = std::move(vals);
                 c.v.resize(Nr + ml, 0);
-                p3zkc::fresh_mask_into(c.v.data() + Nr, ml);
+                c.mseed = p3zkc::fresh_mask_into(c.v.data() + Nr, ml);
             }
         }
         c.sseed = p3zkc::next_seed();
@@ -183,6 +223,7 @@ static inline Col commit_col_nc(std::vector<gl_t> vals, uint32_t R,
     }
     c.v = std::move(vals);
     { uint32_t vr = 0; while ((1ull << vr) < c.v.size()) vr++; c.vreal = vr; }
+    c.mstart = c.v.size();
     {
         p3zp::T zt(p3zp::g.commit_plain);
         c.root = p3bf::commit_gpu_rootonly(c.v, R);
@@ -205,11 +246,21 @@ static inline Table make_table(std::vector<std::vector<gl_t>> cols) {
     return t;
 }
 
-// witness-column spec of one lookup: committed column or VIRTUAL array (the
-// caller binds virtual evals to a base commitment itself)
-struct LuColSpec { const Col* com; const std::vector<gl_t>* virt; };
-static inline LuColSpec LC(const Col* c) { return {c, nullptr}; }
-static inline LuColSpec LV(const std::vector<gl_t>* v) { return {nullptr, v}; }
+// witness-column spec of one lookup: committed column, VIRTUAL array (the
+// caller binds virtual evals to a base commitment itself), or a GENERATED
+// virtual column -- a closure that writes the gn values on demand at flush
+// time, so big derived broadcasts are never held between registration and
+// flush (design doc section 22)
+struct LuColSpec { const Col* com; const std::vector<gl_t>* virt;
+                   std::function<void(gl_t*, size_t)> gen; size_t gn = 0; };
+static inline LuColSpec LC(const Col* c) { return {c, nullptr, {}, 0}; }
+static inline LuColSpec LV(const std::vector<gl_t>* v) { return {nullptr, v, {}, 0}; }
+static inline LuColSpec LG(std::function<void(gl_t*, size_t)> g, size_t n) {
+    return {nullptr, nullptr, std::move(g), n};
+}
+static inline size_t luc_len(const LuColSpec& w) {
+    return w.com ? col_len(*w.com) : w.virt ? w.virt->size() : w.gn;
+}
 
 // ---------------- deferred lookup obligations (R3b instance merging) ----------------
 // Gadgets DEFER lookups into the shared context queue; the ledger owner (the
@@ -247,6 +298,25 @@ struct XCtx {
     std::deque<std::vector<Col>> colvecs;      // gadget witness-column arenas
     std::vector<LuObl> luq;                    // deferred lookup obligations
     std::deque<std::vector<gl_t>> varena;      // deferred virtual-column arrays
+    // compact-column registry (section 22): compacted committed columns keyed
+    // by root; the batched-opening resolver rebuilds their values on demand
+    std::map<p3fri::Hash, const Col*> creg;
+    XCtx() {
+        lg.resolve = [this](const p3fri::Hash& r, gl_t* out, size_t n) {
+            auto it = creg.find(r);
+            if (it == creg.end()) return false;
+            mat_col_into(*it->second, out, n);
+            return true;
+        };
+    }
+    XCtx(const XCtx&) = delete;
+    XCtx& operator=(const XCtx&) = delete;
+    // compact a column and register it for opening-time materialization
+    bool reg_compact(Col& c) {
+        if (!compact_col(c)) return false;
+        creg[c.root] = &c;
+        return true;
+    }
     std::vector<Col>& vec(size_t n) { colvecs.emplace_back(n); return colvecs.back(); }
     std::vector<gl_t>& varr(std::vector<gl_t> v) { varena.push_back(std::move(v)); return varena.back(); }
 };
@@ -661,6 +731,10 @@ static inline LookupProof prove_v(fs::Transcript& tr, const std::vector<LuColSpe
     LookupProof pf;
     const bool zk = p3zkc::G.on;
     if (zk && !lg) throw std::runtime_error("p3lu: zk requires the deferred ledger");
+    for (auto& w : W)
+        if (w.gen || (w.com && w.com->pk.on))
+            throw std::runtime_error("p3lu: compact/generated columns need the "
+                                     "merged-flush (v3) path");
     const std::vector<gl_t>* wv0 = W[0].com ? &W[0].com->v : W[0].virt;
     size_t N = wv0->size(), M = T.cols[0].size();       // zk: N = AUGMENTED length
     size_t Nreal = idx.size();
@@ -1099,17 +1173,32 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             auto& W = xc.luq[j].W;
             if ((uint32_t)W.size() != c) throw std::runtime_error("p3lu: group col count");
             for (auto& w : W) {
-                const std::vector<gl_t>* v = w.com ? &w.com->v : w.virt;
-                if (v->size() != NA)
+                if (luc_len(w) != NA)
                     throw std::runtime_error("p3lu: group member size: " + xc.luq[j].label +
                                              " col=" + std::to_string(&w - W.data()) +
-                                             " len=" + std::to_string(v->size()) +
+                                             " len=" + std::to_string(luc_len(w)) +
                                              " NA=" + std::to_string(NA));
                 if (w.com) tr.absorb("lug-W", w.com->root.data(), 32);
                 else       tr.absorb("lug-Wv", "virt", 4);
             }
         }
     }
+    // member-column materializer (section 22): committed COMPACT columns and
+    // GENERATED virtual columns decode into one reusable scratch; live vectors
+    // pass through untouched.  Values are bit-identical to the raw path.
+    std::vector<gl_t> wscr;
+    auto wcol = [&](const LuColSpec& w, size_t need) -> const std::vector<gl_t>* {
+        if (w.com) {
+            if (!w.com->pk.on) return &w.com->v;
+            wscr.resize(need);
+            mat_col_into(*w.com, wscr.data(), need);
+            return &wscr;
+        }
+        if (w.virt) return w.virt;
+        wscr.resize(need);
+        w.gen(wscr.data(), need);
+        return &wscr;
+    };
 
     // summed multiplicities over the union of subgroup rows (pad rows = row 0)
     double zt_cnt0 = p3zp::nowms();
@@ -1243,30 +1332,35 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
                     xc.luq[mi[0]].label.c_str(), n, g, k, E, n + g + E,
                     (double)NM * 8 / 1073741824.0);
 
-        // merged combined witness A over the subgroup's full merged domain
+        // merged combined witness A over the subgroup's full merged domain.
+        // COLUMN-major accumulation: each member column is materialized (or
+        // borrowed) exactly ONCE and gamma-axpy'd into its member rows across
+        // all ex slices -- only the per-element ADD ORDER differs from the
+        // row-major build (exact field adds: identical values, transcript
+        // unchanged), and compact/generated columns never coexist.
         double t_am = lu_now_ms();
-        std::vector<gl_t> Am(NM);
+        const size_t NAf = (size_t)1 << (n + E);       // full member column length
+        std::vector<gl_t> Am(NM, 0);
         for (uint32_t ex = 0; ex < (1u << E); ex++)
-            for (uint32_t j = 0; j < kp; j++) {
+            for (uint32_t j = k; j < kp; j++) {
                 gl_t* dst = Am.data() + (((size_t)ex << (n + g)) | ((size_t)j << n));
-                if (j >= k) {
-                    #pragma omp parallel for schedule(static) if (N >= 65536) num_threads(p3bf::nthr(N))
-                    for (size_t i = 0; i < N; i++) dst[i] = a0;
-                    continue;
-                }
-                auto& W = xc.luq[mi[j]].W;
-                std::vector<const gl_t*> srcs(c);
-                for (uint32_t t = 0; t < c; t++) {
-                    const std::vector<gl_t>& v = W[t].com ? W[t].com->v : *W[t].virt;
-                    srcs[t] = v.data() + ((size_t)ex << n);
-                }
                 #pragma omp parallel for schedule(static) if (N >= 65536) num_threads(p3bf::nthr(N))
-                for (size_t i = 0; i < N; i++) {
-                    gl_t sacc = 0;
-                    for (uint32_t t = 0; t < c; t++) sacc = gl_add(sacc, gl_mul(gp[t], srcs[t][i]));
-                    dst[i] = sacc;
+                for (size_t i = 0; i < N; i++) dst[i] = a0;
+            }
+        for (uint32_t j = 0; j < k; j++) {
+            auto& W = xc.luq[mi[j]].W;
+            for (uint32_t t = 0; t < c; t++) {
+                const std::vector<gl_t>& v = *wcol(W[t], NAf);
+                for (uint32_t ex = 0; ex < (1u << E); ex++) {
+                    gl_t* dst = Am.data() + (((size_t)ex << (n + g)) | ((size_t)j << n));
+                    const gl_t* src = v.data() + ((size_t)ex << n);
+                    const gl_t gpt = gp[t];
+                    #pragma omp parallel for schedule(static) if (N >= 65536) num_threads(p3bf::nthr(N))
+                    for (size_t i = 0; i < N; i++)
+                        dst[i] = gl_add(dst[i], gl_mul(gpt, src[i]));
                 }
             }
+        }
         double t_inv = lu_now_ms();
         const double am_ms = t_inv - t_am;
         if (p3zp::on()) { p3zp::g.lug_am.ms += am_ms; p3zp::g.lug_am.n++; }
@@ -1386,7 +1480,7 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             for (size_t jt = 0; jt < (size_t)k * c; jt++) {
                 auto& W = xc.luq[mi[jt / c]].W;
                 uint32_t t = (uint32_t)(jt % c);
-                const std::vector<gl_t>& v = W[t].com ? W[t].com->v : *W[t].virt;
+                const std::vector<gl_t>& v = *wcol(W[t], NAc);
                 cudaMemcpy(dcol, v.data(), NAc * 8, cudaMemcpyHostToDevice);
                 p3bf::p3bf_dot_kernel<<<NB, 256>>>(dcol, deq, dblk, (uint32_t)NAc);
                 cudaMemcpy(hb.data(), dblk, (size_t)NB * 8, cudaMemcpyDeviceToHost);
@@ -1400,8 +1494,19 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             for (size_t jt = 0; jt < (size_t)k * c; jt++) {
                 auto& W = xc.luq[mi[jt / c]].W;
                 uint32_t t = (uint32_t)(jt % c);
-                const std::vector<gl_t>& v = W[t].com ? W[t].com->v : *W[t].virt;
-                ymem[jt] = p3bf::eval_h(v, eqpm);
+                // thread-local materialization (small columns; the shared
+                // wscr scratch is not safe under this parallel loop)
+                std::vector<gl_t> loc;
+                const std::vector<gl_t>* v;
+                if (W[t].com && !W[t].com->pk.on) v = &W[t].com->v;
+                else if (!W[t].com && W[t].virt) v = W[t].virt;
+                else {
+                    loc.resize(NAc);
+                    if (W[t].com) mat_col_into(*W[t].com, loc.data(), NAc);
+                    else W[t].gen(loc.data(), NAc);
+                    v = &loc;
+                }
+                ymem[jt] = p3bf::eval_h(*v, eqpm);
             }
         }
         for (uint32_t j = 0; j < k; j++) {
@@ -1544,6 +1649,11 @@ static inline std::vector<GroupProof> lu_flush(fs::Transcript& tr, XCtx& xc,
     for (size_t si = 0; si < smem.size(); si++)
         out.push_back(prove_super(tr, xc, smem[si], sgn[si], R, Q, strict, gpu));
     xc.luq.clear();
+    // the deferred virtual-column arrays exist ONLY to be read by the flush
+    // (their claims are bound to base commitments; they are never in the
+    // opening ledger) -- release them here instead of holding gigabytes of
+    // broadcast columns until the end of the proof (section 22)
+    for (auto& a : xc.varena) { a.clear(); a.shrink_to_fit(); }
     return out;
 }
 

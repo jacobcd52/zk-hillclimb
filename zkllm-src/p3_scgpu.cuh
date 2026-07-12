@@ -85,10 +85,13 @@ __global__ void p3sg_msg_kernel(gl_t* const* cols, uint32_t nc, const gl_t* par,
 // dcols: device column arrays (bound in place round by round; the caller frees
 // what remains).  Returns the round challenges; appends messages (absorbed
 // with `tag` exactly like the host provers).
+// rd0: global round index of dcols' first round -- nonzero when a streamed
+// prefix (sc5z_gpu on an over-device-size chain) already ran rd0 rounds, so
+// the ScFix callbacks keep seeing chain-global round numbers.
 template <typename FF, typename MsgT, int NT, int MAXC>
 static inline std::vector<gl_t> sc_prove_gpu(fs::Transcript& tr, const char* tag,
         std::vector<gl_t*>& dcols, uint32_t N, const gl_t* par, uint32_t npar,
-        std::vector<MsgT>& msgs, const ScFix* fx = nullptr) {
+        std::vector<MsgT>& msgs, const ScFix* fx = nullptr, uint32_t rd0 = 0) {
     static_assert(sizeof(MsgT) == (size_t)NT * sizeof(gl_t), "msg layout");
     uint32_t v = 0; while ((1u << v) < N) v++;
     const uint32_t nc = (uint32_t)dcols.size(), NB = 256;
@@ -111,15 +114,44 @@ static inline std::vector<gl_t> sc_prove_gpu(fs::Transcript& tr, const char* tag
             s[t] = 0;
             for (uint32_t b = 0; b < NB; b++) s[t] = gl_add(s[t], hout[(size_t)t * NB + b]);
         }
-        if (fx && fx->fix) fx->fix(rd, s, NT);
+        if (fx && fx->fix) fx->fix(rd0 + rd, s, NT);
         memcpy(&m, s, sizeof m);
         msgs.push_back(m); tr.absorb(tag, &m, sizeof m);
         gl_t a = chal(tr); r.push_back(a);
-        if (fx && fx->bound) fx->bound(rd, a);
-        for (uint32_t k = 0; k < nc; k++) cudaMallocAsync(&ncols[k], (size_t)half * 8, 0);
-        cudaMemcpy(d_optrs, ncols.data(), (size_t)nc * sizeof(gl_t*), cudaMemcpyHostToDevice);
-        p3sg_bindn_kernel<<<((size_t)nc * half + 255) / 256, 256>>>(d_ptrs, d_optrs, nc, half, a);
-        for (uint32_t k = 0; k < nc; k++) { cudaFreeAsync(dcols[k], 0); dcols[k] = ncols[k]; }
+        if (fx && fx->bound) fx->bound(rd0 + rd, a);
+        if ((size_t)nc * half >= ((size_t)1 << 28)) {
+            // memory-tight chain: allocating all nc half-columns while the nc
+            // full columns are still alive doubles-and-a-half the footprint
+            // (16 cols x 2^27 needs 24 GB and the device has exactly that);
+            // bind one column at a time and free its source immediately.
+            // Same element math as the fused kernel -- transcript unchanged.
+            for (uint32_t k = 0; k < nc; k++) {
+                gl_t* nb = nullptr;
+                cudaError_t e = cudaMallocAsync(&nb, (size_t)half * 8, 0);
+                if (e != cudaSuccess) {
+                    cudaGetLastError();
+                    throw std::runtime_error(std::string("p3: sc_prove_gpu bind alloc failed (") +
+                                             std::to_string((size_t)half * 8) + " bytes): " +
+                                             cudaGetErrorString(e));
+                }
+                p3sg_bind_kernel<<<(half + 255) / 256, 256>>>(dcols[k], nb, half, a);
+                cudaFreeAsync(dcols[k], 0);
+                dcols[k] = nb;
+            }
+        } else {
+            for (uint32_t k = 0; k < nc; k++) {
+                cudaError_t e = cudaMallocAsync(&ncols[k], (size_t)half * 8, 0);
+                if (e != cudaSuccess) {
+                    cudaGetLastError();
+                    throw std::runtime_error(std::string("p3: sc_prove_gpu bind alloc failed (") +
+                                             std::to_string((size_t)half * 8) + " bytes): " +
+                                             cudaGetErrorString(e));
+                }
+            }
+            cudaMemcpy(d_optrs, ncols.data(), (size_t)nc * sizeof(gl_t*), cudaMemcpyHostToDevice);
+            p3sg_bindn_kernel<<<((size_t)nc * half + 255) / 256, 256>>>(d_ptrs, d_optrs, nc, half, a);
+            for (uint32_t k = 0; k < nc; k++) { cudaFreeAsync(dcols[k], 0); dcols[k] = ncols[k]; }
+        }
         n = half;
     }
     cudaFreeAsync(d_par, 0); cudaFreeAsync(d_ptrs, 0); cudaFreeAsync(d_optrs, 0);

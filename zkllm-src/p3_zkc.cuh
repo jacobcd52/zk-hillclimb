@@ -145,9 +145,21 @@ struct LcgLadder;                                 // fwd decl (defined below)
 static inline LcgLadder lcg_ladder();
 static inline void zprng_fill(uint64_t s, gl_t* out, size_t n);
 // fresh_mask written into a caller-provided (already zeroed) region -- same
-// seed draw + values, none of the mask-vector + augment-copy churn
-static inline void fresh_mask_into(gl_t* out, size_t n) {
-    if (G.mask_on) { uint64_t s = next_seed(); zprng_fill(s, out, n); }
+// seed draw + values, none of the mask-vector + augment-copy churn.  Returns
+// the chain seed (0 when masks are off): a mask region filled from a returned
+// seed is a pure PRNG stream, so the committed column's holder can DROP it and
+// regenerate bit-identically at opening time (design doc section 22).
+static inline uint64_t fresh_mask_into(gl_t* out, size_t n) {
+    if (G.mask_on) { uint64_t s = next_seed(); zprng_fill(s, out, n); return s; }
+    return 0;
+}
+// fresh_mask with the chain seed reported (same draws/values as fresh_mask)
+static inline std::vector<gl_t> fresh_mask_seeded(uint32_t v, uint64_t& seed_out) {
+    uint32_t e = e_of(v);
+    std::vector<gl_t> m(((size_t)1 << (v + e)) - ((size_t)1 << v), 0);
+    seed_out = 0;
+    if (G.mask_on) { seed_out = next_seed(); zprng_fill(seed_out, m.data(), m.size()); }
+    return m;
 }
 // [real | mask]: mask slices at the HIGH addresses (ex = high variables)
 static inline std::vector<gl_t> augment(const std::vector<gl_t>& vals, std::vector<gl_t> mask) {
@@ -520,6 +532,99 @@ static inline gl_t blind_term(const Blind& bl, gl_t rho, gl_t w) {
     gl_t acc = 0, wp = 1ULL;
     for (uint32_t j = 0; j < bl.nb; j++) { acc = gl_add(acc, gl_mul(wp, bl.yB[j])); wp = gl_mul(wp, w); }
     return gl_mul(rho, acc);
+}
+
+// ---- packed small-int column storage (design doc section 22) ----
+// Witness columns are field encodings of SMALL integers (bits, exponents,
+// mantissas, shift counts, signed aligned magnitudes): canonical x < 2^32 or
+// x > p - 2^32.  Packed stores sign-magnitude at 1/2/4 bytes per element --
+// a pure, exactly-invertible recoding of the SAME field values (nothing about
+// the proof changes; only where the bytes sit between commit and opening).
+struct Packed {
+    std::vector<uint8_t> mag;      // n * w little-endian magnitude bytes
+    std::vector<uint64_t> sgn;     // sign bitset (empty = all non-negative)
+    size_t n = 0;
+    uint8_t w = 0;
+    bool on = false;
+};
+// packing threshold: columns below 2^P3_COMPACT_MIN values stay raw (packing
+// tiny columns is churn, not memory; tests set 0 to exercise every path)
+static inline uint32_t compact_min() {
+    static int v = -1;
+    if (v < 0) { const char* e = getenv("P3_COMPACT_MIN"); v = e ? atoi(e) : 20; }
+    return (uint32_t)v;
+}
+static const gl_t PK_HALF = GL_P >> 1;
+// pack n values; false (p untouched, values kept) if any |magnitude| >= 2^32
+static inline bool pack_ints(const gl_t* v, size_t n, Packed& p, bool thresh = true) {
+    if (p.on || n == 0) return false;
+    if (thresh && n < ((size_t)1 << compact_min())) return false;
+    uint64_t maxm = 0; bool neg = false, big = false;
+    const int C = (int)std::min<size_t>(64, 1 + (n >> 20));
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(C) \
+        reduction(max:maxm) reduction(||:neg) reduction(||:big) if (C > 1)
+#endif
+    for (int ch = 0; ch < C; ch++) {
+        uint64_t mm = 0; bool ng = false, bg = false;
+        size_t lo = n * (size_t)ch / C, hi = n * (size_t)(ch + 1) / C;
+        for (size_t i = lo; i < hi; i++) {
+            gl_t x = v[i];
+            uint64_t m = x > PK_HALF ? GL_P - x : x;
+            if (x > PK_HALF) ng = true;
+            if (m > mm) mm = m;
+            if (m >> 32) { bg = true; break; }
+        }
+        if (mm > maxm) maxm = mm;
+        neg = neg || ng; big = big || bg;
+    }
+    if (big) return false;
+    p.w = maxm <= 0xFFu ? 1 : maxm <= 0xFFFFu ? 2 : 4;
+    p.n = n;
+    p.mag.resize(n * p.w);
+    if (neg) p.sgn.assign((n + 63) / 64, 0);
+    const uint8_t w = p.w;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(C) if (C > 1)
+#endif
+    for (int ch = 0; ch < C; ch++) {
+        // chunk bounds on 64-element boundaries so sign words are unshared
+        size_t lo = ch == 0 ? 0 : ((n * (size_t)ch / C) + 63) & ~(size_t)63;
+        size_t hi = ch == C - 1 ? n
+                  : std::min(n, ((n * (size_t)(ch + 1) / C) + 63) & ~(size_t)63);
+        for (size_t i = lo; i < hi; i++) {
+            gl_t x = v[i];
+            uint64_t m = x > PK_HALF ? GL_P - x : x;
+            if (x > PK_HALF) p.sgn[i >> 6] |= 1ull << (i & 63);
+            uint8_t* d = p.mag.data() + i * w;
+            for (int b = 0; b < w; b++) d[b] = (uint8_t)(m >> (8 * b));
+        }
+    }
+    p.on = true;
+    return true;
+}
+static inline bool pack_ints(const std::vector<gl_t>& v, Packed& p, bool thresh = true) {
+    return pack_ints(v.data(), v.size(), p, thresh);
+}
+// exact inverse: writes p.n values
+static inline void unpack_ints(const Packed& p, gl_t* out) {
+    const uint8_t w = p.w;
+    const bool hs = !p.sgn.empty();
+    const size_t n = p.n;
+    const int C = (int)std::min<size_t>(64, 1 + (n >> 20));
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(C) if (C > 1)
+#endif
+    for (int ch = 0; ch < C; ch++) {
+        size_t lo = n * (size_t)ch / C, hi = n * (size_t)(ch + 1) / C;
+        for (size_t i = lo; i < hi; i++) {
+            const uint8_t* d = p.mag.data() + i * w;
+            uint64_t m = 0;
+            for (int b = 0; b < w; b++) m |= (uint64_t)d[b] << (8 * b);
+            bool ng = hs && ((p.sgn[i >> 6] >> (i & 63)) & 1);
+            out[i] = ng ? GL_P - m : m;
+        }
+    }
 }
 
 } // namespace p3zkc

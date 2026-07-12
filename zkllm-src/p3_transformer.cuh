@@ -283,6 +283,8 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
         w.mm[MM_WV] = p3hwl::gen_witness(
             mmgold(T, d, d, cx, w.qn[QN_H1].S, W.w[W_V].codes, W.w[W_V].scales));
         for (int i : {MM_WQ, MM_WK, MM_WV}) w.mmY[i] = w.mm[i].Y;
+        // section 22: pack each instance's witness columns right away
+        for (int i : {MM_WQ, MM_WK, MM_WV}) p3hwl::compact_wit(w.mm[i]);
     }
 
     // -- attention, per (batch, head) instance --
@@ -333,6 +335,7 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
             mmgold(seq, dh, seq, w.qn[cfg.qnRQ(ai)].C, w.qn[cfg.qnRQ(ai)].S,
                    w.qn[cfg.qnRK(ai)].C, w.qn[cfg.qnRK(ai)].S));
         w.mmY[cfg.mmQK(ai)] = w.mm[cfg.mmQK(ai)].Y;
+        p3hwl::compact_wit(w.mm[cfg.mmQK(ai)]);
         // softmax
         {
             p3smx::Golden g; g.B = seq; g.n = seq;
@@ -381,6 +384,7 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
             }
         }
         w.mmY[cfg.mmPV(ai)] = w.mm[cfg.mmPV(ai)].Y;
+        p3hwl::compact_wit(w.mm[cfg.mmPV(ai)]);
         for (uint32_t p = 0; p < seq; p++)
             for (uint32_t j = 0; j < dh; j++)
                 w.attn[((size_t)b * seq + p) * d + (size_t)h * dh + j] =
@@ -396,6 +400,7 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
     w.mm[cfg.mmWO()] = p3hwl::gen_witness(
         mmgold(T, d, d, w.qn[cfg.qnAT()].C, w.qn[cfg.qnAT()].S, W.w[W_O].codes, W.w[W_O].scales));
     w.mmY[cfg.mmWO()] = w.mm[cfg.mmWO()].Y;
+    p3hwl::compact_wit(w.mm[cfg.mmWO()]);
     {
         p3bfa::Golden g; g.n = T * d; g.flags = 0;
         g.a = w.x0; g.b = w.mmY[cfg.mmWO()]; g.o.assign(g.n, 0);
@@ -422,6 +427,7 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
     w.mm[cfg.mmWU()] = p3hwl::gen_witness(
         mmgold(T, d, dff, w.qn[cfg.qnH2()].C, w.qn[cfg.qnH2()].S, W.w[W_U].codes, W.w[W_U].scales));
     w.mmY[cfg.mmWG()] = w.mm[cfg.mmWG()].Y; w.mmY[cfg.mmWU()] = w.mm[cfg.mmWU()].Y;
+    p3hwl::compact_wit(w.mm[cfg.mmWG()]); p3hwl::compact_wit(w.mm[cfg.mmWU()]);
 
     // -- swiglu, quantize, Wd, residual 2 --
     {
@@ -442,6 +448,7 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
     w.mm[cfg.mmWD()] = p3hwl::gen_witness(
         mmgold(T, dff, d, w.qn[cfg.qnSW()].C, w.qn[cfg.qnSW()].S, W.w[W_D].codes, W.w[W_D].scales));
     w.mmY[cfg.mmWD()] = w.mm[cfg.mmWD()].Y;
+    p3hwl::compact_wit(w.mm[cfg.mmWD()]);
     {
         p3bfa::Golden g; g.n = T * d; g.flags = 0;
         g.a = w.res1o; g.b = w.mmY[cfg.mmWD()]; g.o.assign(g.n, 0);
@@ -598,7 +605,7 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R, const Col* x0ext = nu
         }
     }
     for (int i : {MM_WQ, MM_WK, MM_WV})
-        o.Ymm[i] = commit_col_nc(w.mm[i].dob[p3hwl::O_YB], R);
+        o.Ymm[i] = commit_col_nc(p3hwl::wit_dob(w.mm[i], p3hwl::O_YB), R);
     for (uint32_t b = 0; b < c.batch; b++)
     for (uint32_t h = 0; h < nh; h++) {
         const uint32_t ai = b * nh + h;
@@ -619,7 +626,7 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R, const Col* x0ext = nu
         o.mm[c.mmQK(ai)].W = commit_u8(w.mm[c.mmQK(ai)].wcodes, R, (zk&&!p3zkc::G.nolink) ? &qkw : nullptr);
         o.mm[c.mmQK(ai)].XS = o.qn[c.qnRQ(ai)].SCALES;
         o.mm[c.mmQK(ai)].WS = o.qn[c.qnRK(ai)].SCALES;
-        o.Ymm[c.mmQK(ai)] = commit_col_nc(w.mm[c.mmQK(ai)].dob[p3hwl::O_YB], R);
+        o.Ymm[c.mmQK(ai)] = commit_col_nc(p3hwl::wit_dob(w.mm[c.mmQK(ai)], p3hwl::O_YB), R);
         o.sm[ai].S = o.Ymm[c.mmQK(ai)];
         o.sm[ai].P = commit_col_nc(w.sm[ai].ppat, R);
         o.qn[c.qnPB(ai)].X = o.sm[ai].P;
@@ -635,7 +642,7 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R, const Col* x0ext = nu
         o.mm[c.mmPV(ai)].W = commit_u8(w.mm[c.mmPV(ai)].wcodes, R, (zk&&!p3zkc::G.nolink) ? &pvw : nullptr);
         o.mm[c.mmPV(ai)].XS = o.qn[c.qnPB(ai)].SCALES;
         o.mm[c.mmPV(ai)].WS = o.qn[c.qnVT(ai)].SCALES;
-        o.Ymm[c.mmPV(ai)] = commit_col_nc(w.mm[c.mmPV(ai)].dob[p3hwl::O_YB], R);
+        o.Ymm[c.mmPV(ai)] = commit_col_nc(p3hwl::wit_dob(w.mm[c.mmPV(ai)], p3hwl::O_YB), R);
     }
     {   // attn concat: AT.X mask = concat of the PV output head slices
         std::vector<gl_t> atm = concat_mask();
@@ -650,7 +657,7 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R, const Col* x0ext = nu
     o.mm[c.mmWO()].W = commit_u8(w.mm[c.mmWO()].wcodes, R);
     o.mm[c.mmWO()].XS = o.qn[c.qnAT()].SCALES;
     o.mm[c.mmWO()].WS = commit_col_nc(w.mm[c.mmWO()].wsb, R);
-    o.Ymm[c.mmWO()] = commit_col_nc(w.mm[c.mmWO()].dob[p3hwl::O_YB], R);
+    o.Ymm[c.mmWO()] = commit_col_nc(p3hwl::wit_dob(w.mm[c.mmWO()], p3hwl::O_YB), R);
     o.res[0].X1 = o.rms[0].X;
     o.res[0].X2 = o.Ymm[c.mmWO()];
     o.res[0].OUT = commit_col_nc(w.res[0].opat, R);
@@ -668,7 +675,7 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R, const Col* x0ext = nu
             o.mm[i].W = commit_u8(w.mm[i].wcodes, R);
             o.mm[i].XS = o.qn[c.qnH2()].SCALES;
             o.mm[i].WS = commit_col_nc(w.mm[i].wsb, R);
-            o.Ymm[i] = commit_col_nc(w.mm[i].dob[p3hwl::O_YB], R);
+            o.Ymm[i] = commit_col_nc(p3hwl::wit_dob(w.mm[i], p3hwl::O_YB), R);
         }
     }
     o.sw.GATE = o.Ymm[c.mmWG()];
@@ -684,7 +691,7 @@ static inline TfOps commit_all(const TfWit& w, uint32_t R, const Col* x0ext = nu
     o.mm[c.mmWD()].W = commit_u8(w.mm[c.mmWD()].wcodes, R);
     o.mm[c.mmWD()].XS = o.qn[c.qnSW()].SCALES;
     o.mm[c.mmWD()].WS = commit_col_nc(w.mm[c.mmWD()].wsb, R);
-    o.Ymm[c.mmWD()] = commit_col_nc(w.mm[c.mmWD()].dob[p3hwl::O_YB], R);
+    o.Ymm[c.mmWD()] = commit_col_nc(p3hwl::wit_dob(w.mm[c.mmWD()], p3hwl::O_YB), R);
     o.res[1].X1 = o.res[0].OUT;
     o.res[1].X2 = o.Ymm[c.mmWD()];
     o.res[1].OUT = commit_col_nc(w.res[1].opat, R);
@@ -997,7 +1004,8 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     tp = now_ms();
     for (size_t i = 0; i < xc.lg.cls.size(); i++)
         pf.batches.push_back(p3bo::prove_class(tr, xc.lg.cls[i], R, Q,
-                                               "tf-bo" + std::to_string(i)));
+                                               "tf-bo" + std::to_string(i),
+                                               &xc.lg.resolve));
     P.batch += now_ms() - tp;
     P.total += now_ms() - tall;
     return pf;

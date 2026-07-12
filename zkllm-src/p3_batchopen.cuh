@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -146,6 +147,12 @@ struct PLedger {
     // fresh std::vector cost a 100s-of-MB mmap + page-fault + free cycle PER
     // USE at scale, which dominated the big batch classes)
     typedef std::function<void(gl_t*, size_t)> Gen;
+    // COMPACT-column resolver (design doc section 22): entries whose vals
+    // vector was dropped after compaction (and that carry no per-entry gen)
+    // are materialized BY ROOT through the ledger owner's registry.  Values
+    // must be bit-identical to the committed column.
+    typedef std::function<bool(const Hash&, gl_t*, size_t)> Resolve;
+    Resolve resolve;
     // DEVICE regenerator: fills a DEVICE buffer with the same n values (kernel
     // launches only) -- skips the host materialization + PCIe upload entirely.
     // Optional; when present it MUST produce bit-identical values to gen.
@@ -294,7 +301,8 @@ static inline SumMsg bo_scmsg(const gl_t* d_c, const gl_t* d_w, uint32_t half,
 
 // ==================== prover ====================
 static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_in,
-                                     uint32_t R, uint32_t Q, const std::string& label) {
+                                     uint32_t R, uint32_t Q, const std::string& label,
+                                     const PLedger::Resolve* resolve = nullptr) {
     const uint32_t v = C_in.v, N = 1u << v, T0 = (uint32_t)C_in.pts.size();
     const uint32_t logM0 = v + R, M0 = 1u << logM0;
     BatchProof pf; pf.v = v; pf.R = R; pf.Q = Q;
@@ -342,12 +350,16 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     const uint32_t nc = (uint32_t)hcols.size();
     pf.nc = nc;
     // dropped-column materialization: regenerate transiently per use, into ONE
-    // reusable scratch allocation (no per-use alloc/fault/free churn)
+    // reusable scratch allocation (no per-use alloc/fault/free churn).
+    // Order: live vals vector -> per-entry gen -> owner's compact resolver.
     std::vector<gl_t> genscratch;
     auto col_host = [&](uint32_t c) -> const std::vector<gl_t>* {
         if (hcols[c] && hcols[c]->size() == (size_t)N) return hcols[c];
         if (genscratch.size() != (size_t)N) genscratch.resize(N);
-        hgen[c](genscratch.data(), (size_t)N);
+        if (hgen[c]) hgen[c](genscratch.data(), (size_t)N);
+        else if (!(resolve && *resolve && (*resolve)(droots[c], genscratch.data(), (size_t)N)))
+            throw std::runtime_error("p3bo: no value source for column (class " +
+                                     label + ")");
         return &genscratch;
     };
 
@@ -508,8 +520,15 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
             }
         }
     } else {
-        // host-parked strG: the T G_t cannot all be device-resident, keep the
-        // point-major build (park each G_t as it completes)
+        // host-parked strG with MIXED PARKING: as many G_t as fit park on the
+        // DEVICE (dG[t] non-null), only the remainder round-trips through host
+        // memory.  Pure host parking of a long-seq class (tf-bo11 at seq=1024:
+        // T=25 x 1 GB) breaches the 41 GB container cap; the card usually has
+        // >10 GB free in this phase.  Point-major build (each G_t completes,
+        // then parks); transcript identical -- only WHERE the array lives.
+        size_t gfit = 0;
+        if (devfree > (size_t)4 * colbytes)
+            gfit = (size_t)(devfree * 0.92 - (size_t)3 * colbytes) / colbytes;
         gl_t* eqbuf = p3bf::dmalloc(N, "bo:eqbuf");
         for (uint32_t t = 0; t < T; t++) {
             gl_t* g = p3bf::dmalloc(N, "bo:G");
@@ -521,9 +540,13 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
             SumMsg m = bo_scmsg(g, eqbuf, N / 2, db0, db1, db2, hb0, hb1, hb2);
             msg0.s0 = gl_add(msg0.s0, m.s0); msg0.s1 = gl_add(msg0.s1, m.s1);
             msg0.s2 = gl_add(msg0.s2, m.s2);
-            hG[t].resize(N);
-            cudaMemcpy(hG[t].data(), g, colbytes, cudaMemcpyDeviceToHost);
-            cudaFreeAsync(g, 0);
+            if ((size_t)t < gfit) {
+                dG[t] = g;                                 // device-parked
+            } else {
+                hG[t].resize(N);
+                cudaMemcpy(hG[t].data(), g, colbytes, cudaMemcpyDeviceToHost);
+                cudaFreeAsync(g, 0);
+            }
         }
         cudaFreeAsync(eqbuf, 0);
     }
@@ -559,12 +582,13 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         } else if (rd == 0) {
             msg = msg0;
         } else {
-            gl_t* gbuf = strGdev ? nullptr : p3bf::dmalloc(L, "bo:gbuf");
+            gl_t* gbuf = nullptr;                          // lazy: host-parked points only
             gl_t* ebuf = p3bf::dmalloc(L, "bo:ebuf");
             for (uint32_t t = 0; t < T; t++) {
                 const gl_t* gsrc;
-                if (strGdev) gsrc = dG[t];
+                if (dG[t]) gsrc = dG[t];                   // device-parked
                 else {
+                    if (!gbuf) gbuf = p3bf::dmalloc(L, "bo:gbuf");
                     cudaMemcpy(gbuf, hG[t].data(), (size_t)L * 8, cudaMemcpyHostToDevice);
                     gsrc = gbuf;
                 }
@@ -595,30 +619,30 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
                 cudaFreeAsync(dG[t], 0); cudaFreeAsync(dEq[t], 0);
                 dG[t] = nG; dEq[t] = nE;
             }
-        } else if (strGdev) {
+        } else {                                           // strG: per-point parking
+            gl_t* gbuf = nullptr; gl_t* nbuf = nullptr;    // lazy: host-parked points only
             for (uint32_t t = 0; t < T; t++) {
-                gl_t* nG = p3bf::dmalloc(half ? half : 1, "bo:nGd");
-                p3bf::p3bf_bind_kernel<<<(half + 255) / 256, 256>>>(dG[t], nG, half, a);
-                cudaFreeAsync(dG[t], 0); dG[t] = nG;
+                if (dG[t]) {                               // device-parked
+                    gl_t* nG = p3bf::dmalloc(half ? half : 1, "bo:nGd");
+                    p3bf::p3bf_bind_kernel<<<(half + 255) / 256, 256>>>(dG[t], nG, half, a);
+                    cudaFreeAsync(dG[t], 0); dG[t] = nG;
+                } else {
+                    if (!gbuf) { gbuf = p3bf::dmalloc(L, "bo:gbind");
+                                 nbuf = p3bf::dmalloc(half ? half : 1, "bo:gbind2"); }
+                    cudaMemcpy(gbuf, hG[t].data(), (size_t)L * 8, cudaMemcpyHostToDevice);
+                    p3bf::p3bf_bind_kernel<<<(half + 255) / 256, 256>>>(gbuf, nbuf, half, a);
+                    hG[t].resize(half);
+                    cudaMemcpy(hG[t].data(), nbuf, (size_t)half * 8, cudaMemcpyDeviceToHost);
+                }
                 pref[t] = gl_mul(pref[t], eq1(a, C.pts[t][rd]));
             }
-        } else {
-            gl_t* gbuf = p3bf::dmalloc(L, "bo:gbind");
-            gl_t* nbuf = p3bf::dmalloc(half ? half : 1, "bo:gbind2");
-            for (uint32_t t = 0; t < T; t++) {
-                cudaMemcpy(gbuf, hG[t].data(), (size_t)L * 8, cudaMemcpyHostToDevice);
-                p3bf::p3bf_bind_kernel<<<(half + 255) / 256, 256>>>(gbuf, nbuf, half, a);
-                hG[t].resize(half);
-                cudaMemcpy(hG[t].data(), nbuf, (size_t)half * 8, cudaMemcpyDeviceToHost);
-                pref[t] = gl_mul(pref[t], eq1(a, C.pts[t][rd]));
-            }
-            cudaFreeAsync(gbuf, 0); cudaFreeAsync(nbuf, 0);
+            if (gbuf) { cudaFreeAsync(gbuf, 0); cudaFreeAsync(nbuf, 0); }
         }
     }
     if (fused) { cudaFreeAsync(dGs, 0); cudaFreeAsync(dEs, 0); }
     else if (!strG)
         for (uint32_t t = 0; t < T; t++) { cudaFreeAsync(dG[t], 0); cudaFreeAsync(dEq[t], 0); }
-    else if (strGdev)
+    else
         for (uint32_t t = 0; t < T; t++) if (dG[t]) cudaFreeAsync(dG[t], 0);
     hG.clear(); hG.shrink_to_fit();
     p3bf::ckcuda("bo:reduction");

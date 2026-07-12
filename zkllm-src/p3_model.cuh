@@ -217,6 +217,7 @@ static inline MdlWit build_model_witness(const ModelWeights& MW,
         L.y.assign((size_t)T * V, 0);
         p3hwl::Tamper hm{p3hwl::TM_STATE, 1, 1, 0};
         w.mmH = p3hwl::gen_witness(L, true, tamper == MDT_HEAD_MM ? &hm : nullptr);
+        p3hwl::compact_wit(w.mmH);      // section 22: pack the head witness
     }
     w.logits = w.mmH.Y;
     w.logitsPub = w.logits;
@@ -282,7 +283,7 @@ static inline MdlOps commit_model(const MdlWit& w, const ModelWeights& MW, uint3
     o.mmH.W = commit_u8(w.mmH.wcodes, R);      // static head weight (secret leaf)
     o.mmH.XS = o.qnF.SCALES;
     o.mmH.WS = commit_col_nc(std::vector<gl_t>(w.mmH.wsb), R);
-    o.YH = commit_col_nc(std::vector<gl_t>(w.mmH.dob[p3hwl::O_YB]), R);
+    o.YH = commit_col_nc(p3hwl::wit_dob(w.mmH, p3hwl::O_YB), R);
     return o;
 }
 
@@ -442,7 +443,8 @@ static inline MdlProof prove_model(fs::Transcript& tr, const MdlWit& w, const Md
     tp = now_ms();
     for (size_t i = 0; i < xc.lg.cls.size(); i++)
         pf.batches.push_back(p3bo::prove_class(tr, xc.lg.cls[i], R, Q,
-                                               "tf-bo" + std::to_string(i)));
+                                               "tf-bo" + std::to_string(i),
+                                               &xc.lg.resolve));
     P.batch += now_ms() - tp;
     P.total += now_ms() - tall;
     return pf;
