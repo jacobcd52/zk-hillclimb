@@ -267,7 +267,10 @@ static inline void compact_wit(LayerWit& wt) {
       if (on < 0) { const char* e = getenv("P3_PACK_WIT"); on = e ? atoi(e) : 1; }
       if (!on) return; }
     auto pk1 = [](std::vector<gl_t>& v, p3zkc::Packed& p) {
-        if (p3zkc::pack_ints(v, p, /*thresh=*/false)) std::vector<gl_t>().swap(v);
+        if (p3zkc::pack_ints(v, p, /*thresh=*/false)) {
+            std::vector<gl_t>().swap(v);
+            p3zkc::spill_packed(p);                        // no-op unless P3_PK_SPILL
+        }
     };
     for (int c = 0; c < NDP; c++) pk1(wt.dp[c], wt.pdp[c]);
     for (int c = 0; c < NDG; c++) pk1(wt.dg[c], wt.pdg[c]);
@@ -682,10 +685,18 @@ static inline std::vector<gl_t> sc5_prove(fs::Transcript& tr, const char* tag,
 // writes the (halved) owned vector.  Messages are identical.
 struct ColSrc {
     std::vector<gl_t> own; const std::vector<gl_t>* bor = nullptr;
+    // compacted committed column (section 22b): values are materialized on
+    // demand in chunks (mat_col_range) -- only sc5z_gpu consumes this form
+    const p3lu::Col* cc = nullptr;
     ColSrc() {}
     ColSrc(std::vector<gl_t>&& v) : own(std::move(v)) {}
     explicit ColSrc(const std::vector<gl_t>* p) : bor(p) {}
-    const std::vector<gl_t>& get() const { return bor ? *bor : own; }
+    explicit ColSrc(const p3lu::Col* c) : cc(c) {}
+    const std::vector<gl_t>& get() const {
+        if (cc) throw std::runtime_error("p3hwl: raw get() on compacted ColSrc");
+        return bor ? *bor : own;
+    }
+    size_t size() const { return cc ? p3lu::col_len(*cc) : (bor ? bor->size() : own.size()); }
 };
 static inline std::vector<gl_t> sc5_prove_srcs(fs::Transcript& tr, const char* tag,
         std::vector<ColSrc> cols, const CFn& F, std::vector<Msg5>& msgs,
@@ -775,8 +786,37 @@ static inline std::vector<gl_t> beq(const std::vector<gl_t>& z) {
 // end-of-protocol batched opening of the column's size class (p3_batchopen).
 static inline gl_t claimc(fs::Transcript& tr, p3bo::PLedger& lg, const Col& c,
                           const std::vector<gl_t>& z) {
-    gl_t y = (z.size() >= 16 && p3fri::g_gpu_merkle)
-           ? p3bf::eval_h_gpu(c.v, z) : p3bf::eval_h(c.v, p3bf::build_eq(z));
+    gl_t y;
+    if (c.pk.on) {
+        // compacted BEFORE its claim (section 22b early compaction):
+        // materialize transiently -- identical values, identical evaluation.
+        // GPU path: device-side materialization + the same eq/dot kernels and
+        // block-sum order as eval_h_gpu -> bit-identical y, no 2^v host stage
+        if (z.size() >= 16 && p3fri::g_gpu_merkle) {
+            const uint32_t v = (uint32_t)z.size(), NB = 256;
+            const size_t N = (size_t)1 << v;
+            gl_t* dcol = p3bf::dmalloc(N, "claimc:col");
+            mat_col_range_dev(c, 0, dcol, N);
+            gl_t* dz = p3bf::dmalloc(v, "claimc:z");
+            cudaMemcpy(dz, z.data(), (size_t)v * 8, cudaMemcpyHostToDevice);
+            gl_t* deq = p3bf::dmalloc(N, "claimc:eq");
+            p3bf::p3bf_eq_kernel<<<(uint32_t)((N + 255) / 256), 256>>>(dz, deq, v, (uint32_t)N);
+            gl_t* dblk = p3bf::dmalloc(NB, "claimc:blk");
+            p3bf::p3bf_dot_kernel<<<NB, 256>>>(dcol, deq, dblk, (uint32_t)N);
+            std::vector<gl_t> hb(NB);
+            cudaMemcpy(hb.data(), dblk, (size_t)NB * 8, cudaMemcpyDeviceToHost);
+            y = 0; for (auto x : hb) y = gl_add(y, x);
+            cudaFreeAsync(dcol, 0); cudaFreeAsync(dz, 0);
+            cudaFreeAsync(deq, 0); cudaFreeAsync(dblk, 0);
+        } else {
+            std::vector<gl_t> tmp((size_t)1 << z.size());
+            mat_col_into(c, tmp.data(), tmp.size());
+            y = p3bf::eval_h(tmp, p3bf::build_eq(z));
+        }
+    } else {
+        y = (z.size() >= 16 && p3fri::g_gpu_merkle)
+          ? p3bf::eval_h_gpu(c.v, z) : p3bf::eval_h(c.v, p3bf::build_eq(z));
+    }
     tr.absorb("hwl-y", &y, sizeof y);
     lg.add(&c.v, c.root, z, y, c.sseed);
     return y;
@@ -1499,18 +1539,21 @@ struct FF5Zk {
 // resident columns through the device.  Field addition is exact and
 // associative, so the chunked accumulation is bit-identical to the resident
 // kernel path -- transcript bytes unchanged.
+// chunk loader: stages [off, off+cnt) of source column k into a device
+// buffer -- straight memcpy for raw host columns, mat_col_range through a
+// bounce buffer for compacted committed columns (identical bytes; section 22b)
+typedef std::function<void(uint32_t, size_t, size_t, gl_t*)> SgLoad;
 template <typename FFX>
-static inline void sc5zg_stream_msg(const std::vector<const gl_t*>& hsrc, size_t n,
+static inline void sc5zg_stream_msg(const SgLoad& load, uint32_t ntot, size_t n,
         std::vector<gl_t*>& dch, gl_t** d_ptrs, const gl_t* d_par, gl_t* d_out,
         size_t CH, gl_t* s) {
-    const uint32_t ntot = (uint32_t)hsrc.size();
     const int NB = 256;
     std::vector<gl_t> hout((size_t)5 * NB);
     for (int t = 0; t < 5; t++) s[t] = 0;
     for (size_t off = 0; off < n; off += CH) {
         size_t c = std::min(CH, n - off);
         for (uint32_t k = 0; k < ntot; k++)
-            cudaMemcpy(dch[k], hsrc[k] + off, c * 8, cudaMemcpyHostToDevice);
+            load(k, off, c, dch[k]);
         p3sg::p3sg_msg_kernel<FFX, 5, 40><<<NB, 256>>>(d_ptrs, ntot, d_par, d_out,
                                                        (uint32_t)(c / 2));
         cudaMemcpy(hout.data(), d_out, (size_t)5 * NB * 8, cudaMemcpyDeviceToHost);
@@ -1522,11 +1565,11 @@ static inline void sc5zg_stream_msg(const std::vector<const gl_t*>& hsrc, size_t
 // either a device destination (when the halved chain finally fits resident)
 // or a host destination (keep streaming).  Same element math as the resident
 // bind kernels.
-static inline void sc5zg_stream_bind(const gl_t* src, size_t n, gl_t a,
+static inline void sc5zg_stream_bind(const SgLoad& load, uint32_t k, size_t n, gl_t a,
         gl_t* dchunk, gl_t* dhalf, gl_t* dst_dev, gl_t* dst_host, size_t CH) {
     for (size_t off = 0; off < n; off += CH) {
         size_t c = std::min(CH, n - off), h = c / 2;
-        cudaMemcpy(dchunk, src + off, c * 8, cudaMemcpyHostToDevice);
+        load(k, off, c, dchunk);
         p3sg::p3sg_bind_kernel<<<(uint32_t)((h + 255) / 256), 256>>>(dchunk, dhalf,
                                                                      (uint32_t)h, a);
         if (dst_dev)
@@ -1549,7 +1592,7 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
         std::vector<ColSrc>&& cols, const gl_t* lam, uint32_t nlam,
         std::vector<Msg5>& msgs, gl_t base_claim, uint32_t R,
         p3bo::PLedger& lg, std::deque<Col>& keep, p3zkc::Blind& bl) {
-    size_t N = cols[0].get().size();
+    size_t N = cols[0].size();
     if (p3bf::memlog() && N >= ((size_t)1 << 24)) {
         char b[96]; snprintf(b, sizeof b, "sc5z_gpu %s N=2^%u x %zu cols", tag,
                              ilog2(N), cols.size());
@@ -1603,6 +1646,18 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
     auto dev_fits = [&](size_t nn) {
         size_t fb = 0, tb = 0;
         if (cudaMemGetInfo(&fb, &tb) != cudaSuccess) { cudaGetLastError(); return true; }
+        // the async pool retains freed blocks (release threshold = max), so
+        // MemGetInfo alone UNDERCOUNTS what dmalloc can recycle -- without the
+        // pool's idle reservation the post-commit stream sends the round-0
+        // halves to HOST (ntot x N/2 x 8 = +14 GB at P=2^27: the cgroup kill)
+        cudaMemPool_t pool;
+        if (cudaDeviceGetDefaultMemPool(&pool, 0) == cudaSuccess) {
+            uint64_t res = 0, used = 0;
+            if (cudaMemPoolGetAttribute(pool, cudaMemPoolAttrReservedMemCurrent, &res) == cudaSuccess &&
+                cudaMemPoolGetAttribute(pool, cudaMemPoolAttrUsedMemCurrent, &used) == cudaSuccess &&
+                res > used) fb += (size_t)(res - used);
+        }
+        cudaGetLastError();
         static long long cap = -2;
         if (cap == -2) { const char* e = getenv("P3_SC5ZG_CAP"); cap = e ? atoll(e) : -1; }
         if (cap >= 0 && (size_t)cap < fb) fb = (size_t)cap;
@@ -1614,11 +1669,22 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
     size_t n = N; uint32_t rd0 = 0;
     // host source views: the original columns before streaming, the streamed
     // halves (hown) after -- the resident upload below reads THESE, since
-    // streaming round 0 frees the original columns as it consumes them
-    std::vector<const gl_t*> hsrc(ntot);
-    for (uint32_t k = 0; k < ncb; k++) hsrc[k] = cols[k].get().data();
+    // streaming round 0 frees the original columns as it consumes them.
+    // Compacted committed columns (cc) have no raw host array: round-0 chunk
+    // loads rematerialize their ranges through a bounce buffer (identical
+    // bytes on the device, so kernel sums and transcript are unchanged).
+    std::vector<const gl_t*> hsrc(ntot, nullptr);
+    std::vector<const p3lu::Col*> ccp(ntot, nullptr);
+    for (uint32_t k = 0; k < ncb; k++) {
+        if (cols[k].cc) ccp[k] = cols[k].cc;
+        else hsrc[k] = cols[k].get().data();
+    }
     for (uint32_t j = 0; j < nbl; j++) hsrc[ncb + j] = mb.Bv[j].data();
     std::vector<std::vector<gl_t>> hown(ntot);
+    SgLoad load = [&](uint32_t k, size_t off, size_t cnt, gl_t* ddst) {
+        if (ccp[k]) p3lu::mat_col_range_dev(*ccp[k], off, ddst, cnt);
+        else cudaMemcpy(ddst, hsrc[k] + off, cnt * 8, cudaMemcpyHostToDevice);
+    };
     if (!dev_fits(n)) {
         if (p3bf::memlog()) {
             char b[96]; snprintf(b, sizeof b, "sc5z_gpu STREAM %s N=2^%u x %u cols",
@@ -1639,9 +1705,9 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
             size_t half = n / 2;
             gl_t s[5];
             if (mb.structured)
-                sc5zg_stream_msg<FF>(hsrc, n, dch, d_ptrs, d_lam, d_out, CH, s);
+                sc5zg_stream_msg<FF>(load, ntot, n, dch, d_ptrs, d_lam, d_out, CH, s);
             else
-                sc5zg_stream_msg<FF5Zk<FF>>(hsrc, n, dch, d_ptrs, d_par, d_out, CH, s);
+                sc5zg_stream_msg<FF5Zk<FF>>(load, ntot, n, dch, d_ptrs, d_par, d_out, CH, s);
             if (fx.fix) fx.fix(rd0, s, 5);
             Msg5 m; memcpy(&m, s, sizeof m);
             msgs.push_back(m); tr.absorb(tag, &m, sizeof m);
@@ -1653,12 +1719,13 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
                 std::vector<gl_t> nb2;
                 if (to_dev) dc[k] = p3bf::dmalloc(half, "sc5zg:col");
                 else nb2.resize(half);
-                sc5zg_stream_bind(hsrc[k], n, a, dch[k], dhalf,
+                sc5zg_stream_bind(load, k, n, a, dch[k], dhalf,
                                   to_dev ? dc[k] : nullptr,
                                   to_dev ? nullptr : nb2.data(), CH);
                 // release each round's source as soon as it is consumed
                 if (rd0 == 0) {
-                    if (k < ncb) { std::vector<gl_t>().swap(cols[k].own); cols[k].bor = nullptr; }
+                    if (k < ncb) { std::vector<gl_t>().swap(cols[k].own); cols[k].bor = nullptr;
+                                   ccp[k] = nullptr; }   // cc: packed form stays for opening
                     else std::vector<gl_t>().swap(mb.Bv[k - ncb]);   // merged copy lives in mb.MB
                 }
                 if (to_dev) std::vector<gl_t>().swap(hown[k]);
@@ -1676,6 +1743,11 @@ static inline std::vector<gl_t> sc5z_gpu(fs::Transcript& tr, const char* tag, ui
         dc.resize(ntot);
         for (uint32_t k = 0; k < ntot; k++) {
             dc[k] = p3bf::dmalloc(n, k < ncb ? "sc5zg:col" : "sc5zg:blind");
+            if (rd0 == 0 && k < ncb && ccp[k]) {
+                p3lu::mat_col_range_dev(*ccp[k], 0, dc[k], n);
+                ccp[k] = nullptr;
+                continue;
+            }
             cudaMemcpy(dc[k], hsrc[k], n * 8, cudaMemcpyHostToDevice);
             if (rd0 == 0) {
                 if (k < ncb) { std::vector<gl_t>().swap(cols[k].own); cols[k].bor = nullptr; }
@@ -1713,7 +1785,7 @@ static inline std::vector<gl_t> sc5rz_srcs(fs::Transcript& tr, const char* tag, 
         p3bo::PLedger& lg, std::deque<Col>& keep, p3zkc::Blind& bl) {
     if (!p3zkc::G.on) return sc5_run_srcs<FF>(tr, tag, std::move(cols), lam, nlam, F, msgs);
     if (p3fri::g_gpu_merkle && cols.size() + 4 <= 40 &&
-        cols[0].get().size() >= (1u << 14) && !p3zkc::G.sim)
+        cols[0].size() >= (1u << 14) && !p3zkc::G.sim)
         return sc5z_gpu<FF>(tr, tag, vreal, std::move(cols), lam, nlam, msgs,
                             base_claim, R, lg, keep, bl);
     return sc5z_srcs(tr, tag, vreal, std::move(cols), F, msgs, base_claim, R, lg, keep, bl);
@@ -1831,6 +1903,20 @@ static inline double now_ms() {
         std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 }
 
+// section 22b: EARLY compaction of the product-domain committed columns.
+// Without it the NDP augmented columns sit raw on the host from their commit
+// through the Dp zero-check (12 x 2 GB at P=2^27 -- the d=256 seq=256 host
+// OOM wall); with it each column is packed right after its commit and every
+// later reader (zero-check chunks, claims, lookup flush, batched opening)
+// rematerializes bit-identical values on demand.  Threshold = log2 of the
+// AUGMENTED column length (P3_EARLY_CPK_MIN, <0 disables).
+static inline bool ecpk_on(uint32_t lp) {
+    static long long mn = -2;
+    if (mn == -2) { const char* e = getenv("P3_EARLY_CPK_MIN"); mn = e ? atoll(e) : 25; }
+    if (mn < 0) return false;
+    return p3zkc::vfull(lp) >= (uint32_t)mn;
+}
+
 // ==================== prover ====================
 // Ypub lets the selftest force a WRONG public output claim with an otherwise
 // honest transcript (default: the witness's own bf16 output).
@@ -1943,18 +2029,34 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
                     std::vector<gl_t>().swap(raw); return v; }
         return raw;                                       // copy (raw, kept)
     };
+    // section 22b: compact each product-domain column right after its commit
+    // (gpu-batch path only -- the CPU sc5z fallback and the simulator read
+    // raw columns).  Downstream readers rematerialize on demand.
+    const bool early_cpk = zk && ecpk_on(d.lp) && p3fri::g_gpu_merkle &&
+                           !p3zkc::G.sim && !getenv("P3_NOGPU5");
+    // device-mask pre-compacted commits (P3_CPK_DEV=0 forces the classic path)
+    static int cpkdev_env = -1;
+    if (cpkdev_env < 0) { const char* e = getenv("P3_CPK_DEV"); cpkdev_env = e ? atoi(e) : 1; }
+    const bool cpk_dev = early_cpk && cpkdev_env;
     for (int c = 0; c < NDP; c++) {
         // g_free_dp: the caller cedes the column anyway -- MOVE it into the
         // commit (identical values; skips a 100s-of-MB copy per big column)
         CDp[c] = p3lu::commit_col_nc(wsrc(wtm.dp[c], wtm.pdp[c], g_free_dp), R,
-                                     mof(c, P_AL, &mAL, P_SEL, &mSEL));
+                                     mof(c, P_AL, &mAL, P_SEL, &mSEL), cpk_dev);
         pf.rdp[c] = CDp[c].root;
+        if (zk) {
+            // the AL/SEL linked masks are recorded PRNG chains: hand the seeds
+            // to the commitments so compaction can drop the mask regions
+            if (c == P_AL) CDp[c].mseed = sAL;
+            if (c == P_SEL) CDp[c].mseed = sSEL;
+        }
+        if (early_cpk) XC.reg_compact(CDp[c]);
     }
-    if (zk) {
-        // the AL/SEL linked masks are recorded PRNG chains: hand the seeds to
-        // the commitments so compaction can drop the mask regions
-        CDp[P_AL].mseed = sAL;
-        CDp[P_SEL].mseed = sSEL;
+    if (early_cpk) {
+        // the AL/SEL linked-mask vectors are recorded chains too -- their
+        // copies live (dropped-to-seed) inside the commitments
+        std::vector<gl_t>().swap(mAL);
+        std::vector<gl_t>().swap(mSEL);
     }
     for (int c = 0; c < NDG; c++) {
         const std::vector<gl_t>* m = nullptr;
@@ -2081,7 +2183,8 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
     {
         std::vector<ColSrc> cols; cols.reserve(NDP + 2);
         cols.push_back(ColSrc(beq(p3zkc::zpt(zC))));
-        for (int c = 0; c < NDP; c++) cols.push_back(ColSrc(&CDp[c].v));  // borrowed
+        for (int c = 0; c < NDP; c++)          // borrowed raw, or compacted view
+            cols.push_back(CDp[c].pk.on ? ColSrc(&CDp[c]) : ColSrc(&CDp[c].v));
         cols.push_back(ColSrc(p3zkc::bc_aug(CDg[G_MAX].v, ilog2(d.G), lgP2, d.P,
                                             [](size_t p) { return p >> 5; })));
         CFn F = [&](const gl_t* v) { return F_dp(v, lamPv); };
@@ -2167,7 +2270,7 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         std::vector<gl_t> ptg = z2;
         if (zk) { ptg.push_back(zex2); ptg.resize(d.lgi + e_p, 0); }
         std::vector<gl_t> eqDg = beq(ptg);
-        size_t Paug = CDp[P_AL].v.size();
+        size_t Paug = p3lu::col_len(CDp[P_AL]);
         std::vector<gl_t> EQg(Paug);
         for (size_t q = 0; q < Paug; q++) {
             size_t ex = q >> d.lp, p = q & (((size_t)1 << d.lp) - 1);
@@ -2175,7 +2278,8 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         }
         std::vector<ColSrc> cols;
         cols.push_back(ColSrc(std::move(EQg)));
-        cols.push_back(ColSrc(&CDp[P_AL].v)); cols.push_back(ColSrc(&CDp[P_SEL].v));
+        cols.push_back(CDp[P_AL].pk.on ? ColSrc(&CDp[P_AL]) : ColSrc(&CDp[P_AL].v));
+        cols.push_back(CDp[P_SEL].pk.on ? ColSrc(&CDp[P_SEL]) : ColSrc(&CDp[P_SEL].v));
         gl_t lam2[2] = {lamS1, lamS2};
         CFn F = [&](const gl_t* v) { return F_gs(v, lam2); };
         gl_t base0 = gl_add(gl_mul(lamS1, pf.yGSc), gl_mul(lamS2, gl_sub(1ULL, pf.yGSa)));

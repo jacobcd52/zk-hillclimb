@@ -181,6 +181,55 @@ static inline void mat_col_into(const Col& c, gl_t* out, size_t n) {
     }
     if (n > c.ctot) memset(out + c.ctot, 0, (n - c.ctot) * 8);
 }
+// reproduce values [off, off+len) of a compacted committed column -- bit-
+// identical to the corresponding mat_col_into slice.  Lets consumers stream
+// chunks of a compacted column without materializing all of it (the huge
+// product-domain zero-checks read through this).
+static inline void mat_col_range(const Col& c, size_t off, gl_t* out, size_t len) {
+    if (!c.pk.on) throw std::runtime_error("p3lu: mat_col_range on raw column");
+    const size_t end = off + len;
+    if (off < c.pk.n)
+        p3zkc::unpack_ints_range(c.pk, off, std::min(end, c.pk.n) - off, out);
+    if (end > c.pk.n && off < c.ctot) {
+        size_t lo = std::max(off, c.pk.n), hi = std::min(end, c.ctot);
+        gl_t* dst = out + (lo - off);
+        if (c.mseed) p3zkc::zprng_fill_at(c.mseed, lo - c.pk.n, dst, hi - lo);
+        else if (!c.cmask.empty()) memcpy(dst, c.cmask.data() + (lo - c.pk.n), (hi - lo) * 8);
+        else memset(dst, 0, (hi - lo) * 8);
+    }
+    if (end > c.ctot) {
+        size_t z0 = std::max(off, c.ctot);
+        memset(out + (z0 - off), 0, (end - z0) * 8);
+    }
+}
+// mat_col_range DIRECTLY INTO a device buffer: packed bytes upload + device
+// unpack for the real region, jump-ahead device PRNG chain for a seeded mask
+// region -- bit-identical values with 2-8x less PCIe than staging raw
+// elements through the host
+static inline void mat_col_range_dev(const Col& c, size_t off, gl_t* dout, size_t len) {
+    if (!c.pk.on) throw std::runtime_error("p3lu: mat_col_range_dev on raw column");
+    const size_t end = off + len;
+    if (off < c.pk.n)
+        p3zkc::unpack_ints_dev(c.pk, off, std::min(end, c.pk.n) - off, dout);
+    if (end > c.pk.n && off < c.ctot) {
+        size_t lo = std::max(off, c.pk.n), hi = std::min(end, c.ctot);
+        gl_t* dst = dout + (lo - off);
+        if (c.mseed) {
+            static const p3zkc::LcgLadder L = p3zkc::lcg_ladder();
+            p3zkc_lcgchain_kernel<<<(uint32_t)((hi - lo + 255) / 256), 256>>>(
+                dst, p3zkc::lcg_jump(c.mseed, lo - c.pk.n, L), hi - lo, L);
+        } else if (!c.cmask.empty()) {
+            cudaMemcpy(dst, c.cmask.data() + (lo - c.pk.n), (hi - lo) * 8,
+                       cudaMemcpyHostToDevice);
+        } else {
+            cudaMemsetAsync(dst, 0, (hi - lo) * 8, 0);
+        }
+    }
+    if (end > c.ctot) {
+        size_t z0 = std::max(off, c.ctot);
+        cudaMemsetAsync(dout + (z0 - off), 0, (end - z0) * 8, 0);
+    }
+}
 static inline size_t col_len(const Col& c) { return c.pk.on ? c.ctot : c.v.size(); }
 static inline Col commit_col(std::vector<gl_t> vals, uint32_t R, bool gpu = true) {
     Col c; c.v = std::move(vals);
@@ -188,12 +237,50 @@ static inline Col commit_col(std::vector<gl_t> vals, uint32_t R, bool gpu = true
     return c;
 }
 // commit without materializing the host codeword (deferred/batched openings);
-// zkmask (zk mode only) supplies a LINKED mask region (seam / row-sum bindings)
+// zkmask (zk mode only) supplies a LINKED mask region (seam / row-sum bindings).
+// cpk_dev (section 22b): produce the commitment PRE-COMPACTED -- the real
+// region is packed on the host, the fresh mask region is generated ON THE
+// DEVICE from its recorded seed (bit-identical chain, kernel above), and the
+// augmented host column never exists.  Identical committed bytes -> identical
+// root; falls back to the classic path when the values don't pack, the length
+// is not a power of two, or a linked mask is supplied.
 static inline Col commit_col_nc(std::vector<gl_t> vals, uint32_t R,
-                                const std::vector<gl_t>* zkmask = nullptr) {
+                                const std::vector<gl_t>* zkmask = nullptr,
+                                bool cpk_dev = false) {
     struct Tm { double t0; Tm() : t0(lu_now_ms()) {}
                 ~Tm() { g_lustats.commit_ms += lu_now_ms() - t0; g_lustats.commits++; } } tm_;
     Col c;
+    if (p3zkc::G.on && cpk_dev && !zkmask && !vals.empty() &&
+        (vals.size() & (vals.size() - 1)) == 0) {
+        uint32_t vr = 0; while ((1ull << vr) < vals.size()) vr++;
+        p3zkc::Packed pk;
+        if (p3zkc::pack_ints(vals.data(), vals.size(), pk)) {
+            const size_t Nr = vals.size();
+            const size_t Naug = (size_t)1 << p3zkc::vfull(vr);
+            c.vreal = vr; c.mstart = Nr;
+            {
+                p3zp::T zt(p3zp::g.mask_gen);
+                c.mseed = p3zkc::G.mask_on ? p3zkc::next_seed() : 0;
+            }
+            gl_t* dm = p3bf::dmalloc(Naug, "ccnc:aug");
+            cudaMemcpy(dm, vals.data(), Nr * 8, cudaMemcpyHostToDevice);
+            if (c.mseed)
+                p3zkc_lcgchain_kernel<<<(uint32_t)((Naug - Nr + 255) / 256), 256>>>(
+                    dm + Nr, c.mseed, Naug - Nr, p3zkc::lcg_ladder());
+            else
+                cudaMemsetAsync(dm + Nr, 0, (Naug - Nr) * 8, 0);
+            c.sseed = p3zkc::next_seed();
+            {
+                p3zp::T zt(p3zp::g.commit_salt);
+                c.root = p3zkc::salted_commit_root_dev(dm, Naug, R, c.sseed);
+            }
+            cudaFreeAsync(dm, 0);
+            p3zkc::spill_packed(pk);                       // no-op unless P3_PK_SPILL
+            c.pk = std::move(pk); c.ctot = Naug;
+            std::vector<gl_t>().swap(vals);
+            return c;
+        }
+    }
     if (p3zkc::G.on) {
         uint32_t vr = 0; while ((1ull << vr) < vals.size()) vr++;
         c.vreal = vr;
@@ -282,7 +369,13 @@ using VBind = std::function<bool(fs::Transcript&, VCtx&, const std::vector<gl_t>
                   const std::vector<gl_t>& yv, const std::vector<gl_t>& extra,
                   const char** why)>;
 struct LuObl { std::vector<LuColSpec> W; const std::vector<uint32_t>* idx;
-               const Table* tab; std::string label; PBind bind; };
+               const Table* tab; std::string label; PBind bind;
+               // spilled index storage (P3_PK_SPILL): the flush's single
+               // sequential read goes through the mapped file instead of
+               // holding tokens x NLU x 4 B of anonymous memory to flush time
+               std::shared_ptr<p3zkc::MagMap> imap; size_t ilen = 0;
+               const uint32_t* iptr() const { return imap ? (const uint32_t*)imap->p : idx->data(); }
+               size_t isize() const { return imap ? ilen : idx->size(); } };
 struct VLuObl { std::vector<const p3fri::Hash*> roots; const Table* tab; uint32_t n;
                 std::string label; VBind bind; };
 
@@ -313,7 +406,9 @@ struct XCtx {
     XCtx& operator=(const XCtx&) = delete;
     // compact a column and register it for opening-time materialization
     bool reg_compact(Col& c) {
+        if (c.pk.on) { creg[c.root] = &c; return true; }   // pre-compacted commit
         if (!compact_col(c)) return false;
+        p3zkc::spill_packed(c.pk);                         // no-op unless P3_PK_SPILL
         creg[c.root] = &c;
         return true;
     }
@@ -327,6 +422,16 @@ struct VCtx {
 static inline void defer_v(XCtx& xc, std::vector<LuColSpec> W, const std::vector<uint32_t>& idx,
                            const Table& T, std::string label, PBind bind = nullptr) {
     xc.luq.push_back({std::move(W), &idx, &T, std::move(label), std::move(bind)});
+    // P3_PK_SPILL (g_free_idx callers only): big index arrays move to disk
+    // until their single flush read -- the caller's vector is freed, the
+    // same mutation the flush's g_free_idx path already performs
+    if (!g_free_idx) return;
+    LuObl& o = xc.luq.back();
+    if (auto h = p3zkc::spill_bytes(idx.data(), idx.size() * 4)) {
+        o.imap = std::move(h); o.ilen = idx.size(); o.idx = nullptr;
+        auto* ix = const_cast<std::vector<uint32_t>*>(&idx);
+        ix->clear(); ix->shrink_to_fit();
+    }
 }
 static inline void vdefer_v(VCtx& v, std::vector<const p3fri::Hash*> roots, const Table& T,
                             uint32_t n, std::string label, VBind bind = nullptr) {
@@ -1208,8 +1313,8 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         uint32_t g = 0; while ((1u << g) < k) g++;
         const size_t N = (size_t)1 << n;
         for (size_t j : smi[s]) {
-            const auto& I = *xc.luq[j].idx;
-            if (I.size() != N) throw std::runtime_error("p3lu: group idx size");
+            const uint32_t* I = xc.luq[j].iptr();
+            if (xc.luq[j].isize() != N) throw std::runtime_error("p3lu: group idx size");
             for (size_t i = 0; i < N; i++) {
                 if (I[i] >= M) throw std::runtime_error("p3lu: idx range");
                 cnt[I[i]] = gl_add(cnt[I[i]], 1ULL);
@@ -1221,6 +1326,7 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
     pf.root_cnt = Ccnt.root; tr.absorb("lug-cnt", pf.root_cnt.data(), 32);
     if (g_free_idx)
         for (auto& mi : smi) for (size_t j : mi) {
+            if (xc.luq[j].imap) { xc.luq[j].imap.reset(); continue; }   // spilled
             auto* ix = const_cast<std::vector<uint32_t>*>(xc.luq[j].idx);
             ix->clear(); ix->shrink_to_fit();
         }
@@ -1644,7 +1750,7 @@ static inline std::vector<GroupProof> lu_flush(fs::Transcript& tr, XCtx& xc,
                                                bool gpu = true) {
     std::vector<std::vector<std::vector<size_t>>> smem;
     std::vector<std::vector<uint32_t>> sgn;
-    lu_supers<LuObl>(xc.luq, [](const LuObl& o) { return ilog2(o.idx->size()); }, smem, sgn);
+    lu_supers<LuObl>(xc.luq, [](const LuObl& o) { return ilog2(o.isize()); }, smem, sgn);
     std::vector<GroupProof> out;
     for (size_t si = 0; si < smem.size(); si++)
         out.push_back(prove_super(tr, xc, smem[si], sgn[si], R, Q, strict, gpu));

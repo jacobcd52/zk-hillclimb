@@ -51,9 +51,22 @@ static inline gl_t* dmalloc(size_t nelem, const char* tag) {
     cudaError_t e = cudaMallocAsync(&p, nelem * sizeof(gl_t), 0);
     if (e != cudaSuccess) {
         cudaGetLastError();
-        throw std::runtime_error(std::string("p3: device alloc failed at ") + tag +
-                                 " (" + std::to_string(nelem * sizeof(gl_t)) + " bytes): " +
-                                 cudaGetErrorString(e));
+        // the async pool retains freed blocks (release threshold inf) and
+        // cannot always service a HUGE request from fragmented reservations
+        // (the 8 GB v=28 encode buffers after 1-2 GB G-parking churn):
+        // return idle blocks to the driver and retry once
+        cudaMemPool_t pool;
+        if (cudaDeviceGetDefaultMemPool(&pool, 0) == cudaSuccess) {
+            cudaDeviceSynchronize();               // let queued frees land
+            cudaMemPoolTrimTo(pool, 0);
+            e = cudaMallocAsync(&p, nelem * sizeof(gl_t), 0);
+        }
+        if (e != cudaSuccess) {
+            cudaGetLastError();
+            throw std::runtime_error(std::string("p3: device alloc failed at ") + tag +
+                                     " (" + std::to_string(nelem * sizeof(gl_t)) + " bytes): " +
+                                     cudaGetErrorString(e));
+        }
     }
     return (gl_t*)p;
 }

@@ -435,6 +435,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     gl_t* colbuf = strCol ? p3bf::dmalloc(N, "bo:colbuf") : nullptr;
     auto upload_col = [&](uint32_t c) -> const gl_t* {
         if (!strCol) return dcol[c];
+        if (!colbuf) colbuf = p3bf::dmalloc(N, "bo:colbuf");
         if (hdgen[c]) { hdgen[c](colbuf, (size_t)N); cudaDeviceSynchronize(); }
         else cudaMemcpy(colbuf, col_host(c)->data(), colbytes, cudaMemcpyHostToDevice);
         return colbuf;
@@ -454,6 +455,7 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     gl_t* dGs = nullptr; gl_t* dEs = nullptr;             // fused stacked buffers
     SumMsg msg0{0, 0, 0};                                 // round-0 message (streamed mode
                                                           // computes it during the build)
+    bool g2pass = false;                                  // two-pass G build (below)
     if (fused) {
         // CSR of entries by point id, weights and resident column pointers
         std::vector<uint32_t> estart(T + 1, 0);
@@ -526,9 +528,27 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         // T=25 x 1 GB) breaches the 41 GB container cap; the card usually has
         // >10 GB free in this phase.  Point-major build (each G_t completes,
         // then parks); transcript identical -- only WHERE the array lives.
+        //
+        // TWO-PASS sub-mode (section 22b): when even the mixed remainder is
+        // huge ((T - gfit) full columns -- 24 GB at the d=256 seq=256 v=28
+        // class: the batch-phase cgroup kill), park NOTHING in pass 1 (each
+        // G_t exists only transiently for its round-0 message contribution);
+        // the round-0 bind below REBUILDS each G_t and immediately halves it,
+        // parking the halves device-first.  Same axpy order per G_t, exact
+        // field ops -- every value and transcript byte is unchanged; the G
+        // build runs twice.
         size_t gfit = 0;
         if (devfree > (size_t)4 * colbytes)
             gfit = (size_t)(devfree * 0.92 - (size_t)3 * colbytes) / colbytes;
+        {
+            static long long mx = -2;
+            if (mx == -2) { const char* e = getenv("P3_BO_G2MAX"); mx = e ? atoll(e) : ((long long)6 << 30); }
+            g2pass = mx >= 0 && gfit < T &&
+                     (size_t)(T - gfit) * colbytes > (size_t)mx;
+        }
+        if (p3bf::memlog() && g2pass)
+            fprintf(stderr, "# bo class %s: g2pass (host park would be %.1f GB)\n",
+                    label.c_str(), (double)(T - gfit) * colbytes / 1073741824.0);
         gl_t* eqbuf = p3bf::dmalloc(N, "bo:eqbuf");
         for (uint32_t t = 0; t < T; t++) {
             gl_t* g = p3bf::dmalloc(N, "bo:G");
@@ -540,7 +560,9 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
             SumMsg m = bo_scmsg(g, eqbuf, N / 2, db0, db1, db2, hb0, hb1, hb2);
             msg0.s0 = gl_add(msg0.s0, m.s0); msg0.s1 = gl_add(msg0.s1, m.s1);
             msg0.s2 = gl_add(msg0.s2, m.s2);
-            if ((size_t)t < gfit) {
+            if (g2pass) {
+                cudaFreeAsync(g, 0);                       // rebuilt at round-0 bind
+            } else if ((size_t)t < gfit) {
                 dG[t] = g;                                 // device-parked
             } else {
                 hG[t].resize(N);
@@ -619,6 +641,38 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
                 cudaFreeAsync(dG[t], 0); cudaFreeAsync(dEq[t], 0);
                 dG[t] = nG; dEq[t] = nE;
             }
+        } else if (g2pass && rd == 0) {
+            // two-pass round 0: rebuild each G_t (same axpy order as pass 1
+            // -> identical values), bind to half, park halves DEVICE-first --
+            // the full-length G_t never reaches host memory
+            size_t devfree2 = 0, devtot2 = 0;
+            cudaMemGetInfo(&devfree2, &devtot2);
+            { cudaMemPool_t pool; cudaDeviceGetDefaultMemPool(&pool, 0);
+              unsigned long long resv = 0, used = 0;
+              cudaMemPoolGetAttribute(pool, cudaMemPoolAttrReservedMemCurrent, &resv);
+              cudaMemPoolGetAttribute(pool, cudaMemPoolAttrUsedMemCurrent, &used);
+              devfree2 += (size_t)(resv > used ? resv - used : 0); }
+            size_t gfit2 = 0;
+            if (devfree2 > (size_t)4 * colbytes)
+                gfit2 = (size_t)(devfree2 * 0.92 - (size_t)3 * colbytes) / ((size_t)half * 8);
+            gl_t* g = p3bf::dmalloc(L, "bo:g2");
+            size_t ndev = 0;
+            for (uint32_t t = 0; t < T; t++) {
+                cudaMemsetAsync(g, 0, (size_t)L * 8, 0);
+                for (size_t j = 0; j < k; j++)
+                    if (C.ents[j].zid == t)
+                        p3bo_axpy_kernel<<<(L + 255) / 256, 256>>>(g, upload_col(colidx[j]), muw[j], L);
+                gl_t* nG = p3bf::dmalloc(half ? half : 1, "bo:nGd");
+                p3bf::p3bf_bind_kernel<<<(half + 255) / 256, 256>>>(g, nG, half, a);
+                if (ndev < gfit2) { dG[t] = nG; ndev++; }
+                else {
+                    hG[t].resize(half);
+                    cudaMemcpy(hG[t].data(), nG, (size_t)half * 8, cudaMemcpyDeviceToHost);
+                    cudaFreeAsync(nG, 0);
+                }
+                pref[t] = gl_mul(pref[t], eq1(a, C.pts[t][rd]));
+            }
+            cudaFreeAsync(g, 0);
         } else {                                           // strG: per-point parking
             gl_t* gbuf = nullptr; gl_t* nbuf = nullptr;    // lazy: host-parked points only
             for (uint32_t t = 0; t < T; t++) {
@@ -671,6 +725,10 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         w = gl_mul(w, rho);
     }
     p3bf::ckcuda("bo:rlc");
+    // last upload_col use until q0: release the column bounce buffer NOW --
+    // at v=28 the U encode below needs 2 x 2^(v+R) x 8 = 16 GB transient and
+    // the extra 2 GB is the difference between fitting the card and OOM
+    if (colbuf) { cudaFreeAsync(colbuf, 0); colbuf = nullptr; }
     tpY = bo_now();
     if (p3zp::on()) { p3zp::g.bo_ys.ms += tpY - tpR; p3zp::g.bo_ys.n++; }
 

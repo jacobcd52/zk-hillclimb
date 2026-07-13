@@ -62,6 +62,11 @@
 #include <vector>
 #include <array>
 #include <stdexcept>
+#include <memory>
+#include <atomic>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "p3_goldilocks.cuh"
 #include "p3_merkle.cuh"
 #include "p3_fri.cuh"
@@ -510,6 +515,21 @@ static inline void zprng_fill(uint64_t s, gl_t* out, size_t n) {
         for (size_t i = lo; i < hi; i++) out[i] = zprng(sc);
     }
 }
+// zprng_fill starting at chain offset k0: out[i] = element k0+i of the seed-s
+// chain -- bit-identical to the corresponding zprng_fill slice (range reads
+// of a dropped-to-seed mask region)
+static inline void zprng_fill_at(uint64_t s, uint64_t k0, gl_t* out, size_t n) {
+    static const LcgLadder L = lcg_ladder();
+    const int C = (int)std::min<size_t>(32, std::max<size_t>(1, n >> 18));
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(C) if (C > 1)
+#endif
+    for (int c = 0; c < C; c++) {
+        size_t lo = n * (size_t)c / C, hi = n * (size_t)(c + 1) / C;
+        uint64_t sc = lcg_jump(s, k0 + lo, L);
+        for (size_t i = lo; i < hi; i++) out[i] = zprng(sc);
+    }
+}
 
 // ---- Libra blind material for one sumcheck instance ----
 // nb committed blind columns (4 for quartic Msg5 chains, 3 for cubic Msg4);
@@ -540,13 +560,63 @@ static inline gl_t blind_term(const Blind& bl, gl_t rho, gl_t w) {
 // x > p - 2^32.  Packed stores sign-magnitude at 1/2/4 bytes per element --
 // a pure, exactly-invertible recoding of the SAME field values (nothing about
 // the proof changes; only where the bytes sit between commit and opening).
+// spilled magnitude storage: the mag bytes live in an UNLINKED disk file and
+// are mapped read-only -- the pages are clean file cache, which the kernel
+// reclaims under memory pressure instead of counting against the anonymous
+// RSS that trips the container's OOM kill.  Values read back bit-identical.
+struct MagMap {
+    uint8_t* p = nullptr; size_t len = 0;
+    MagMap() {}
+    MagMap(const MagMap&) = delete;
+    MagMap& operator=(const MagMap&) = delete;
+    ~MagMap() { if (p) munmap(p, len); }
+};
 struct Packed {
     std::vector<uint8_t> mag;      // n * w little-endian magnitude bytes
+    std::shared_ptr<MagMap> mmp;   // spilled alternative to mag (P3_PK_SPILL)
     std::vector<uint64_t> sgn;     // sign bitset (empty = all non-negative)
     size_t n = 0;
     uint8_t w = 0;
     bool on = false;
+    const uint8_t* magp() const { return mmp ? mmp->p : mag.data(); }
 };
+// write len bytes into an unlinked file under $P3_PK_SPILL and map them
+// read-only; null when spilling is off, too small, or any step fails
+static inline std::shared_ptr<MagMap> spill_bytes(const void* src, size_t len) {
+    static const char* dir = getenv("P3_PK_SPILL");
+    static long long mn = -2;
+    if (mn == -2) { const char* e = getenv("P3_PK_SPILL_MIN");
+                    mn = e ? atoll(e) : ((long long)1 << 22); }
+    if (!dir || len < (size_t)mn) return nullptr;
+    static std::atomic<uint64_t> ctr{0};
+    char path[512];
+    snprintf(path, sizeof path, "%s/p3pk_%d_%llu.bin", dir, (int)getpid(),
+             (unsigned long long)ctr.fetch_add(1));
+    int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return nullptr;
+    unlink(path);                               // reclaimed on close/exit
+    size_t off = 0;
+    while (off < len) {
+        ssize_t wr = write(fd, (const uint8_t*)src + off, len - off);
+        if (wr <= 0) { close(fd); return nullptr; }
+        off += (size_t)wr;
+    }
+    void* mp = mmap(nullptr, len, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (mp == MAP_FAILED) return nullptr;
+    auto h = std::make_shared<MagMap>();
+    h->p = (uint8_t*)mp; h->len = len;
+    return h;
+}
+// move the packed magnitudes of a big column into an unlinked mmap'd file
+// under $P3_PK_SPILL (no-op when unset, already spilled, or small)
+static inline void spill_packed(Packed& p) {
+    if (!p.on || p.mmp || p.mag.empty()) return;
+    auto h = spill_bytes(p.mag.data(), p.mag.size());
+    if (!h) return;
+    p.mmp = std::move(h);
+    std::vector<uint8_t>().swap(p.mag);
+}
 // packing threshold: columns below 2^P3_COMPACT_MIN values stay raw (packing
 // tiny columns is churn, not memory; tests set 0 to exercise every path)
 static inline uint32_t compact_min() {
@@ -606,6 +676,56 @@ static inline bool pack_ints(const gl_t* v, size_t n, Packed& p, bool thresh = t
 static inline bool pack_ints(const std::vector<gl_t>& v, Packed& p, bool thresh = true) {
     return pack_ints(v.data(), v.size(), p, thresh);
 }
+// device-side range unpack: the packed bytes (1/2/4 per element vs 8 raw) are
+// uploaded and expanded by a kernel -- bit-identical to unpack_ints_range,
+// with 2-8x less PCIe traffic than uploading the raw field elements
+__global__ void p3zkc_unpack_kernel(const uint8_t* mag, const uint64_t* sgn,
+                                    uint32_t bit0, uint32_t w, size_t n, gl_t* out) {
+    size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const uint8_t* d = mag + i * w;
+    uint64_t m = 0;
+    for (uint32_t b = 0; b < w; b++) m |= (uint64_t)d[b] << (8 * b);
+    bool ng = sgn && ((sgn[(bit0 + i) >> 6] >> ((bit0 + i) & 63)) & 1);
+    out[i] = ng ? GL_P - m : m;
+}
+// upload the packed byte slices for [lo, lo+cnt) and unpack ON DEVICE into
+// dout -- values bit-identical to unpack_ints_range
+static inline void unpack_ints_dev(const Packed& p, size_t lo, size_t cnt, gl_t* dout) {
+    if (!cnt) return;
+    uint8_t* dmag = (uint8_t*)p3bf::dmalloc((cnt * p.w + 7) / 8, "upkd:mag");
+    cudaMemcpy(dmag, p.magp() + lo * p.w, cnt * p.w, cudaMemcpyHostToDevice);
+    uint64_t* dsgn = nullptr;
+    uint32_t bit0 = 0;
+    if (!p.sgn.empty()) {
+        size_t w0 = lo >> 6, w1 = (lo + cnt + 63) >> 6;
+        dsgn = (uint64_t*)p3bf::dmalloc(w1 - w0, "upkd:sgn");
+        cudaMemcpy(dsgn, p.sgn.data() + w0, (w1 - w0) * 8, cudaMemcpyHostToDevice);
+        bit0 = (uint32_t)(lo & 63);
+    }
+    p3zkc_unpack_kernel<<<(uint32_t)((cnt + 255) / 256), 256>>>(dmag, dsgn, bit0, p.w, cnt, dout);
+    cudaFreeAsync(dmag, 0);
+    if (dsgn) cudaFreeAsync(dsgn, 0);
+}
+// exact range inverse: writes values [lo, lo+cnt) of the packed column
+static inline void unpack_ints_range(const Packed& p, size_t lo, size_t cnt, gl_t* out) {
+    const uint8_t w = p.w;
+    const bool hs = !p.sgn.empty();
+    const int C = (int)std::min<size_t>(64, 1 + (cnt >> 20));
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(C) if (C > 1)
+#endif
+    for (int ch = 0; ch < C; ch++) {
+        size_t l = lo + cnt * (size_t)ch / C, h = lo + cnt * (size_t)(ch + 1) / C;
+        for (size_t i = l; i < h; i++) {
+            const uint8_t* d = p.magp() + i * w;
+            uint64_t m = 0;
+            for (int b = 0; b < w; b++) m |= (uint64_t)d[b] << (8 * b);
+            bool ng = hs && ((p.sgn[i >> 6] >> (i & 63)) & 1);
+            out[i - lo] = ng ? GL_P - m : m;
+        }
+    }
+}
 // exact inverse: writes p.n values
 static inline void unpack_ints(const Packed& p, gl_t* out) {
     const uint8_t w = p.w;
@@ -618,7 +738,7 @@ static inline void unpack_ints(const Packed& p, gl_t* out) {
     for (int ch = 0; ch < C; ch++) {
         size_t lo = n * (size_t)ch / C, hi = n * (size_t)(ch + 1) / C;
         for (size_t i = lo; i < hi; i++) {
-            const uint8_t* d = p.mag.data() + i * w;
+            const uint8_t* d = p.magp() + i * w;
             uint64_t m = 0;
             for (int b = 0; b < w; b++) m |= (uint64_t)d[b] << (8 * b);
             bool ng = hs && ((p.sgn[i >> 6] >> (i & 63)) & 1);
