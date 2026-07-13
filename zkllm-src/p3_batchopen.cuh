@@ -153,6 +153,10 @@ struct PLedger {
     // must be bit-identical to the committed column.
     typedef std::function<bool(const Hash&, gl_t*, size_t)> Resolve;
     Resolve resolve;
+    // DEVICE compact-column resolver (same contract, DEVICE output buffer):
+    // packed-bytes upload + unpack/mask kernels replace the host materialize
+    // + raw-size PCIe upload.  Values MUST be bit-identical to resolve's.
+    Resolve dresolve;
     // DEVICE regenerator: fills a DEVICE buffer with the same n values (kernel
     // launches only) -- skips the host materialization + PCIe upload entirely.
     // Optional; when present it MUST produce bit-identical values to gen.
@@ -302,7 +306,8 @@ static inline SumMsg bo_scmsg(const gl_t* d_c, const gl_t* d_w, uint32_t half,
 // ==================== prover ====================
 static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_in,
                                      uint32_t R, uint32_t Q, const std::string& label,
-                                     const PLedger::Resolve* resolve = nullptr) {
+                                     const PLedger::Resolve* resolve = nullptr,
+                                     const PLedger::Resolve* dresolve = nullptr) {
     const uint32_t v = C_in.v, N = 1u << v, T0 = (uint32_t)C_in.pts.size();
     const uint32_t logM0 = v + R, M0 = 1u << logM0;
     BatchProof pf; pf.v = v; pf.R = R; pf.Q = Q;
@@ -316,17 +321,66 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     std::vector<gl_t> blv;
     if (p3zkc::G.on) {
         p3zp::T zt(p3zp::g.bo_blinder);
-        blv.resize(N);
-        { uint64_t s = p3zkc::next_seed();
-          if (p3zkc::G.blind_on) p3zkc::zprng_fill(s, blv.data(), N); }
-        uint64_t blseed = p3zkc::next_seed();
-        pf.bl_root = p3zkc::salted_commit_root(blv, R, blseed);
-        tr.absorb("bo-blr", pf.bl_root.data(), 32);
-        std::vector<gl_t> zD(v); for (auto& x : zD) x = chal(tr);
-        pf.bl_y = p3bf::eval_h(blv, p3bf::build_eq(zD));
-        tr.absorb("bo-bly", &pf.bl_y, 8);
-        C.pts.push_back(zD);
-        C.ents.push_back({&blv, pf.bl_root, T0, pf.bl_y, blseed});
+        uint64_t s = p3zkc::next_seed();
+        if (N >= (1u << 24)) {
+            // DEVICE blinder (iteration 2, P5 slice): the big classes' blinder
+            // was a host PRNG fill + HOST salted commit + host MLE eval of a
+            // 1-2 GB column.  Generate on device from the same seed (the lcg
+            // chain kernel is the bit-identical twin of zprng_fill), commit
+            // with the dev builder (identical root), eval with the dot kernel
+            // (exact field sums, order-free -> same value).  The column is
+            // never host-resident: the entry carries regen closures instead.
+            const bool bon = p3zkc::G.blind_on;
+            gl_t* dbl = p3bf::dmalloc(N, "bo:blv");
+            if (bon)
+                p3zkc_lcgchain_kernel<<<(N + 255) / 256, 256>>>(
+                    dbl, s, N, p3zkc::lcg_ladder());
+            else
+                cudaMemsetAsync(dbl, 0, (size_t)N * 8, 0);
+            uint64_t blseed = p3zkc::next_seed();
+            pf.bl_root = p3zkc::salted_commit_root_dev(dbl, N, R, blseed);
+            tr.absorb("bo-blr", pf.bl_root.data(), 32);
+            std::vector<gl_t> zD(v); for (auto& x : zD) x = chal(tr);
+            {
+                gl_t* dz = p3bf::dmalloc(v, "bo:blz");
+                cudaMemcpy(dz, zD.data(), (size_t)v * 8, cudaMemcpyHostToDevice);
+                gl_t* deq = p3bf::dmalloc(N, "bo:bleq");
+                p3bf::p3bf_eq_kernel<<<(N + 255) / 256, 256>>>(dz, deq, v, N);
+                const uint32_t NB0 = 256;
+                gl_t* dp0 = p3bf::dmalloc(NB0, "bo:blp");
+                p3bf::p3bf_dot_kernel<<<NB0, 256>>>(dbl, deq, dp0, N);
+                std::vector<gl_t> hp(NB0);
+                cudaMemcpy(hp.data(), dp0, (size_t)NB0 * 8, cudaMemcpyDeviceToHost);
+                gl_t y = 0; for (auto x : hp) y = gl_add(y, x);
+                pf.bl_y = y;
+                cudaFreeAsync(dz, 0); cudaFreeAsync(deq, 0); cudaFreeAsync(dp0, 0);
+            }
+            cudaFreeAsync(dbl, 0);
+            tr.absorb("bo-bly", &pf.bl_y, 8);
+            C.pts.push_back(zD);
+            PLedger::Gen blgen = [s, bon](gl_t* out, size_t n) {
+                if (bon) p3zkc::zprng_fill(s, out, n);
+                else memset(out, 0, n * 8);
+            };
+            PLedger::DGen bldgen = [s, bon](gl_t* dout, size_t n) {
+                if (bon) p3zkc_lcgchain_kernel<<<(uint32_t)((n + 255) / 256), 256>>>(
+                             dout, s, n, p3zkc::lcg_ladder());
+                else cudaMemsetAsync(dout, 0, n * 8, 0);
+            };
+            C.ents.push_back({nullptr, pf.bl_root, T0, pf.bl_y, blseed,
+                              std::move(blgen), std::move(bldgen)});
+        } else {
+            blv.resize(N);
+            if (p3zkc::G.blind_on) p3zkc::zprng_fill(s, blv.data(), N);
+            uint64_t blseed = p3zkc::next_seed();
+            pf.bl_root = p3zkc::salted_commit_root(blv, R, blseed);
+            tr.absorb("bo-blr", pf.bl_root.data(), 32);
+            std::vector<gl_t> zD(v); for (auto& x : zD) x = chal(tr);
+            pf.bl_y = p3bf::eval_h(blv, p3bf::build_eq(zD));
+            tr.absorb("bo-bly", &pf.bl_y, 8);
+            C.pts.push_back(zD);
+            C.ents.push_back({&blv, pf.bl_root, T0, pf.bl_y, blseed});
+        }
     }
     const uint32_t T = (uint32_t)C.pts.size();
     const size_t k = C.ents.size();
@@ -361,6 +415,16 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
             throw std::runtime_error("p3bo: no value source for column (class " +
                                      label + ")");
         return &genscratch;
+    };
+    // DEVICE-side column materialization: per-entry dgen first, then the
+    // owner's device compact resolver.  false -> caller uploads col_host().
+    // Bit-identical device bytes by contract, so every downstream sum/encode
+    // is unchanged -- this only removes host materialize + raw PCIe traffic.
+    auto col_dev = [&](uint32_t c, gl_t* dbuf) -> bool {
+        if (hdgen[c]) { hdgen[c](dbuf, (size_t)N); return true; }
+        if (hcols[c] && hcols[c]->size() == (size_t)N) return false;   // live host vals
+        if (hgen[c]) return false;                                     // host-only gen
+        return dresolve && *dresolve && (*dresolve)(droots[c], dbuf, (size_t)N);
     };
 
     // env-gated ledger validation (debug): every claimed y must equal the
@@ -429,14 +493,14 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
     if (!strCol)
         for (uint32_t c = 0; c < nc; c++) {
             dcol[c] = p3bf::dmalloc(N, "bo:dcol");
-            if (hdgen[c]) hdgen[c](dcol[c], (size_t)N);
-            else cudaMemcpy(dcol[c], col_host(c)->data(), colbytes, cudaMemcpyHostToDevice);
+            if (!col_dev(c, dcol[c]))
+                cudaMemcpy(dcol[c], col_host(c)->data(), colbytes, cudaMemcpyHostToDevice);
         }
     gl_t* colbuf = strCol ? p3bf::dmalloc(N, "bo:colbuf") : nullptr;
     auto upload_col = [&](uint32_t c) -> const gl_t* {
         if (!strCol) return dcol[c];
         if (!colbuf) colbuf = p3bf::dmalloc(N, "bo:colbuf");
-        if (hdgen[c]) { hdgen[c](colbuf, (size_t)N); cudaDeviceSynchronize(); }
+        if (col_dev(c, colbuf)) cudaDeviceSynchronize();
         else cudaMemcpy(colbuf, col_host(c)->data(), colbytes, cudaMemcpyHostToDevice);
         return colbuf;
     };
@@ -549,26 +613,53 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         if (p3bf::memlog() && g2pass)
             fprintf(stderr, "# bo class %s: g2pass (host park would be %.1f GB)\n",
                     label.c_str(), (double)(T - gfit) * colbytes / 1073741824.0);
+        // COLUMN-MAJOR CHUNKED build (iteration 2, P3): points are processed
+        // in device-sized chunks; within a chunk each distinct column is
+        // materialized/uploaded ONCE and axpy'd into every chunk-resident G_t
+        // (the old point-major loop re-uploaded/regenerated per ENTRY).  Field
+        // adds are exact and commutative -> identical G_t values; the round-0
+        // messages are kept per point and summed in ascending t order below,
+        // so every absorbed transcript byte is unchanged.
         gl_t* eqbuf = p3bf::dmalloc(N, "bo:eqbuf");
-        for (uint32_t t = 0; t < T; t++) {
-            gl_t* g = p3bf::dmalloc(N, "bo:G");
-            cudaMemsetAsync(g, 0, colbytes, 0);
-            for (size_t j = 0; j < k; j++)
-                if (C.ents[j].zid == t)
-                    p3bo_axpy_kernel<<<(N + 255) / 256, 256>>>(g, upload_col(colidx[j]), muw[j], N);
-            eq_dev(C.pts[t].data(), v, eqbuf);
-            SumMsg m = bo_scmsg(g, eqbuf, N / 2, db0, db1, db2, hb0, hb1, hb2);
-            msg0.s0 = gl_add(msg0.s0, m.s0); msg0.s1 = gl_add(msg0.s1, m.s1);
-            msg0.s2 = gl_add(msg0.s2, m.s2);
-            if (g2pass) {
-                cudaFreeAsync(g, 0);                       // rebuilt at round-0 bind
-            } else if ((size_t)t < gfit) {
-                dG[t] = g;                                 // device-parked
-            } else {
-                hG[t].resize(N);
-                cudaMemcpy(hG[t].data(), g, colbytes, cudaMemcpyDeviceToHost);
-                cudaFreeAsync(g, 0);
+        std::vector<SumMsg> pm(T, SumMsg{0, 0, 0});
+        const size_t Hbud = (size_t)(devfree * 0.92);
+        size_t parked = 0;                       // device-parked full G_t bytes
+        uint32_t t0 = 0;
+        while (t0 < T) {
+            size_t avail = Hbud > parked + 2 * colbytes ? Hbud - parked - 2 * colbytes : 0;
+            uint32_t cs = (uint32_t)std::min<size_t>(T - t0, std::max<size_t>(1, avail / colbytes));
+            uint32_t t1 = t0 + cs;
+            for (uint32_t t = t0; t < t1; t++) {
+                dG[t] = p3bf::dmalloc(N, "bo:G");
+                cudaMemsetAsync(dG[t], 0, colbytes, 0);
             }
+            for (uint32_t c = 0; c < nc; c++) {
+                const gl_t* src = nullptr;
+                for (size_t j = 0; j < k; j++)
+                    if (colidx[j] == c && C.ents[j].zid >= t0 && C.ents[j].zid < t1) {
+                        if (!src) src = upload_col(c);
+                        p3bo_axpy_kernel<<<(N + 255) / 256, 256>>>(
+                            dG[C.ents[j].zid], src, muw[j], N);
+                    }
+            }
+            for (uint32_t t = t0; t < t1; t++) {
+                eq_dev(C.pts[t].data(), v, eqbuf);
+                pm[t] = bo_scmsg(dG[t], eqbuf, N / 2, db0, db1, db2, hb0, hb1, hb2);
+                if (g2pass) {
+                    cudaFreeAsync(dG[t], 0); dG[t] = nullptr;   // rebuilt at round-0 bind
+                } else if ((size_t)t < gfit) {
+                    parked += colbytes;                         // stays device-parked
+                } else {
+                    hG[t].resize(N);
+                    cudaMemcpy(hG[t].data(), dG[t], colbytes, cudaMemcpyDeviceToHost);
+                    cudaFreeAsync(dG[t], 0); dG[t] = nullptr;
+                }
+            }
+            t0 = t1;
+        }
+        for (uint32_t t = 0; t < T; t++) {       // ascending t: absorbed bytes unchanged
+            msg0.s0 = gl_add(msg0.s0, pm[t].s0); msg0.s1 = gl_add(msg0.s1, pm[t].s1);
+            msg0.s2 = gl_add(msg0.s2, pm[t].s2);
         }
         cudaFreeAsync(eqbuf, 0);
     }
@@ -655,24 +746,44 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
             size_t gfit2 = 0;
             if (devfree2 > (size_t)4 * colbytes)
                 gfit2 = (size_t)(devfree2 * 0.92 - (size_t)3 * colbytes) / ((size_t)half * 8);
-            gl_t* g = p3bf::dmalloc(L, "bo:g2");
-            size_t ndev = 0;
-            for (uint32_t t = 0; t < T; t++) {
-                cudaMemsetAsync(g, 0, (size_t)L * 8, 0);
-                for (size_t j = 0; j < k; j++)
-                    if (C.ents[j].zid == t)
-                        p3bo_axpy_kernel<<<(L + 255) / 256, 256>>>(g, upload_col(colidx[j]), muw[j], L);
-                gl_t* nG = p3bf::dmalloc(half ? half : 1, "bo:nGd");
-                p3bf::p3bf_bind_kernel<<<(half + 255) / 256, 256>>>(g, nG, half, a);
-                if (ndev < gfit2) { dG[t] = nG; ndev++; }
-                else {
-                    hG[t].resize(half);
-                    cudaMemcpy(hG[t].data(), nG, (size_t)half * 8, cudaMemcpyDeviceToHost);
-                    cudaFreeAsync(nG, 0);
+            // column-major chunked rebuild (same shape as pass 1); identical
+            // G_t values (exact field adds), immediately bound to half length
+            const size_t halfbytes = (size_t)half * 8;
+            const size_t Hbud2 = (size_t)(devfree2 * 0.92);
+            size_t ndev = 0, parked2 = 0;
+            uint32_t t0 = 0;
+            std::vector<gl_t*> gful(T, nullptr);
+            while (t0 < T) {
+                size_t avail = Hbud2 > parked2 + 2 * colbytes ? Hbud2 - parked2 - 2 * colbytes : 0;
+                uint32_t cs = (uint32_t)std::min<size_t>(T - t0, std::max<size_t>(1, avail / colbytes));
+                uint32_t t1 = t0 + cs;
+                for (uint32_t t = t0; t < t1; t++) {
+                    gful[t] = p3bf::dmalloc(L, "bo:g2");
+                    cudaMemsetAsync(gful[t], 0, (size_t)L * 8, 0);
                 }
-                pref[t] = gl_mul(pref[t], eq1(a, C.pts[t][rd]));
+                for (uint32_t c = 0; c < nc; c++) {
+                    const gl_t* src = nullptr;
+                    for (size_t j = 0; j < k; j++)
+                        if (colidx[j] == c && C.ents[j].zid >= t0 && C.ents[j].zid < t1) {
+                            if (!src) src = upload_col(c);
+                            p3bo_axpy_kernel<<<(L + 255) / 256, 256>>>(
+                                gful[C.ents[j].zid], src, muw[j], L);
+                        }
+                }
+                for (uint32_t t = t0; t < t1; t++) {
+                    gl_t* nG = p3bf::dmalloc(half ? half : 1, "bo:nGd");
+                    p3bf::p3bf_bind_kernel<<<(half + 255) / 256, 256>>>(gful[t], nG, half, a);
+                    cudaFreeAsync(gful[t], 0); gful[t] = nullptr;
+                    if (ndev < gfit2) { dG[t] = nG; ndev++; parked2 += halfbytes; }
+                    else {
+                        hG[t].resize(half);
+                        cudaMemcpy(hG[t].data(), nG, halfbytes, cudaMemcpyDeviceToHost);
+                        cudaFreeAsync(nG, 0);
+                    }
+                    pref[t] = gl_mul(pref[t], eq1(a, C.pts[t][rd]));
+                }
+                t0 = t1;
             }
-            cudaFreeAsync(g, 0);
         } else {                                           // strG: per-point parking
             gl_t* gbuf = nullptr; gl_t* nbuf = nullptr;    // lazy: host-parked points only
             for (uint32_t t = 0; t < T; t++) {
@@ -952,15 +1063,18 @@ static inline BatchProof prove_class(fs::Transcript& tr, const PLedger::Cls& C_i
         for (uint32_t c = 0; c < nc; c++) {
             double zq0 = p3zp::nowms();
             gl_t* d_cwc;
-            if (strCol && hdgen[c]) {
+            bool devq = false;
+            if (strCol) {
                 gl_t* dtmp = p3bf::dmalloc(N, "bo:q0gen");
-                hdgen[c](dtmp, (size_t)N);
-                d_cwc = bo_encode_dev(dtmp, N, logM0, ntt);
+                if (col_dev(c, dtmp)) {
+                    d_cwc = bo_encode_dev(dtmp, N, logM0, ntt);
+                    devq = true;
+                }
                 cudaFreeAsync(dtmp, 0);
-            } else {
+            }
+            if (!devq)
                 d_cwc = strCol ? bo_encode_host(col_host(c)->data(), N, logM0, ntt)
                                : bo_encode_dev(dcol[c], N, logM0, ntt);
-            }
             if (p3zp::on()) { cudaDeviceSynchronize();
                 p3zp::g.q0_enc.ms += p3zp::nowms() - zq0; p3zp::g.q0_enc.n++;
                 zq0 = p3zp::nowms(); }

@@ -141,6 +141,36 @@ __global__ void p3lu_blindsum_kernel(const gl_t* b0, const gl_t* b1, const gl_t*
     if (tid == 0) out[blockIdx.x] = sh[0];
 }
 
+// GPU histogram of lookup indices (iteration 2, P7): counting is order-free
+// integer accumulation, so the device bins equal the host loop's cnt values
+// EXACTLY (committed bytes unchanged).  Shared-memory sub-histograms when the
+// table fits, global 64-bit atomics otherwise; idx >= M flags oob for the
+// host to throw (matching the host loop's range check).
+__global__ void p3lu_cntg_kernel(const uint32_t* idx, size_t n, uint32_t M,
+                                 unsigned long long* bins, unsigned int* oob) {
+    for (size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x; i < n;
+         i += (size_t)gridDim.x * blockDim.x) {
+        uint32_t r = idx[i];
+        if (r >= M) { atomicAdd(oob, 1u); continue; }
+        atomicAdd(&bins[r], 1ULL);
+    }
+}
+__global__ void p3lu_cnts_kernel(const uint32_t* idx, size_t n, uint32_t M,
+                                 unsigned long long* bins, unsigned int* oob) {
+    extern __shared__ uint32_t shc[];
+    for (uint32_t t = threadIdx.x; t < M; t += blockDim.x) shc[t] = 0;
+    __syncthreads();
+    for (size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x; i < n;
+         i += (size_t)gridDim.x * blockDim.x) {
+        uint32_t r = idx[i];
+        if (r >= M) { atomicAdd(oob, 1u); continue; }
+        atomicAdd(&shc[r], 1u);
+    }
+    __syncthreads();
+    for (uint32_t t = threadIdx.x; t < M; t += blockDim.x)
+        if (shc[t]) atomicAdd(&bins[t], (unsigned long long)shc[t]);
+}
+
 // perf counters (profiling only; no protocol effect)
 struct LuStats { double ms = 0, commit_ms = 0, sc_ms = 0, cnt_ms = 0, inv_ms = 0,
                  ev_ms = 0, scg_ms = 0; long calls = 0, commits = 0; };
@@ -456,6 +486,14 @@ struct XCtx {
             auto it = creg.find(r);
             if (it == creg.end()) return false;
             mat_col_into(*it->second, out, n);
+            return true;
+        };
+        // device twin: packed upload + unpack/mask kernels, bit-identical
+        // values (mat_col_range_dev zero-fills past ctot like mat_col_into)
+        lg.dresolve = [this](const p3fri::Hash& r, gl_t* dout, size_t n) {
+            auto it = creg.find(r);
+            if (it == creg.end()) return false;
+            mat_col_range_dev(*it->second, 0, dout, n);
             return true;
         };
     }
@@ -1374,6 +1412,53 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
     // summed multiplicities over the union of subgroup rows (pad rows = row 0)
     double zt_cnt0 = p3zp::nowms();
     std::vector<gl_t> cnt(M, 0);
+    // GPU histogram (iteration 2, P7): order-free integer counting -- the
+    // device bins are the exact host-loop values, so the committed cnt bytes
+    // are unchanged.  Engages for big index volume; P3_LUG_DEVCNT=0 reverts.
+    static int devcnt_env = -1;
+    if (devcnt_env < 0) { const char* e = getenv("P3_LUG_DEVCNT"); devcnt_env = e ? atoi(e) : 1; }
+    static long long devcnt_min = -2;                       // tests set 0 to force
+    if (devcnt_min == -2) { const char* e = getenv("P3_LUG_DEVCNT_MIN");
+                            devcnt_min = e ? atoll(e) : ((long long)1 << 22); }
+    size_t itot = 0;
+    for (auto& mi : smi) for (size_t j : mi) itot += xc.luq[j].isize();
+    if (devcnt_env && itot >= (size_t)devcnt_min) {
+        unsigned long long* dbins;
+        cudaMallocAsync(&dbins, (size_t)M * 8, 0);
+        cudaMemsetAsync(dbins, 0, (size_t)M * 8, 0);
+        unsigned int* doob;
+        cudaMallocAsync(&doob, 4, 0);
+        cudaMemsetAsync(doob, 0, 4, 0);
+        const size_t CHUNK = (size_t)64 << 20;             // 256 MB of indices
+        uint32_t* didx; cudaMallocAsync(&didx, std::min(CHUNK, itot) * 4, 0);
+        const bool sh = M <= 8192;
+        for (uint32_t s = 0; s < ns; s++) {
+            const uint32_t n = sns[s], k = (uint32_t)smi[s].size();
+            uint32_t g = 0; while ((1u << g) < k) g++;
+            const size_t N = (size_t)1 << n;
+            for (size_t j : smi[s]) {
+                const uint32_t* I = xc.luq[j].iptr();
+                if (xc.luq[j].isize() != N) throw std::runtime_error("p3lu: group idx size");
+                for (size_t off = 0; off < N; off += CHUNK) {
+                    size_t cn = std::min(CHUNK, N - off);
+                    cudaMemcpy(didx, I + off, cn * 4, cudaMemcpyHostToDevice);
+                    uint32_t nb = (uint32_t)std::min<size_t>(4096, (cn + 255) / 256);
+                    if (sh) p3lu_cnts_kernel<<<nb, 256, (size_t)M * 4>>>(didx, cn, M, dbins, doob);
+                    else    p3lu_cntg_kernel<<<nb, 256>>>(didx, cn, M, dbins, doob);
+                }
+            }
+            cnt[0] = gl_add(cnt[0], ((uint64_t)(((size_t)1 << g) - k) << n) % GL_P);
+        }
+        std::vector<unsigned long long> hbins(M);
+        cudaMemcpy(hbins.data(), dbins, (size_t)M * 8, cudaMemcpyDeviceToHost);
+        unsigned int oob = 0;
+        cudaMemcpy(&oob, doob, 4, cudaMemcpyDeviceToHost);
+        cudaFreeAsync(dbins, 0); cudaFreeAsync(doob, 0); cudaFreeAsync(didx, 0);
+        p3bf::ckcuda("lug:devcnt");
+        if (oob) throw std::runtime_error("p3lu: idx range");
+        for (size_t r = 0; r < M; r++)
+            if (hbins[r]) cnt[r] = gl_add(cnt[r], hbins[r] % GL_P);
+    } else
     for (uint32_t s = 0; s < ns; s++) {
         const uint32_t n = sns[s], k = (uint32_t)smi[s].size();
         uint32_t g = 0; while ((1u << g) < k) g++;

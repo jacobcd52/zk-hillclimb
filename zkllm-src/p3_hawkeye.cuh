@@ -2451,7 +2451,7 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
         for (size_t i = 0; i < lg.cls.size(); i++)
             pf.batches.push_back(p3bo::prove_class(tr, lg.cls[i], R, Q,
                                                    "hwl-bo" + std::to_string(i),
-                                                   &lg.resolve));
+                                                   &lg.resolve, &lg.dresolve));
     }
     P.batch += now_ms() - tp;
     P.total += now_ms() - tall;

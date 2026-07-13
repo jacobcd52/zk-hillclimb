@@ -5,47 +5,66 @@ Every DONE item must cite its measured win and the gate run that validated it.
 Agents append new proposals each iteration under "Proposed"; the coordinator
 promotes them to TODO or rejects them.
 
-## TODO (ranked by expected impact)
+## TODO (ranked by expected impact — promoted from iteration-1 proposals)
 
-1. **[memory, BIG] Disk-backed Packed store** — DONE(unlocked 8192 tokens:
-   s128 b64 zk=1 = 1176.7 s / 37.5 GB / verify_ok=1, was cgroup-kill at
-   35.4 GB before any output; witness build 35.4 → 4.8 GB).  Root cause
-   measured: glibc arena retention of per-instance transients in
-   build_witness (~15 GB/64 attention instances) plus raw lidx retention
-   (~16 B/product).  Implemented: trim_heap per instance/section in
-   build_witness, lidx spill at compact_wit (LayerWit.limap), spill
-   default-on (/workspace/p3_spill; P3_PK_SPILL=0 disables), min 1 MB.
-   Gates: iteration-1 endgame run (see IMPROVEMENT_LOG).
-2. **[speed, BIG] logUp GPU offload** — DONE(measured −25.6% end-to-end at
-   d256 s128: 214.8 → 159.9 s, RSS 16.2 GB unchanged, proof bytes identical;
-   lug/Am 51.4 → 4.3 s).  Device Am build (p3lu_amfill/amaxpy kernels) +
-   mat_col_range_dev in the claims path; kill switch P3_LUG_DEVAM=0.
-   Identity pairs green (42.658/41.569).  Full gates at end of iteration.
-3. **[speed, MED] Batched sumcheck round messages** — DEFERRED(measured low
-   headroom): after item 2, the per-round reduction targets are zcdp+zcdg =
-   9.6 s of 159.9 s at d256 s128 and 24.3 s of 644 s at 4096 tok (71 chains),
-   and much of zcdp is real fold work, not launch overhead.  Even a perfect
-   batching saves <2-3%; the mm stage is 73% cwit (commits) instead — see the
-   packed-direct commit lever below.
-4. **[speed, MED] Commit/witness-gen overlap** — DONE via a stronger,
-   simpler form: packed-direct commits (`commit_pk_nc`) — the cpk_dev path
-   host-rematerialized the already-packed column, re-packed it and uploaded
-   raw; now the pack itself uploads (2-8x less PCIe) + device unpack.
-   Applied to the CDp loop.  Measured: d256 s128 159.9 → **151.3 s (−5.4%)**,
-   proof bytes identical, mm 72.3 → 63.4 s.  CAVEAT: RSS 16.2 → 18.4 GB
-   (+2.2 GB) — regression investigation proposed below.  Kill switch
-   P3_CPK_DEV=0.  Stream overlap proper: see Proposed.
-5. **[speed, MED] Batch-open eq-rebuild caching** — INFEASIBLE(no headroom):
-   the strG round-loop eq rebuild sits inside bo/red = 1.1 s of 159.9 s at
-   d256 s128 (19 classes).  The batch stage's actual costs are q0/enc 17.7 s,
-   bo/G 10.6 s, ys+rlc 10.2 s, blinder 9.3 s — different levers (proposed
-   below).
-6. **[speed/memory, MED] mm-stage chain scheduling** — ASSESSED, superseded by
-   Proposed P6 with the measured 8192-token profile: per-chain fixed cost is
-   sc5z/chain 127.4 s across x4040 chains (~31 ms/chain, 10.8% e2e) at 8192 tok,
-   52.3 s x1064 at 4096 tok, plus sc5z/blind 52.2 s at 8192.  Real headroom at
-   batch configs, negligible at d256 s128 (8.9 s).  See P6 for the concrete
-   lever and risk class.
+P1-P7 from iteration 1 are all PROMOTED as written (see git 81d4c64 for the full
+text with measurements; summaries below). P6 is transcript-CHANGING: it requires
+the FULL battery + compact teeth + ZK hiding suites green before keeping, and
+must be implemented LAST so a revert cannot invalidate the others' measurements.
+
+1. P1 [memory, UNLOCK] Per-instance QKV witness compaction -> unlock 16384 tokens.
+   IN-PROGRESS (iteration 2): implemented (gen->compact->trim per instance in
+   QKV and FFN sections), identity pairs green; 16384-token attempt in the
+   endgame runs.
+2. P2 [memory, BIG] Reclaim the cpk_dev/devam host-RSS regression.
+   DONE (iteration 2): root cause was NOT cpk_dev/devam retention -- it was
+   the default-on FUSE Packed spill (mmap file pages resident after reads +
+   FUSE I/O wall time): bisection at d256 s128 measured spill-on 170.5 s /
+   18.38 GB vs spill-off 143.2 s / 15.06 GB on the same binary.  Fixed by a
+   pressure gate (spill only above P3_PK_SPILL_GATE=0.45 of the memory cap).
+   d256 s128 now 123.9 s / 15.06 GB (with P3), proof bytes identical.
+3. P3 [speed, BIG] Chunked device pass for giant batch-open classes.
+   DONE (iteration 2): PLedger.dresolve (device compact-column materializer;
+   the giant classes' columns previously host-materialized + raw-uploaded at
+   ~110 ms/GB) + column-major chunked G build in the strG/g2pass paths.
+   batch stage 57.2 -> 36.6 s at d256 s128; combined with P2:
+   d256 s128 = 123.9 s / 15.06 GB (-18.1% vs iteration 1), proof 77.527 MB
+   byte-identical, verify_ok=1.
+4. P4 [speed, MED-BIG] Device batched inversion for logUp helpers.
+   INFEASIBLE AS WRITTEN (iteration 2): the merged v3 flush has NO host
+   helper inversions -- the pm/qm multiplicative-mask design avoids them by
+   construction, and inv_all_add (host Montgomery batch inversion) only runs
+   in the standalone prove_v path that never executes at scale.  The ZPROF
+   "lug/inv" 11.4 s that motivated this item is a MISLABELED timer nested
+   inside lug/hcommit: it times the pm/qm mask-stream DEVICE commits
+   (p3_logup.cuh:1447-1455, salted_commit_root_dev x274) -- already-GPU NTT
+   + Merkle work whose commitment count is transcript-fixed.  Residual lever
+   (proposed below): overlap the per-subgroup pm/qm commit pairs on streams.
+5. P5 [speed, MED] Fused salted commits + device mask PRNG.
+   PARTIAL (iteration 2): the batch-open class BLINDER (host PRNG fill +
+   host salted commit + host MLE eval of 1-2 GB columns, ZPROF bo/blinder
+   9.0 s at d256 s128) moved fully on-device for classes >= 2^24 with regen
+   closures (bit-identical lcg chain kernel, dev commit, dot-kernel eval).
+   The remaining commit_salt 15.9 s + mask_gen 10.0 s over x3530 commits is
+   per-commit fixed overhead; a batched same-size tree builder is proposed
+   below (transcript-identical but engineering-heavy).
+6. P7 [speed, MED] lug/cnt GPU histogram.
+   DONE (iteration 2): device histogram (shared-mem sub-histograms / global
+   64-bit atomics) over the merged lookup index streams; counting is
+   order-free so the committed cnt bytes are exact.  P3_LUG_DEVCNT=0 kill
+   switch, P3_LUG_DEVCNT_MIN=0 test forcing.  Identity pairs green incl.
+   forced device path; scale win measured in the endgame runs (baseline
+   lug/cnt 87.5 s at 8192 tok).
+7. P6 [speed, MED, transcript-CHANGING, LAST] Per-chain sumcheck overhead batching.
+   DEFERRED to iteration 3 (design below): round-level batching across
+   chains REQUIRES reordering the Fiat-Shamir transcript (each chain's round
+   challenges depend on the running transcript, so independent chains cannot
+   share device passes without moving to a round-major absorb order).  That
+   invalidates byte-identity of EVERY proof (nh x b attention chains exist
+   at every config), so it must be the sole transcript-changing lever of its
+   iteration, validated by the full battery + hiding suites.  Landing it
+   last in THIS iteration would have forfeited the byte-identity cross-check
+   that validated P1/P2/P3/P5/P7.  Judgment call per the revert-safety rule.
 
 ## Explicitly OUT OF SCOPE for the autonomous loop
 

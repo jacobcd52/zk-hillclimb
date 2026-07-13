@@ -601,6 +601,51 @@ static inline const char* spill_dir() {
     }();
     return d;
 }
+// pressure gate (iteration 2, P2): spilling costs real time (FUSE writes +
+// mmap read-backs) and resident file pages -- measured +27 s / +3.3 GB VmHWM
+// at d256 s128, a config that never needed the disk.  Spill engages only once
+// the process RSS approaches the memory cap (cgroup limit, else MemTotal).
+// Storage-only: values read back bit-identical whether spilled or not, so
+// per-pack gate decisions cannot change any proof byte.
+static inline size_t mem_cap_bytes() {
+    static size_t cap = []() -> size_t {
+        size_t v = (size_t)-1;
+        for (const char* p : {"/sys/fs/cgroup/memory/memory.limit_in_bytes",
+                              "/sys/fs/cgroup/memory.max"}) {
+            FILE* f = fopen(p, "r");
+            if (!f) continue;
+            unsigned long long x = 0;
+            if (fscanf(f, "%llu", &x) == 1 && x > 0 && x < ((size_t)-1 >> 1))
+                v = std::min(v, (size_t)x);
+            fclose(f);
+        }
+        FILE* f = fopen("/proc/meminfo", "r");
+        if (f) { char line[128]; size_t kb = 0;
+                 while (fgets(line, sizeof line, f))
+                     if (sscanf(line, "MemTotal: %zu kB", &kb) == 1) break;
+                 fclose(f);
+                 if (kb) v = std::min(v, kb * 1024); }
+        return v;
+    }();
+    return cap;
+}
+static inline size_t rss_bytes_now() {
+    FILE* f = fopen("/proc/self/status", "r");
+    if (!f) return 0;
+    char line[128]; size_t kb = 0;
+    while (fgets(line, sizeof line, f))
+        if (sscanf(line, "VmRSS: %zu kB", &kb) == 1) break;
+    fclose(f);
+    return kb * 1024;
+}
+static inline bool spill_pressure() {
+    static double gate = []() {
+        const char* e = getenv("P3_PK_SPILL_GATE");
+        return e ? atof(e) : 0.45;
+    }();
+    if (gate <= 0) return true;                 // gate 0 = always spill
+    return rss_bytes_now() >= (size_t)(gate * (double)mem_cap_bytes());
+}
 // write len bytes into an unlinked file under the spill dir and map them
 // read-only; null when spilling is off, too small, or any step fails
 static inline std::shared_ptr<MagMap> spill_bytes(const void* src, size_t len) {
@@ -609,6 +654,7 @@ static inline std::shared_ptr<MagMap> spill_bytes(const void* src, size_t len) {
     if (mn == -2) { const char* e = getenv("P3_PK_SPILL_MIN");
                     mn = e ? atoll(e) : ((long long)1 << 20); }
     if (!dir || len < (size_t)mn) return nullptr;
+    if (!spill_pressure()) return nullptr;
     static std::atomic<uint64_t> ctr{0};
     char path[512];
     snprintf(path, sizeof path, "%s/p3pk_%d_%llu.bin", dir, (int)getpid(),

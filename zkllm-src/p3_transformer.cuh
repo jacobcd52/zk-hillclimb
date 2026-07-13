@@ -276,16 +276,22 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
         std::vector<uint8_t> cx = w.qn[QN_H1].C;
         if (tamper == TFT_SEAM_MMX) cx[7] ^= 1;
         p3hwl::Tamper hm{p3hwl::TM_STATE, 1, 1, 0};
+        // pack each instance BEFORE generating the next: three raw QKV
+        // witnesses coexisting is the 16384-token witness wall (~14 GB raw
+        // per instance at P=2^27)
         w.mm[MM_WQ] = p3hwl::gen_witness(
             mmgold(T, d, d, cx, w.qn[QN_H1].S, W.w[W_Q].codes, W.w[W_Q].scales), true,
             tamper == TFT_GW_MM ? &hm : nullptr);
+        w.mmY[MM_WQ] = w.mm[MM_WQ].Y;
+        p3hwl::compact_wit(w.mm[MM_WQ]); p3bf::trim_heap();
         w.mm[MM_WK] = p3hwl::gen_witness(
             mmgold(T, d, d, cx, w.qn[QN_H1].S, W.w[W_K].codes, W.w[W_K].scales));
+        w.mmY[MM_WK] = w.mm[MM_WK].Y;
+        p3hwl::compact_wit(w.mm[MM_WK]); p3bf::trim_heap();
         w.mm[MM_WV] = p3hwl::gen_witness(
             mmgold(T, d, d, cx, w.qn[QN_H1].S, W.w[W_V].codes, W.w[W_V].scales));
-        for (int i : {MM_WQ, MM_WK, MM_WV}) w.mmY[i] = w.mm[i].Y;
-        // section 22: pack each instance's witness columns right away
-        for (int i : {MM_WQ, MM_WK, MM_WV}) p3hwl::compact_wit(w.mm[i]);
+        w.mmY[MM_WV] = w.mm[MM_WV].Y;
+        p3hwl::compact_wit(w.mm[MM_WV]);
     }
     p3bf::trim_heap();
     p3bf::rsslog("wit:qkv");
@@ -434,12 +440,16 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
         p3qnt::Golden g; g.B = T; g.d = d; g.x = w.rms2y;
         w.qn[cfg.qnH2()] = p3qnt::gen_witness(g, a);
     }
+    // pack Wg before generating Wu (same wall as QKV: dff instances are the
+    // largest raw witnesses in the layer)
     w.mm[cfg.mmWG()] = p3hwl::gen_witness(
         mmgold(T, d, dff, w.qn[cfg.qnH2()].C, w.qn[cfg.qnH2()].S, W.w[W_G].codes, W.w[W_G].scales));
+    w.mmY[cfg.mmWG()] = w.mm[cfg.mmWG()].Y;
+    p3hwl::compact_wit(w.mm[cfg.mmWG()]); p3bf::trim_heap();
     w.mm[cfg.mmWU()] = p3hwl::gen_witness(
         mmgold(T, d, dff, w.qn[cfg.qnH2()].C, w.qn[cfg.qnH2()].S, W.w[W_U].codes, W.w[W_U].scales));
-    w.mmY[cfg.mmWG()] = w.mm[cfg.mmWG()].Y; w.mmY[cfg.mmWU()] = w.mm[cfg.mmWU()].Y;
-    p3hwl::compact_wit(w.mm[cfg.mmWG()]); p3hwl::compact_wit(w.mm[cfg.mmWU()]);
+    w.mmY[cfg.mmWU()] = w.mm[cfg.mmWU()].Y;
+    p3hwl::compact_wit(w.mm[cfg.mmWU()]);
     p3bf::trim_heap();
     p3bf::rsslog("wit:ffn-gu");
 
@@ -1021,7 +1031,7 @@ static inline TfProof prove(fs::Transcript& tr, const TfWit& w, const TfOps& o,
     for (size_t i = 0; i < xc.lg.cls.size(); i++)
         pf.batches.push_back(p3bo::prove_class(tr, xc.lg.cls[i], R, Q,
                                                "tf-bo" + std::to_string(i),
-                                               &xc.lg.resolve));
+                                               &xc.lg.resolve, &xc.lg.dresolve));
     P.batch += now_ms() - tp;
     P.total += now_ms() - tall;
     return pf;

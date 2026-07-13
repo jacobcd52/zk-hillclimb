@@ -146,3 +146,133 @@ engages at compact_wit, which is never reached.  Fix proposed as P1
 configs, 8192 tokens unlocked, proofs byte-identical, all gates green.
 Open regressions: host RSS (+2.2..6.3 GB), forced-cap streaming slowdown on
 i1c, 16384 tokens still locked (P1).
+
+## Iteration 2 — P1: per-instance QKV/FFN witness compaction
+
+Implemented in `p3_transformer.cuh`: gen_witness -> compact_wit -> trim_heap
+interleaved PER INSTANCE in the QKV section (Wq, then Wk, then Wv) and the FFN
+section (Wg, then Wu) — three (two) raw dff-sized witnesses never coexist.
+Transcript-identical (packing is representation-only).
+- Identity pairs seq=64 zk=1 (default / SC5ZG_CAP / SBLIND_MIN=10 / both):
+  verify_ok=1, proof_mb 42.658 / 41.569 byte-identical (binary /root/p3_tb_i2a).
+- The 16384-token attempt runs at the end of the iteration (long run).
+
+## Iteration 2 — P2: host-RSS regression = the default-on FUSE spill; pressure gate
+
+Bisection at d256 s128 zk=1 on i2a (P1 only): default spill-on **170.5 s /
+18.38 GB**, P3_PK_SPILL=0 **143.2 s / 15.06 GB** — the ENTIRE iteration-1 RSS
+regression (+3.3 GB here) AND a previously unnoticed +27 s time regression are
+the /workspace FUSE-backed Packed spill being DEFAULT-ON at configs that never
+needed the disk (mmap'd file pages stay resident after read-backs; FUSE writes
++ reads cost wall time).  Logs /root/zkrun_i2a_d256s128_spillon/off.log.
+Fix (`p3_zkc.cuh spill_pressure()`): spill engages only when VmRSS >=
+P3_PK_SPILL_GATE (default 0.45) x the memory cap (cgroup limit, else
+MemTotal).  Storage-only, per-pack decisions cannot change proof bytes;
+P3_PK_SPILL_GATE=0 forces always-spill (old behavior) for tests.
+- Identity pairs on i2b incl. P3_PK_SPILL_GATE=0 and P3_CPK_DEV=0:
+  verify_ok=1, 42.658 / 41.569 byte-identical.
+- d256 s128 zk=1 (i2b, with P3 below): **123.9 s / 15.06 GB** — gate never
+  triggers below 18.5 GB, reproducing the spill-off profile exactly.
+Status: KEEP.  NOTE for configs near the cap (8192/16384 tok): spill engages
+mid-run once RSS crosses the gate — validated by the endgame runs.
+
+## Iteration 2 — P3: device resolver + column-major chunked G build (batch-open)
+
+Root cause measured: the giant strCol classes' columns are COMPACTED
+commitments whose only ledger source was the HOST resolver (mat_col_into +
+raw-size PCIe upload, ~110 ms/GB); blind columns with a device gen ran ~10x
+cheaper.  Two changes (`p3_batchopen.cuh`, `p3_logup.cuh`):
+1. PLedger.dresolve: device twin of the compact resolver (mat_col_range_dev
+   = packed upload + unpack/mask kernels, bit-identical device bytes), used
+   by dcol init, upload_col, and the q0 encode.
+2. Column-major CHUNKED G build in the strG host-parked path (and the g2pass
+   round-0 rebuild): points processed in device-sized chunks, each distinct
+   column materialized once per chunk (exact field adds, per-point round-0
+   messages summed in ascending t order — absorbed bytes unchanged).
+- Identity: seq=64 pairs + P3_COMPACT_MIN=0 forced-compaction pair green
+  (42.658 identical; i1c takes 44.3 s vs i2b 10.1 s on that test).
+- d256 s128 zk=1 (i2b): batch stage 57.2 -> 36.6 s; tf-bo14 class
+  G 7804 -> 1963 ms, ys+rlc 6033 -> 897 ms, q 12066 -> 9737 ms.
+- Combined P2+P3 headline: **d256 s128 = 123.9 s / 15.06 GB, proof 77.527 MB
+  byte-identical, verify_ok=1** vs iteration-1 151.3 s / 18.4 GB =
+  **−18.1% time, −18.2% RSS** (log /root/zkrun_i2b_d256s128.log).
+Status: KEEP.
+
+## Iteration 2 — P4: INFEASIBLE as written (no host inversions at scale)
+
+The promoted item targeted "lug/inv ≈ lug/hcommit host-side field inversions".
+Source + profile audit: ZPROF lug/inv (p3_logup.cuh:1447-1455) is NESTED inside
+lug/hcommit and times the per-subgroup pm/qm mask-stream DEVICE commits
+(salted_commit_root_dev x2 per subgroup, x137 subgroups at d256 s128 = 11.4 s
+of NTT+Merkle GPU work) — hcommit-inv ≈ 0 s because the T-side is trivial.
+The merged v3 flush avoids helper inversions BY DESIGN (multiplicative pm=sm*qm
+masks, "no inversions" comment at :1430); inv_all_add (already a Montgomery
+batch inversion, OpenMP) only runs in the standalone prove_v path that does not
+execute in the composed layer at scale.  Nothing to move to the device.
+Residual (proposed for iteration 3): overlap each subgroup's pm and qm commits
+on separate streams — bounded ~3-4% e2e.  Status: INFEASIBLE (mechanism above).
+
+## Iteration 2 — P5 (slice): device batch-open class blinder
+
+The class blinder for big classes was host-side: zprng_fill of N gl_t (1-2 GB),
+HOST salted_commit_root, host build_eq + eval_h, and the host vector then
+re-uploaded per use in the class.  Now (p3_batchopen.cuh prove_class, N >= 2^24):
+device lcg-chain fill (bit-identical twin of zprng_fill, same kernel the
+commit_pk_nc mask path uses), salted_commit_root_dev (identical root), eq+dot
+kernel eval (exact field sums — same value), and the entry carries host+device
+regen closures so the column is never host-resident.
+- d256 s128 zk=1 (i2d): bo/blinder 8.97 -> 0.97 s; batch stage 36.6 -> 28.0 s.
+  **BENCH 114.7 s / 15.06 GB, proof 77.527 MB byte-identical, verify_ok=1**
+  (log /root/zkrun_i2d_d256s128.log) = **-24.2% time / -18.2% RSS vs the
+  iteration-1 151.3 s / 18.4 GB baseline** for P1+P2+P3+P5-slice combined.
+The P5 core (batched salted-tree builder for the x3530 small commits,
+commit_salt 15.9 s + mask_gen 10.0 s) is proposed for iteration 3.
+Status: KEEP (slice).
+
+## Iteration 2 — P7: lug/cnt GPU histogram
+
+Implemented (p3_logup.cuh prove_super cnt build): device histogram over the
+merged lookup index streams — shared-memory sub-histograms for tables <= 8192
+rows, global 64-bit atomics otherwise, 256 MB index chunks, device oob flag
+mirroring the host range check.  Counting is order-free integer accumulation:
+device bins equal the host loop exactly, committed cnt bytes unchanged.
+Engages at >= 2^22 total indices (P3_LUG_DEVCNT_MIN, =0 to force for tests;
+P3_LUG_DEVCNT=0 kill switch).
+- Identity pairs seq=64 (default / DEVCNT_MIN=0 forced / DEVCNT=0 / blinds):
+  verify_ok=1, 42.658 / 41.569 byte-identical.
+- Scale win measured in the endgame runs (baseline lug/cnt 26.8 s at 4096 tok,
+  87.5 s at 8192 tok; d256 s128 has only 1.5 s so no measurable change there).
+Status: KEEP pending endgame numbers.
+
+## Iteration 2 — P6: DEFERRED with design (transcript-changing)
+
+Round-level batching across same-shape chains requires a round-major
+Fiat-Shamir absorb order (each chain's round-r challenge currently depends on
+every earlier chain's absorbs; independent chains cannot share device round
+passes under the sequential order).  That changes EVERY proof's bytes (nh*b
+attention chains exist at all configs), forfeiting the byte-identity
+cross-check that validated this iteration's five landed levers.  Per the
+revert-safety rule (P6 last, sole transcript-changing lever of its iteration)
+it moves to iteration 3 as the first item, with the full battery + compact
+teeth + ZK hiding suites as its gate.  Design sketch in ROADMAP.md Proposed.
+
+## Iteration 2 — endgame (final, 2026-07-13, coordinator-run)
+
+Gates on the final i2d source: 26-suite battery ALL GREEN, compact teeth OK,
+24/24 identity-pair runs verify_ok=1 with proof bytes exactly 42.658 / 41.569
+(gates3, /root/zkrun_i2_gates3.log).  Headline reruns (zk=1, verify_ok=1,
+proofs byte-identical to iteration 1 and the base):
+
+| config | base | iter1 | iter2 | cumulative |
+|---|---|---|---|---|
+| d256 s128 | 230.3 s / 25.1 GB | 151.3 / 18.4 | **114.7 / 15.1** | −50% time / −40% RSS |
+| d256 s256 | 469.8 / 30.7 | 352.1 / 37.0 | **301.7 / 27.3** | −36% / −11% |
+| 4096 tok  | 644.2 / 34.4 | 487.6 / 37.3 | **399.4 / 34.7** | −38% |
+| 8192 tok  | (impossible) | 1176.7 / 37.5 | **981.8 / 37.5** | unlocked, then −17% |
+
+16384 tokens: STILL WALLED.  The witness now survives its old kill point (P1
+works: per-instance compaction holds RSS to 29 GB through the attention tail),
+but the process exits silently (rc=0 masked, log truncates at wit:attn-ai127,
+~6 min in).  Not diagnosed — the loop was stopped here by the user; first item
+for any future iteration 3, together with the deferred P6 (transcript-changing
+chain batching, design in ROADMAP) and the P5 core (batched salted commits).
