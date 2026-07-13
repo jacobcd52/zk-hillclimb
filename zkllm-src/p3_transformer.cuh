@@ -252,6 +252,7 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
         w.rms[0].ypat[5] = gl_add(w.rms[0].ypat[5], 1ULL); w.rms[0].Y[5] ^= 1;
     }
 
+    p3bf::rsslog("wit:rms1");
     // -- quantize h1 (shared by Wq/Wk/Wv) --
     {
         p3qnt::Golden g; g.B = T; g.d = d; g.x = w.rms1y;
@@ -286,6 +287,8 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
         // section 22: pack each instance's witness columns right away
         for (int i : {MM_WQ, MM_WK, MM_WV}) p3hwl::compact_wit(w.mm[i]);
     }
+    p3bf::trim_heap();
+    p3bf::rsslog("wit:qkv");
 
     // -- attention, per (batch, head) instance --
     w.rgs.seq = seq; w.rgs.dh = dh; w.rgs.cos = W.cos; w.rgs.sin = W.sin;
@@ -389,6 +392,13 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
             for (uint32_t j = 0; j < dh; j++)
                 w.attn[((size_t)b * seq + p) * d + (size_t)h * dh + j] =
                     w.mmY[cfg.mmPV(ai)][(size_t)p * dh + j];
+        // per-instance transients (raw dp columns before packing) otherwise
+        // accumulate as retained glibc arenas across the many instances
+        p3bf::trim_heap();
+        if (p3bf::memlog() && (ai & 31) == 31) {
+            char tg[32]; snprintf(tg, sizeof tg, "wit:attn-ai%u", ai);
+            p3bf::rsslog(tg);
+        }
     }
     if (tamper == TFT_SEAM_CONCAT) flip(w.attn, (size_t)1 * d + dh + 2);   // head-1 region
 
@@ -401,6 +411,8 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
         mmgold(T, d, d, w.qn[cfg.qnAT()].C, w.qn[cfg.qnAT()].S, W.w[W_O].codes, W.w[W_O].scales));
     w.mmY[cfg.mmWO()] = w.mm[cfg.mmWO()].Y;
     p3hwl::compact_wit(w.mm[cfg.mmWO()]);
+    p3bf::trim_heap();
+    p3bf::rsslog("wit:wo");
     {
         p3bfa::Golden g; g.n = T * d; g.flags = 0;
         g.a = w.x0; g.b = w.mmY[cfg.mmWO()]; g.o.assign(g.n, 0);
@@ -428,6 +440,8 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
         mmgold(T, d, dff, w.qn[cfg.qnH2()].C, w.qn[cfg.qnH2()].S, W.w[W_U].codes, W.w[W_U].scales));
     w.mmY[cfg.mmWG()] = w.mm[cfg.mmWG()].Y; w.mmY[cfg.mmWU()] = w.mm[cfg.mmWU()].Y;
     p3hwl::compact_wit(w.mm[cfg.mmWG()]); p3hwl::compact_wit(w.mm[cfg.mmWU()]);
+    p3bf::trim_heap();
+    p3bf::rsslog("wit:ffn-gu");
 
     // -- swiglu, quantize, Wd, residual 2 --
     {
@@ -449,6 +463,8 @@ static inline TfWit build_witness(const Config& cfg, const std::vector<uint16_t>
         mmgold(T, dff, d, w.qn[cfg.qnSW()].C, w.qn[cfg.qnSW()].S, W.w[W_D].codes, W.w[W_D].scales));
     w.mmY[cfg.mmWD()] = w.mm[cfg.mmWD()].Y;
     p3hwl::compact_wit(w.mm[cfg.mmWD()]);
+    p3bf::trim_heap();
+    p3bf::rsslog("wit:wd");
     {
         p3bfa::Golden g; g.n = T * d; g.flags = 0;
         g.a = w.res1o; g.b = w.mmY[cfg.mmWD()]; g.o.assign(g.n, 0);

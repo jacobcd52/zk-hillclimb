@@ -65,6 +65,8 @@
 #include <memory>
 #include <atomic>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
 #include "p3_goldilocks.cuh"
@@ -580,13 +582,32 @@ struct Packed {
     bool on = false;
     const uint8_t* magp() const { return mmp ? mmp->p : mag.data(); }
 };
-// write len bytes into an unlinked file under $P3_PK_SPILL and map them
+// spill directory: $P3_PK_SPILL when set (empty or "0" disables), else the
+// DEFAULT /workspace/p3_spill when it is creatable+writable (section 23:
+// disk backing is the default for big Packed allocations; the pages are
+// clean file cache the kernel reclaims instead of OOM-killing the prover)
+static inline const char* spill_dir() {
+    static const char* d = []() -> const char* {
+        const char* e = getenv("P3_PK_SPILL");
+        if (e) return (*e && strcmp(e, "0") != 0) ? e : nullptr;
+        const char* def = "/workspace/p3_spill";
+        if (mkdir(def, 0700) != 0 && errno != EEXIST) return nullptr;
+        char p[256];
+        snprintf(p, sizeof p, "%s/.p3probe_%d", def, (int)getpid());
+        int fd = open(p, O_RDWR | O_CREAT | O_TRUNC, 0600);
+        if (fd < 0) return nullptr;
+        unlink(p); close(fd);
+        return def;
+    }();
+    return d;
+}
+// write len bytes into an unlinked file under the spill dir and map them
 // read-only; null when spilling is off, too small, or any step fails
 static inline std::shared_ptr<MagMap> spill_bytes(const void* src, size_t len) {
-    static const char* dir = getenv("P3_PK_SPILL");
+    static const char* dir = spill_dir();
     static long long mn = -2;
     if (mn == -2) { const char* e = getenv("P3_PK_SPILL_MIN");
-                    mn = e ? atoll(e) : ((long long)1 << 22); }
+                    mn = e ? atoll(e) : ((long long)1 << 20); }
     if (!dir || len < (size_t)mn) return nullptr;
     static std::atomic<uint64_t> ctr{0};
     char path[512];

@@ -258,6 +258,11 @@ struct LayerWit {
     // ALL matmul instances' raw witnesses never coexist; prove() materializes
     // each column transiently at commit time -- identical values throughout
     p3zkc::Packed pdp[NDP], pdg[NDG], pdob[NDO], pdb[NDS], pdn[NDS];
+    // spilled lookup-index storage (P3_PK_SPILL): the per-product index
+    // arrays (16 B/product across the four product-domain lookups) otherwise
+    // sit as anonymous memory from witness build until the lookup flush
+    std::shared_ptr<p3zkc::MagMap> limap[NLU];
+    size_t lilen[NLU] = {};
     bool cpk = false;
 };
 // pack every witness column that fits the small-int encoding (per column;
@@ -276,6 +281,16 @@ static inline void compact_wit(LayerWit& wt) {
     for (int c = 0; c < NDG; c++) pk1(wt.dg[c], wt.pdg[c]);
     for (int c = 0; c < NDO; c++) pk1(wt.dob[c], wt.pdob[c]);
     for (int c = 0; c < NDS; c++) { pk1(wt.db[c], wt.pdb[c]); pk1(wt.dn[c], wt.pdn[c]); }
+    // lookup-index arrays move to disk until their single flush read (values
+    // read back bit-identical; no-op unless P3_PK_SPILL)
+    for (int i = 0; i < NLU; i++) {
+        auto& ix = wt.lidx[i];
+        if (ix.empty() || wt.limap[i]) continue;
+        if (auto h = p3zkc::spill_bytes(ix.data(), ix.size() * 4)) {
+            wt.limap[i] = std::move(h); wt.lilen[i] = ix.size();
+            std::vector<uint32_t>().swap(ix);
+        }
+    }
     wt.cpk = true;
 }
 // materialize a packed witness column with the zk in-place-augment reserve
@@ -2038,11 +2053,25 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
     static int cpkdev_env = -1;
     if (cpkdev_env < 0) { const char* e = getenv("P3_CPK_DEV"); cpkdev_env = e ? atoi(e) : 1; }
     const bool cpk_dev = early_cpk && cpkdev_env;
+    // packed-direct commit (section 23): when the witness column is already
+    // packed and the commit would take the cpk_dev path anyway, hand the pack
+    // straight to the device commit -- host materialize + re-pack + raw
+    // upload all disappear.  Identical committed bytes -> identical root.
+    auto pkc = [&](std::vector<gl_t>& raw, p3zkc::Packed& p, bool cede,
+                   const std::vector<gl_t>* m) -> Col {
+        if (cpk_dev && !m && wt.cpk && p.on && (p.n & (p.n - 1)) == 0) {
+            p3zkc::Packed pk;
+            if (cede && &p != &wtm.pdob[O_YB]) pk = std::move(p);
+            else pk = p;                       // packed copy (2-8x under raw)
+            return p3lu::commit_pk_nc(std::move(pk), R);
+        }
+        return p3lu::commit_col_nc(wsrc(raw, p, cede), R, m, cpk_dev);
+    };
     for (int c = 0; c < NDP; c++) {
         // g_free_dp: the caller cedes the column anyway -- MOVE it into the
         // commit (identical values; skips a 100s-of-MB copy per big column)
-        CDp[c] = p3lu::commit_col_nc(wsrc(wtm.dp[c], wtm.pdp[c], g_free_dp), R,
-                                     mof(c, P_AL, &mAL, P_SEL, &mSEL), cpk_dev);
+        CDp[c] = pkc(wtm.dp[c], wtm.pdp[c], g_free_dp,
+                     mof(c, P_AL, &mAL, P_SEL, &mSEL));
         pf.rdp[c] = CDp[c].root;
         if (zk) {
             // the AL/SEL linked masks are recorded PRNG chains: hand the seeds
@@ -2172,7 +2201,12 @@ static inline LayerProof prove(fs::Transcript& tr, const LayerWit& wt, const Tab
                 return std::vector<gl_t>{};
             };
         }
-        p3lu::defer_v(XC, std::move(spec), wt.lidx[i], *LD[i].tab, LD[i].label, std::move(bind));
+        if (wt.limap[i])
+            p3lu::defer_v(XC, std::move(spec), wt.limap[i], wt.lilen[i],
+                          *LD[i].tab, LD[i].label, std::move(bind));
+        else
+            p3lu::defer_v(XC, std::move(spec), wt.lidx[i], *LD[i].tab,
+                          LD[i].label, std::move(bind));
     }
 
     // -- Dp zero-check (C1, C2, dominance, attainment-local) --

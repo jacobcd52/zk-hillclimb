@@ -85,6 +85,27 @@ __global__ void p3lu_zkleaf_kernel(const gl_t* Am, gl_t beta, uint64_t pseed, ui
     LP[2*x+1] = mo ? gl_mul(p3zkc::zprng_at(pseed, x), qm) : 0ULL;
     LQ[2*x+1] = qm;
 }
+// device build of the merged combined witness Am (section 23): pad member
+// rows (j >= k) hold the gamma-combined table row 0 value a0; real member
+// rows accumulate gamma-axpy'd member columns.  Same exact field ops as the
+// host column-major build -- only the per-element accumulation ORDER differs
+// (exact adds: identical values, transcript unchanged).
+__global__ void p3lu_amfill_kernel(gl_t* Am, gl_t a0, uint32_t n, uint32_t g,
+                                   uint32_t k, size_t NM) {
+    size_t x = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= NM) return;
+    uint32_t j = (uint32_t)((x >> n) & (((size_t)1 << g) - 1));
+    Am[x] = j >= k ? a0 : 0ULL;
+}
+__global__ void p3lu_amaxpy_kernel(gl_t* Am, const gl_t* src, gl_t gpt,
+                                   uint32_t n, uint32_t g, uint32_t j, size_t NAf) {
+    size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= NAf) return;
+    size_t ex = idx >> n, i = idx & (((size_t)1 << n) - 1);
+    size_t x = (ex << (n + g)) | ((size_t)j << n) | i;
+    Am[x] = gl_add(Am[x], gl_mul(gpt, src[idx]));
+}
+
 // device block-partial sum of the sm stream (the A-side mask fraction sum)
 __global__ void p3lu_smsum_kernel(uint64_t pseed, int mo, gl_t* out, size_t n) {
     __shared__ gl_t sh[256];
@@ -318,6 +339,42 @@ static inline Col commit_col_nc(std::vector<gl_t> vals, uint32_t R,
     return c;
 }
 
+// commit an ALREADY-PACKED small-int column directly (section 23): the packed
+// bytes upload + device unpack replace the cpk_dev path's host materialize +
+// re-pack + raw upload.  The device augmented column is byte-identical to the
+// cpk_dev path's (same unpack values, same mask chain, same seed draw order)
+// -> identical root; the pack becomes the commitment's compact storage.
+// zk mode only, no linked mask, power-of-two real length (caller checks).
+static inline Col commit_pk_nc(p3zkc::Packed pk, uint32_t R) {
+    struct Tm { double t0; Tm() : t0(lu_now_ms()) {}
+                ~Tm() { g_lustats.commit_ms += lu_now_ms() - t0; g_lustats.commits++; } } tm_;
+    Col c;
+    uint32_t vr = 0; while ((1ull << vr) < pk.n) vr++;
+    const size_t Nr = pk.n;
+    const size_t Naug = (size_t)1 << p3zkc::vfull(vr);
+    c.vreal = vr; c.mstart = Nr;
+    {
+        p3zp::T zt(p3zp::g.mask_gen);
+        c.mseed = p3zkc::G.mask_on ? p3zkc::next_seed() : 0;
+    }
+    gl_t* dm = p3bf::dmalloc(Naug, "cpnc:aug");
+    p3zkc::unpack_ints_dev(pk, 0, Nr, dm);
+    if (c.mseed)
+        p3zkc_lcgchain_kernel<<<(uint32_t)((Naug - Nr + 255) / 256), 256>>>(
+            dm + Nr, c.mseed, Naug - Nr, p3zkc::lcg_ladder());
+    else
+        cudaMemsetAsync(dm + Nr, 0, (Naug - Nr) * 8, 0);
+    c.sseed = p3zkc::next_seed();
+    {
+        p3zp::T zt(p3zp::g.commit_salt);
+        c.root = p3zkc::salted_commit_root_dev(dm, Naug, R, c.sseed);
+    }
+    cudaFreeAsync(dm, 0);
+    p3zkc::spill_packed(pk);
+    c.pk = std::move(pk); c.ctot = Naug;
+    return c;
+}
+
 // ---- public fixed table: c columns of length M=2^m, plus a binding hash ----
 struct Table {
     std::vector<std::vector<gl_t>> cols;
@@ -432,6 +489,15 @@ static inline void defer_v(XCtx& xc, std::vector<LuColSpec> W, const std::vector
         auto* ix = const_cast<std::vector<uint32_t>*>(&idx);
         ix->clear(); ix->shrink_to_fit();
     }
+}
+// defer with an ALREADY-SPILLED index view (witness-build-time spill): the
+// obligation reads through the mapped file exactly like defer_v's own spill
+static inline void defer_v(XCtx& xc, std::vector<LuColSpec> W,
+                           std::shared_ptr<p3zkc::MagMap> imap, size_t ilen,
+                           const Table& T, std::string label, PBind bind = nullptr) {
+    xc.luq.push_back({std::move(W), nullptr, &T, std::move(label), std::move(bind)});
+    LuObl& o = xc.luq.back();
+    o.imap = std::move(imap); o.ilen = ilen;
 }
 static inline void vdefer_v(VCtx& v, std::vector<const p3fri::Hash*> roots, const Table& T,
                             uint32_t n, std::string label, VBind bind = nullptr) {
@@ -1444,26 +1510,59 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         // all ex slices -- only the per-element ADD ORDER differs from the
         // row-major build (exact field adds: identical values, transcript
         // unchanged), and compact/generated columns never coexist.
+        // Device path (devleaf groups, section 23): Am is built ON DEVICE --
+        // compacted member columns rematerialize via mat_col_range_dev (packed
+        // upload + device unpack + device mask PRNG), raw/virtual/generated
+        // columns upload once -- and the leaves consume dAm in place.  The
+        // host Am array and its NM-sized upload disappear.
         double t_am = lu_now_ms();
         const size_t NAf = (size_t)1 << (n + E);       // full member column length
-        std::vector<gl_t> Am(NM, 0);
-        for (uint32_t ex = 0; ex < (1u << E); ex++)
-            for (uint32_t j = k; j < kp; j++) {
-                gl_t* dst = Am.data() + (((size_t)ex << (n + g)) | ((size_t)j << n));
-                #pragma omp parallel for schedule(static) if (N >= 65536) num_threads(p3bf::nthr(N))
-                for (size_t i = 0; i < N; i++) dst[i] = a0;
+        const bool devleaf = zk && gpu && 2 * NM >= p3gkr::GKR_FULLGPU_MIN;
+        static const bool devam_on = [] {
+            const char* e = getenv("P3_LUG_DEVAM"); return !e || atoi(e) != 0; }();
+        const bool devam = devleaf && devam_on;
+        std::vector<gl_t> Am;
+        gl_t* dAm = nullptr;
+        if (devam) {
+            dAm = p3bf::dmalloc(NM, "lug:dAm");
+            p3lu_amfill_kernel<<<(uint32_t)((NM + 255) / 256), 256>>>(
+                dAm, a0, n, g, k, NM);
+            gl_t* dcol = p3bf::dmalloc(NAf, "lug:amcol");
+            for (uint32_t j = 0; j < k; j++) {
+                auto& W = xc.luq[mi[j]].W;
+                for (uint32_t t = 0; t < c; t++) {
+                    if (W[t].com && W[t].com->pk.on) {
+                        mat_col_range_dev(*W[t].com, 0, dcol, NAf);
+                    } else {
+                        const std::vector<gl_t>& v = *wcol(W[t], NAf);
+                        cudaMemcpy(dcol, v.data(), NAf * 8, cudaMemcpyHostToDevice);
+                    }
+                    p3lu_amaxpy_kernel<<<(uint32_t)((NAf + 255) / 256), 256>>>(
+                        dAm, dcol, gp[t], n, g, j, NAf);
+                }
             }
-        for (uint32_t j = 0; j < k; j++) {
-            auto& W = xc.luq[mi[j]].W;
-            for (uint32_t t = 0; t < c; t++) {
-                const std::vector<gl_t>& v = *wcol(W[t], NAf);
-                for (uint32_t ex = 0; ex < (1u << E); ex++) {
+            cudaFreeAsync(dcol, 0);
+            p3bf::ckcuda("lug:amdev");
+        } else {
+            Am.assign(NM, 0);
+            for (uint32_t ex = 0; ex < (1u << E); ex++)
+                for (uint32_t j = k; j < kp; j++) {
                     gl_t* dst = Am.data() + (((size_t)ex << (n + g)) | ((size_t)j << n));
-                    const gl_t* src = v.data() + ((size_t)ex << n);
-                    const gl_t gpt = gp[t];
                     #pragma omp parallel for schedule(static) if (N >= 65536) num_threads(p3bf::nthr(N))
-                    for (size_t i = 0; i < N; i++)
-                        dst[i] = gl_add(dst[i], gl_mul(gpt, src[i]));
+                    for (size_t i = 0; i < N; i++) dst[i] = a0;
+                }
+            for (uint32_t j = 0; j < k; j++) {
+                auto& W = xc.luq[mi[j]].W;
+                for (uint32_t t = 0; t < c; t++) {
+                    const std::vector<gl_t>& v = *wcol(W[t], NAf);
+                    for (uint32_t ex = 0; ex < (1u << E); ex++) {
+                        gl_t* dst = Am.data() + (((size_t)ex << (n + g)) | ((size_t)j << n));
+                        const gl_t* src = v.data() + ((size_t)ex << n);
+                        const gl_t gpt = gp[t];
+                        #pragma omp parallel for schedule(static) if (N >= 65536) num_threads(p3bf::nthr(N))
+                        for (size_t i = 0; i < N; i++)
+                            dst[i] = gl_add(dst[i], gl_mul(gpt, src[i]));
+                    }
                 }
             }
         }
@@ -1476,19 +1575,21 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
         double t_leaf0 = p3zp::nowms();
         std::vector<gl_t> LP, LQ;
         gl_t *dLP = nullptr, *dLQ = nullptr;
-        const bool devleaf = zk && gpu && 2 * NM >= p3gkr::GKR_FULLGPU_MIN;
         if (devleaf) {
-            // leaves built directly on device (bit-identical values); Am is
-            // uploaded once and never materialized as host LP/LQ
+            // leaves built directly on device (bit-identical values); Am
+            // either was built on device (devam) or uploads once -- never
+            // materialized as host LP/LQ
             AMask& a = am[s];
             const bool mo = p3zkc::G.mask_on;
-            gl_t* dAm = p3bf::dmalloc(NM, "lug:dAm");
-            cudaMemcpy(dAm, Am.data(), NM * 8, cudaMemcpyHostToDevice);
+            if (!dAm) {
+                dAm = p3bf::dmalloc(NM, "lug:dAm");
+                cudaMemcpy(dAm, Am.data(), NM * 8, cudaMemcpyHostToDevice);
+            }
             dLP = p3bf::dmalloc(2 * NM, "lug:dLP");
             dLQ = p3bf::dmalloc(2 * NM, "lug:dLQ");
             p3lu_zkleaf_kernel<<<(uint32_t)((NM + 255) / 256), 256>>>(
                 dAm, beta, a.pseed, a.qseed, mo ? 1 : 0, NR, dLP, dLQ, NM);
-            cudaFreeAsync(dAm, 0);
+            cudaFreeAsync(dAm, 0); dAm = nullptr;
         } else if (zk) {
             AMask& a = am[s];
             const bool mo = p3zkc::G.mask_on;
@@ -1586,8 +1687,14 @@ static inline GroupProof prove_super(fs::Transcript& tr, XCtx& xc,
             for (size_t jt = 0; jt < (size_t)k * c; jt++) {
                 auto& W = xc.luq[mi[jt / c]].W;
                 uint32_t t = (uint32_t)(jt % c);
-                const std::vector<gl_t>& v = *wcol(W[t], NAc);
-                cudaMemcpy(dcol, v.data(), NAc * 8, cudaMemcpyHostToDevice);
+                if (W[t].com && W[t].com->pk.on) {
+                    // packed upload + device unpack/PRNG: identical values,
+                    // 2-8x less PCIe than staging raw elements via the host
+                    mat_col_range_dev(*W[t].com, 0, dcol, NAc);
+                } else {
+                    const std::vector<gl_t>& v = *wcol(W[t], NAc);
+                    cudaMemcpy(dcol, v.data(), NAc * 8, cudaMemcpyHostToDevice);
+                }
                 p3bf::p3bf_dot_kernel<<<NB, 256>>>(dcol, deq, dblk, (uint32_t)NAc);
                 cudaMemcpy(hb.data(), dblk, (size_t)NB * 8, cudaMemcpyDeviceToHost);
                 gl_t sacc = 0; for (auto x : hb) sacc = gl_add(sacc, x);
