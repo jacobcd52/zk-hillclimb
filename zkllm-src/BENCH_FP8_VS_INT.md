@@ -104,3 +104,5 @@ Varied: model size (d, dff=4d), seq len, batch, zk on/off, matmul shapes.  Also
 worth varying (not swept here): the FRI rate R and query count Q (soundness vs
 size/speed knobs); number of stacked layers (a full model = N x these per-layer
 numbers, minus shared setup).
+
+> **ERRATUM (2026-07-14, see COMPARISON_AUDIT.md):** the "integerized" comparison line here is NOT a competitive integer prover — it is 92-98% our own fp8 gadget floor, its matmul component is integrity-only (not ZK), and the "~1000x matmul-level" figure is stale (measured 84-394x on the current binary). Honest fp8 premium vs a zkLLM-class integer baseline is ~10^2-10^3x.
