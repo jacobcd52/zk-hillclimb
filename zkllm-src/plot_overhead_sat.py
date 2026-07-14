@@ -9,9 +9,9 @@ rows = json.load(open('/root/zkllm/bench_sat.json'))
 def ov(r, k): return r[k]*1000.0/r['fwd_eff_ms'] if r.get(k) else None
 
 fig, ax = plt.subplots(1, 3, figsize=(19, 6), sharey=True)
-PANELS = [('seq', 'seq', 'sequence length', 'vs sequence length\n(d=64, batch=1)'),
-          ('batch', 'batch', 'batch size', 'vs batch size\n(d=64, seq=128)'),
-          ('model', 'params', 'parameters per layer (M)', 'vs model size\n(seq=64, batch=1)')]
+PANELS = [('seq', 'seq', 'sequence length', 'vs sequence length\n(d=64, proving one sequence)'),
+          ('batch', 'batch', 'sequences proven per proof', 'vs proof batch size\n(d=64, seq=128)'),
+          ('model', 'params', 'parameters per layer (M)', 'vs model size\n(seq=64, proving one sequence)')]
 for a, (grp, xk, xlab, title) in zip(ax, PANELS):
     rs = [r for r in rows if r['grp'] == grp]
     if grp == 'batch': rs += [r for r in rows if r['tag'] == 's128']
@@ -31,7 +31,7 @@ ax[0].legend(loc='lower left')
 fig.suptitle('ZK proving overhead, GPU-utilization-corrected  —  one full transformer layer, full zero-knowledge  (RTX 4090)',
              fontsize=18)
 fig.text(0.5, 0.005,
-         'Forward baseline = saturated per-sequence GPU time (batched forward / batch, at the plateau of a batch ladder).  All proof points verified.',
+         'Denominator is ALWAYS the saturated forward: per-sequence GPU time at the plateau of a batch ladder, × sequences proven.  All proof points verified.',
          ha='center', fontsize=12, color='#555555')
 fig.tight_layout(rect=[0.005, 0.03, 1, 0.93])
 fig.savefig('/root/overhead_saturated.png', dpi=140)
