@@ -1,0 +1,5033 @@
+{
+  "run_seed": "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75",
+  "submission": "faithful-arch-v1",
+  "covered_ids": [
+    "layer0.input_norm.rmsnorm",
+    "layer0.attn.q_proj.commitment_opening",
+    "layer0.attn.q_proj.matmul",
+    "layer0.attn.q_proj.rescaling",
+    "layer0.attn.k_proj.commitment_opening",
+    "layer0.attn.k_proj.matmul",
+    "layer0.attn.k_proj.rescaling",
+    "layer0.attn.v_proj.commitment_opening",
+    "layer0.attn.v_proj.matmul",
+    "layer0.attn.v_proj.rescaling",
+    "layer0.attn.scores_matmul",
+    "layer0.attn.softmax",
+    "layer0.attn.values_matmul",
+    "layer0.attn.o_proj.commitment_opening",
+    "layer0.attn.o_proj.matmul",
+    "layer0.attn.o_proj.rescaling",
+    "layer0.attn_skip.add",
+    "layer0.post_attn_norm.rmsnorm",
+    "layer0.mlp.gate_proj.commitment_opening",
+    "layer0.mlp.gate_proj.matmul",
+    "layer0.mlp.gate_proj.rescaling",
+    "layer0.mlp.up_proj.commitment_opening",
+    "layer0.mlp.up_proj.matmul",
+    "layer0.mlp.up_proj.rescaling",
+    "layer0.mlp.swiglu",
+    "layer0.mlp.down_proj.commitment_opening",
+    "layer0.mlp.down_proj.matmul",
+    "layer0.mlp.down_proj.rescaling",
+    "layer0.mlp_skip.add",
+    "layer1.input_norm.rmsnorm",
+    "layer1.attn.q_proj.commitment_opening",
+    "layer1.attn.q_proj.matmul",
+    "layer1.attn.q_proj.rescaling",
+    "layer1.attn.k_proj.commitment_opening",
+    "layer1.attn.k_proj.matmul",
+    "layer1.attn.k_proj.rescaling",
+    "layer1.attn.v_proj.commitment_opening",
+    "layer1.attn.v_proj.matmul",
+    "layer1.attn.v_proj.rescaling",
+    "layer1.attn.scores_matmul",
+    "layer1.attn.softmax",
+    "layer1.attn.values_matmul",
+    "layer1.attn.o_proj.commitment_opening",
+    "layer1.attn.o_proj.matmul",
+    "layer1.attn.o_proj.rescaling",
+    "layer1.attn_skip.add",
+    "layer1.post_attn_norm.rmsnorm",
+    "layer1.mlp.gate_proj.commitment_opening",
+    "layer1.mlp.gate_proj.matmul",
+    "layer1.mlp.gate_proj.rescaling",
+    "layer1.mlp.up_proj.commitment_opening",
+    "layer1.mlp.up_proj.matmul",
+    "layer1.mlp.up_proj.rescaling",
+    "layer1.mlp.swiglu",
+    "layer1.mlp.down_proj.commitment_opening",
+    "layer1.mlp.down_proj.matmul",
+    "layer1.mlp.down_proj.rescaling",
+    "layer1.mlp_skip.add",
+    "final_norm.rmsnorm",
+    "lm_head.commitment_opening",
+    "lm_head.matmul",
+    "lm_head.rescaling",
+    "statement.logit_binding",
+    "statement.registered_weight_hash",
+    "statement.prompt_binding"
+  ],
+  "skipped_ids": {},
+  "rowmax_selector_ties": {
+    "note": "covert selector tie channel duty (STAGE3 \u00a72.4(ii)): per rowmax instance, sum over rows of log2(#allowed maximizers); observable in proof bytes (com_S + openings) only, never in served tensors",
+    "instances": {
+      "layer0.attn.rowmax.h00": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer0.attn.rowmax.h01": {
+        "rows": 1024,
+        "rows_with_ties": 3,
+        "sum_log2_maximizers_bits": 3.0
+      },
+      "layer0.attn.rowmax.h02": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer0.attn.rowmax.h03": {
+        "rows": 1024,
+        "rows_with_ties": 1,
+        "sum_log2_maximizers_bits": 1.0
+      },
+      "layer0.attn.rowmax.h04": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer0.attn.rowmax.h05": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer0.attn.rowmax.h06": {
+        "rows": 1024,
+        "rows_with_ties": 1,
+        "sum_log2_maximizers_bits": 1.0
+      },
+      "layer0.attn.rowmax.h07": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer0.attn.rowmax.h08": {
+        "rows": 1024,
+        "rows_with_ties": 1,
+        "sum_log2_maximizers_bits": 1.0
+      },
+      "layer0.attn.rowmax.h09": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer0.attn.rowmax.h10": {
+        "rows": 1024,
+        "rows_with_ties": 1,
+        "sum_log2_maximizers_bits": 1.0
+      },
+      "layer0.attn.rowmax.h11": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h00": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h01": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h02": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h03": {
+        "rows": 1024,
+        "rows_with_ties": 1,
+        "sum_log2_maximizers_bits": 1.0
+      },
+      "layer1.attn.rowmax.h04": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h05": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h06": {
+        "rows": 1024,
+        "rows_with_ties": 1,
+        "sum_log2_maximizers_bits": 1.0
+      },
+      "layer1.attn.rowmax.h07": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h08": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h09": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h10": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "layer1.attn.rowmax.h11": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      },
+      "statement.logit_binding": {
+        "rows": 1024,
+        "rows_with_ties": 0,
+        "sum_log2_maximizers_bits": 0.0
+      }
+    },
+    "rows_with_ties": 9,
+    "total_bits": 9.0
+  },
+  "runs": [
+    {
+      "manifest_id": "layer0.input_norm.rmsnorm",
+      "sub": "advice-R",
+      "seed_id": "-",
+      "cmd": [
+        "python:exact_R"
+      ],
+      "seconds": 0.015
+    },
+    {
+      "manifest_id": "layer0.input_norm.rmsnorm",
+      "sub": "rmsnorm",
+      "seed_id": "layer0.input_norm.rmsnorm",
+      "cmd": [
+        "zkob_rmsnorm",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.input_norm.rmsnorm/rmsnorm",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.input_norm.rmsnorm",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.X.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.R.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.input_norm.g-int.bin",
+        "1024",
+        "768",
+        "3298535",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.W.i64.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.Y.i64.bin"
+      ],
+      "seconds": 9.293
+    },
+    {
+      "manifest_id": "layer0.input_norm.rmsnorm",
+      "sub": "wrescale",
+      "seed_id": "layer0.input_norm.rmsnorm.wrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.input_norm.rmsnorm/wrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.input_norm.rmsnorm.wrescale",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.W.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin"
+      ],
+      "seconds": 2.434
+    },
+    {
+      "manifest_id": "layer0.input_norm.rmsnorm",
+      "sub": "yrescale",
+      "seed_id": "layer0.input_norm.rmsnorm.yrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.input_norm.rmsnorm/yrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.input_norm.rmsnorm.yrescale",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.out.i32.bin"
+      ],
+      "seconds": 2.665
+    },
+    {
+      "manifest_id": "layer0.attn.q_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer0.attn.q_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.q_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.q_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.attn.q_proj-int.bin",
+        "1024",
+        "768",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.q_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 2.138
+    },
+    {
+      "manifest_id": "layer0.attn.q_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer0.attn.q_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.q_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.q_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.q_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.q_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 2.596
+    },
+    {
+      "manifest_id": "layer0.attn.k_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer0.attn.k_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.k_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.k_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.attn.k_proj-int.bin",
+        "1024",
+        "768",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.k_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 2.201
+    },
+    {
+      "manifest_id": "layer0.attn.k_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer0.attn.k_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.k_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.k_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.k_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.k_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 2.59
+    },
+    {
+      "manifest_id": "layer0.attn.v_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer0.attn.v_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.v_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.v_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer0.input_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.attn.v_proj-int.bin",
+        "1024",
+        "768",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.v_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 2.21
+    },
+    {
+      "manifest_id": "layer0.attn.v_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer0.attn.v_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.v_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.v_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.v_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.v_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 2.598
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "rope.q",
+      "seed_id": "layer0.attn.rope.q",
+      "cmd": [
+        "zkob_rope",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/rope.q",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rope.q",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.q_proj.rescaling.out.i32.bin",
+        "1024",
+        "768",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/rope-cos-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/rope-sin-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.rope.q.Y64.i64.bin"
+      ],
+      "seconds": 2.338
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "rope.q.rescale",
+      "seed_id": "layer0.attn.rope.q.rescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/rope.q.rescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rope.q.rescale",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.rope.q.Y64.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.rope.q.out.i32.bin"
+      ],
+      "seconds": 2.59
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "rope.k",
+      "seed_id": "layer0.attn.rope.k",
+      "cmd": [
+        "zkob_rope",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/rope.k",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rope.k",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.k_proj.rescaling.out.i32.bin",
+        "1024",
+        "768",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/rope-cos-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/rope-sin-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.rope.k.Y64.i64.bin"
+      ],
+      "seconds": 2.366
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "rope.k.rescale",
+      "seed_id": "layer0.attn.rope.k.rescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/rope.k.rescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rope.k.rescale",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.rope.k.Y64.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.rope.k.out.i32.bin"
+      ],
+      "seconds": 2.597
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "slice",
+      "seed_id": "layer0.attn.slice",
+      "cmd": [
+        "zkob_headslice",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/slice",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.slice",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.rope.q.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.rope.k.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.v_proj.rescaling.out.i32.bin",
+        "1024",
+        "768",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/"
+      ],
+      "seconds": 29.435
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h00",
+      "seed_id": "layer0.attn.scores.h00",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h00",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh00.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT00.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.z.i64.bin"
+      ],
+      "seconds": 1.604
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h00",
+      "seed_id": "layer0.attn.scores_rescale13.h00",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h00",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.z13.i32.bin"
+      ],
+      "seconds": 2.731
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h00",
+      "seed_id": "layer0.attn.scores_rescale10.h00",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h00",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.z_.i32.bin"
+      ],
+      "seconds": 2.704
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h00",
+      "seed_id": "layer0.attn.rowmax.h00",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h00",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.mx.i32.bin"
+      ],
+      "seconds": 5.606
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h00",
+      "seed_id": "layer0.attn.softmax8.h00",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h00",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h00.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h00.P.i32.bin"
+      ],
+      "seconds": 12.268
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h00",
+      "seed_id": "layer0.attn.values.h00",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h00",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h00.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh00.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h00.out64.i64.bin"
+      ],
+      "seconds": 1.31
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h00",
+      "seed_id": "layer0.attn.values_rescale.h00",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h00",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h00.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out00.i32.bin"
+      ],
+      "seconds": 1.001
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h01",
+      "seed_id": "layer0.attn.scores.h01",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h01",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh01.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT01.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.z.i64.bin"
+      ],
+      "seconds": 1.564
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h01",
+      "seed_id": "layer0.attn.scores_rescale13.h01",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h01",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.z13.i32.bin"
+      ],
+      "seconds": 2.736
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h01",
+      "seed_id": "layer0.attn.scores_rescale10.h01",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h01",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.z_.i32.bin"
+      ],
+      "seconds": 2.652
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h01",
+      "seed_id": "layer0.attn.rowmax.h01",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h01",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.mx.i32.bin"
+      ],
+      "seconds": 5.549
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h01",
+      "seed_id": "layer0.attn.softmax8.h01",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h01",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h01.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h01.P.i32.bin"
+      ],
+      "seconds": 12.36
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h01",
+      "seed_id": "layer0.attn.values.h01",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h01",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h01.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh01.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h01.out64.i64.bin"
+      ],
+      "seconds": 1.313
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h01",
+      "seed_id": "layer0.attn.values_rescale.h01",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h01",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h01.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out01.i32.bin"
+      ],
+      "seconds": 1.004
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h02",
+      "seed_id": "layer0.attn.scores.h02",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h02",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh02.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT02.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.z.i64.bin"
+      ],
+      "seconds": 1.554
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h02",
+      "seed_id": "layer0.attn.scores_rescale13.h02",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h02",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.z13.i32.bin"
+      ],
+      "seconds": 2.721
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h02",
+      "seed_id": "layer0.attn.scores_rescale10.h02",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h02",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.z_.i32.bin"
+      ],
+      "seconds": 2.711
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h02",
+      "seed_id": "layer0.attn.rowmax.h02",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h02",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.mx.i32.bin"
+      ],
+      "seconds": 5.581
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h02",
+      "seed_id": "layer0.attn.softmax8.h02",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h02",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h02.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h02.P.i32.bin"
+      ],
+      "seconds": 12.299
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h02",
+      "seed_id": "layer0.attn.values.h02",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h02",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h02.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh02.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h02.out64.i64.bin"
+      ],
+      "seconds": 1.305
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h02",
+      "seed_id": "layer0.attn.values_rescale.h02",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h02",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h02.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out02.i32.bin"
+      ],
+      "seconds": 0.994
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h03",
+      "seed_id": "layer0.attn.scores.h03",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h03",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh03.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT03.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.z.i64.bin"
+      ],
+      "seconds": 1.565
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h03",
+      "seed_id": "layer0.attn.scores_rescale13.h03",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h03",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.z13.i32.bin"
+      ],
+      "seconds": 2.716
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h03",
+      "seed_id": "layer0.attn.scores_rescale10.h03",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h03",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.z_.i32.bin"
+      ],
+      "seconds": 2.669
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h03",
+      "seed_id": "layer0.attn.rowmax.h03",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h03",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.mx.i32.bin"
+      ],
+      "seconds": 5.618
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h03",
+      "seed_id": "layer0.attn.softmax8.h03",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h03",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h03.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h03.P.i32.bin"
+      ],
+      "seconds": 12.351
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h03",
+      "seed_id": "layer0.attn.values.h03",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h03",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h03.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh03.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h03.out64.i64.bin"
+      ],
+      "seconds": 1.362
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h03",
+      "seed_id": "layer0.attn.values_rescale.h03",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h03",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h03.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out03.i32.bin"
+      ],
+      "seconds": 1.002
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h04",
+      "seed_id": "layer0.attn.scores.h04",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h04",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh04.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT04.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.z.i64.bin"
+      ],
+      "seconds": 1.555
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h04",
+      "seed_id": "layer0.attn.scores_rescale13.h04",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h04",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.z13.i32.bin"
+      ],
+      "seconds": 2.717
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h04",
+      "seed_id": "layer0.attn.scores_rescale10.h04",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h04",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.z_.i32.bin"
+      ],
+      "seconds": 2.66
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h04",
+      "seed_id": "layer0.attn.rowmax.h04",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h04",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.mx.i32.bin"
+      ],
+      "seconds": 5.629
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h04",
+      "seed_id": "layer0.attn.softmax8.h04",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h04",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h04.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h04.P.i32.bin"
+      ],
+      "seconds": 12.332
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h04",
+      "seed_id": "layer0.attn.values.h04",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h04",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h04.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh04.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h04.out64.i64.bin"
+      ],
+      "seconds": 1.32
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h04",
+      "seed_id": "layer0.attn.values_rescale.h04",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h04",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h04.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out04.i32.bin"
+      ],
+      "seconds": 0.995
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h05",
+      "seed_id": "layer0.attn.scores.h05",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h05",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh05.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT05.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.z.i64.bin"
+      ],
+      "seconds": 1.61
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h05",
+      "seed_id": "layer0.attn.scores_rescale13.h05",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h05",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.z13.i32.bin"
+      ],
+      "seconds": 2.723
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h05",
+      "seed_id": "layer0.attn.scores_rescale10.h05",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h05",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.z_.i32.bin"
+      ],
+      "seconds": 2.667
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h05",
+      "seed_id": "layer0.attn.rowmax.h05",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h05",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.mx.i32.bin"
+      ],
+      "seconds": 5.554
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h05",
+      "seed_id": "layer0.attn.softmax8.h05",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h05",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h05.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h05.P.i32.bin"
+      ],
+      "seconds": 12.293
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h05",
+      "seed_id": "layer0.attn.values.h05",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h05",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h05.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh05.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h05.out64.i64.bin"
+      ],
+      "seconds": 1.32
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h05",
+      "seed_id": "layer0.attn.values_rescale.h05",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h05",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h05.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out05.i32.bin"
+      ],
+      "seconds": 1.049
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h06",
+      "seed_id": "layer0.attn.scores.h06",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h06",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh06.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT06.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.z.i64.bin"
+      ],
+      "seconds": 1.633
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h06",
+      "seed_id": "layer0.attn.scores_rescale13.h06",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h06",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.z13.i32.bin"
+      ],
+      "seconds": 2.731
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h06",
+      "seed_id": "layer0.attn.scores_rescale10.h06",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h06",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.z_.i32.bin"
+      ],
+      "seconds": 2.655
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h06",
+      "seed_id": "layer0.attn.rowmax.h06",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h06",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.mx.i32.bin"
+      ],
+      "seconds": 5.65
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h06",
+      "seed_id": "layer0.attn.softmax8.h06",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h06",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h06.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h06.P.i32.bin"
+      ],
+      "seconds": 12.374
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h06",
+      "seed_id": "layer0.attn.values.h06",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h06",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h06.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh06.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h06.out64.i64.bin"
+      ],
+      "seconds": 1.312
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h06",
+      "seed_id": "layer0.attn.values_rescale.h06",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h06",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h06.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out06.i32.bin"
+      ],
+      "seconds": 0.999
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h07",
+      "seed_id": "layer0.attn.scores.h07",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h07",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh07.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT07.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.z.i64.bin"
+      ],
+      "seconds": 1.599
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h07",
+      "seed_id": "layer0.attn.scores_rescale13.h07",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h07",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.z13.i32.bin"
+      ],
+      "seconds": 2.665
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h07",
+      "seed_id": "layer0.attn.scores_rescale10.h07",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h07",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.z_.i32.bin"
+      ],
+      "seconds": 2.719
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h07",
+      "seed_id": "layer0.attn.rowmax.h07",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h07",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.mx.i32.bin"
+      ],
+      "seconds": 5.62
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h07",
+      "seed_id": "layer0.attn.softmax8.h07",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h07",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h07.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h07.P.i32.bin"
+      ],
+      "seconds": 12.304
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h07",
+      "seed_id": "layer0.attn.values.h07",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h07",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h07.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh07.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h07.out64.i64.bin"
+      ],
+      "seconds": 1.317
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h07",
+      "seed_id": "layer0.attn.values_rescale.h07",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h07",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h07.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out07.i32.bin"
+      ],
+      "seconds": 0.998
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h08",
+      "seed_id": "layer0.attn.scores.h08",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h08",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh08.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT08.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.z.i64.bin"
+      ],
+      "seconds": 1.608
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h08",
+      "seed_id": "layer0.attn.scores_rescale13.h08",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h08",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.z13.i32.bin"
+      ],
+      "seconds": 2.685
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h08",
+      "seed_id": "layer0.attn.scores_rescale10.h08",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h08",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.z_.i32.bin"
+      ],
+      "seconds": 2.728
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h08",
+      "seed_id": "layer0.attn.rowmax.h08",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h08",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.mx.i32.bin"
+      ],
+      "seconds": 5.614
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h08",
+      "seed_id": "layer0.attn.softmax8.h08",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h08",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h08.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h08.P.i32.bin"
+      ],
+      "seconds": 12.361
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h08",
+      "seed_id": "layer0.attn.values.h08",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h08",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h08.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh08.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h08.out64.i64.bin"
+      ],
+      "seconds": 1.311
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h08",
+      "seed_id": "layer0.attn.values_rescale.h08",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h08",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h08.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out08.i32.bin"
+      ],
+      "seconds": 1.001
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h09",
+      "seed_id": "layer0.attn.scores.h09",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h09",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh09.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT09.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.z.i64.bin"
+      ],
+      "seconds": 1.559
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h09",
+      "seed_id": "layer0.attn.scores_rescale13.h09",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h09",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.z13.i32.bin"
+      ],
+      "seconds": 2.718
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h09",
+      "seed_id": "layer0.attn.scores_rescale10.h09",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h09",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.z_.i32.bin"
+      ],
+      "seconds": 2.658
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h09",
+      "seed_id": "layer0.attn.rowmax.h09",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h09",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.mx.i32.bin"
+      ],
+      "seconds": 5.611
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h09",
+      "seed_id": "layer0.attn.softmax8.h09",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h09",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h09.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h09.P.i32.bin"
+      ],
+      "seconds": 12.38
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h09",
+      "seed_id": "layer0.attn.values.h09",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h09",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h09.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh09.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h09.out64.i64.bin"
+      ],
+      "seconds": 1.353
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h09",
+      "seed_id": "layer0.attn.values_rescale.h09",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h09",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h09.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out09.i32.bin"
+      ],
+      "seconds": 1.003
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h10",
+      "seed_id": "layer0.attn.scores.h10",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h10",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh10.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT10.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.z.i64.bin"
+      ],
+      "seconds": 1.56
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h10",
+      "seed_id": "layer0.attn.scores_rescale13.h10",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h10",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.z13.i32.bin"
+      ],
+      "seconds": 2.72
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h10",
+      "seed_id": "layer0.attn.scores_rescale10.h10",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h10",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.z_.i32.bin"
+      ],
+      "seconds": 2.678
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h10",
+      "seed_id": "layer0.attn.rowmax.h10",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h10",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.mx.i32.bin"
+      ],
+      "seconds": 5.568
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h10",
+      "seed_id": "layer0.attn.softmax8.h10",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h10",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h10.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h10.P.i32.bin"
+      ],
+      "seconds": 12.411
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h10",
+      "seed_id": "layer0.attn.values.h10",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h10",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h10.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh10.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h10.out64.i64.bin"
+      ],
+      "seconds": 1.329
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h10",
+      "seed_id": "layer0.attn.values_rescale.h10",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h10",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h10.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out10.i32.bin"
+      ],
+      "seconds": 1.057
+    },
+    {
+      "manifest_id": "layer0.attn.scores_matmul",
+      "sub": "fc.h11",
+      "seed_id": "layer0.attn.scores.h11",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.scores_matmul/fc.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores.h11",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Qh11.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/KhT11.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.z.i64.bin"
+      ],
+      "seconds": 1.559
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale13.h11",
+      "seed_id": "layer0.attn.scores_rescale13.h11",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale13.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale13.h11",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.z13.i32.bin"
+      ],
+      "seconds": 2.68
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rescale10.h11",
+      "seed_id": "layer0.attn.scores_rescale10.h11",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rescale10.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.scores_rescale10.h11",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.z_.i32.bin"
+      ],
+      "seconds": 2.702
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "rowmax.h11",
+      "seed_id": "layer0.attn.rowmax.h11",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/rowmax.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.rowmax.h11",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.mx.i32.bin"
+      ],
+      "seconds": 5.569
+    },
+    {
+      "manifest_id": "layer0.attn.softmax",
+      "sub": "softmax8.h11",
+      "seed_id": "layer0.attn.softmax8.h11",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.softmax/softmax8.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.softmax8.h11",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.scores.h11.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h11.P.i32.bin"
+      ],
+      "seconds": 12.314
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "fc.h11",
+      "seed_id": "layer0.attn.values.h11",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/fc.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values.h11",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.softmax.h11.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.slice/Vh11.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h11.out64.i64.bin"
+      ],
+      "seconds": 1.307
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "rescale.h11",
+      "seed_id": "layer0.attn.values_rescale.h11",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/rescale.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.values_rescale.h11",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values.h11.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out11.i32.bin"
+      ],
+      "seconds": 1.053
+    },
+    {
+      "manifest_id": "layer0.attn.values_matmul",
+      "sub": "merge",
+      "seed_id": "layer0.attn.merge",
+      "cmd": [
+        "zkob_headmerge",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.values_matmul/merge",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.merge",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.values/out",
+        "1024",
+        "768",
+        "64",
+        "concat",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn_merge.i32.bin"
+      ],
+      "seconds": 3.827
+    },
+    {
+      "manifest_id": "layer0.attn.o_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer0.attn.o_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.o_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.o_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn_merge.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.attn.o_proj-int.bin",
+        "1024",
+        "768",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.o_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 2.143
+    },
+    {
+      "manifest_id": "layer0.attn.o_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer0.attn.o_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn.o_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.attn.o_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn.o_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn_out.i32.bin"
+      ],
+      "seconds": 2.631
+    },
+    {
+      "manifest_id": "layer0.attn_skip.add",
+      "sub": "commit-attn-out",
+      "seed_id": "layer0.attn_skip.add",
+      "cmd": [
+        "zkob_fc",
+        "commit",
+        "/root/zkorch/stage3v2-fa/data/layer0.attn_out.i32.bin",
+        "1024",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.attn_skip.add/com_attn_out.bin"
+      ],
+      "seconds": 0.523
+    },
+    {
+      "manifest_id": "layer0.post_attn_norm.rmsnorm",
+      "sub": "advice-R",
+      "seed_id": "-",
+      "cmd": [
+        "python:exact_R"
+      ],
+      "seconds": 0.003
+    },
+    {
+      "manifest_id": "layer0.post_attn_norm.rmsnorm",
+      "sub": "rmsnorm",
+      "seed_id": "layer0.post_attn_norm.rmsnorm",
+      "cmd": [
+        "zkob_rmsnorm",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.post_attn_norm.rmsnorm/rmsnorm",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.post_attn_norm.rmsnorm",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.X.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.R.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.post_attn_norm.g-int.bin",
+        "1024",
+        "768",
+        "3298535",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.W.i64.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.Y.i64.bin"
+      ],
+      "seconds": 9.156
+    },
+    {
+      "manifest_id": "layer0.post_attn_norm.rmsnorm",
+      "sub": "wrescale",
+      "seed_id": "layer0.post_attn_norm.rmsnorm.wrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.post_attn_norm.rmsnorm/wrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.post_attn_norm.rmsnorm.wrescale",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.W.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin"
+      ],
+      "seconds": 2.421
+    },
+    {
+      "manifest_id": "layer0.post_attn_norm.rmsnorm",
+      "sub": "yrescale",
+      "seed_id": "layer0.post_attn_norm.rmsnorm.yrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.post_attn_norm.rmsnorm/yrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.post_attn_norm.rmsnorm.yrescale",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.out.i32.bin"
+      ],
+      "seconds": 2.602
+    },
+    {
+      "manifest_id": "layer0.mlp.gate_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer0.mlp.gate_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.mlp.gate_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.mlp.gate_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.mlp.gate_proj-int.bin",
+        "1024",
+        "768",
+        "3072",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.gate_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 3.882
+    },
+    {
+      "manifest_id": "layer0.mlp.gate_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer0.mlp.gate_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.mlp.gate_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.mlp.gate_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.gate_proj.matmul.Y.i64.bin",
+        "1024",
+        "3072",
+        "20",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.gate_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 6.993
+    },
+    {
+      "manifest_id": "layer0.mlp.up_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer0.mlp.up_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.mlp.up_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.mlp.up_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer0.post_attn_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.mlp.up_proj-int.bin",
+        "1024",
+        "768",
+        "3072",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.up_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 3.886
+    },
+    {
+      "manifest_id": "layer0.mlp.up_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer0.mlp.up_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.mlp.up_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.mlp.up_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.up_proj.matmul.Y.i64.bin",
+        "1024",
+        "3072",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.up_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 6.809
+    },
+    {
+      "manifest_id": "layer0.mlp.swiglu",
+      "sub": "glu",
+      "seed_id": "layer0.mlp.swiglu",
+      "cmd": [
+        "zkob_glu",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.mlp.swiglu/glu",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.mlp.swiglu",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.gate_proj.rescaling.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.up_proj.rescaling.out.i32.bin",
+        "1024",
+        "3072",
+        "-2097152",
+        "4194304",
+        "/root/zkorch/stage3v2-fa/registration/swiglu-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.swiglu.H.i64.bin"
+      ],
+      "seconds": 11.614
+    },
+    {
+      "manifest_id": "layer0.mlp.swiglu",
+      "sub": "hrescale",
+      "seed_id": "layer0.mlp.swiglu.hrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.mlp.swiglu/hrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.mlp.swiglu.hrescale",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.swiglu.H.i64.bin",
+        "1024",
+        "3072",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.swiglu.Hr.i32.bin"
+      ],
+      "seconds": 6.847
+    },
+    {
+      "manifest_id": "layer0.mlp.down_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer0.mlp.down_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.mlp.down_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.mlp.down_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.swiglu.Hr.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer0.mlp.down_proj-int.bin",
+        "1024",
+        "3072",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.down_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 3.808
+    },
+    {
+      "manifest_id": "layer0.mlp.down_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer0.mlp.down_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer0.mlp.down_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer0.mlp.down_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.down_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer0.mlp.down_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 2.592
+    },
+    {
+      "manifest_id": "layer1.input_norm.rmsnorm",
+      "sub": "advice-R",
+      "seed_id": "-",
+      "cmd": [
+        "python:exact_R"
+      ],
+      "seconds": 0.005
+    },
+    {
+      "manifest_id": "layer1.input_norm.rmsnorm",
+      "sub": "rmsnorm",
+      "seed_id": "layer1.input_norm.rmsnorm",
+      "cmd": [
+        "zkob_rmsnorm",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.input_norm.rmsnorm/rmsnorm",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.input_norm.rmsnorm",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.X.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.R.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.input_norm.g-int.bin",
+        "1024",
+        "768",
+        "3298535",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.W.i64.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.Y.i64.bin"
+      ],
+      "seconds": 9.187
+    },
+    {
+      "manifest_id": "layer1.input_norm.rmsnorm",
+      "sub": "wrescale",
+      "seed_id": "layer1.input_norm.rmsnorm.wrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.input_norm.rmsnorm/wrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.input_norm.rmsnorm.wrescale",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.W.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin"
+      ],
+      "seconds": 2.418
+    },
+    {
+      "manifest_id": "layer1.input_norm.rmsnorm",
+      "sub": "yrescale",
+      "seed_id": "layer1.input_norm.rmsnorm.yrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.input_norm.rmsnorm/yrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.input_norm.rmsnorm.yrescale",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.out.i32.bin"
+      ],
+      "seconds": 2.585
+    },
+    {
+      "manifest_id": "layer1.attn.q_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer1.attn.q_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.q_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.q_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.attn.q_proj-int.bin",
+        "1024",
+        "768",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.q_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 2.203
+    },
+    {
+      "manifest_id": "layer1.attn.q_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer1.attn.q_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.q_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.q_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.q_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.q_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 2.635
+    },
+    {
+      "manifest_id": "layer1.attn.k_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer1.attn.k_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.k_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.k_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.attn.k_proj-int.bin",
+        "1024",
+        "768",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.k_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 2.153
+    },
+    {
+      "manifest_id": "layer1.attn.k_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer1.attn.k_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.k_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.k_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.k_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.k_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 2.588
+    },
+    {
+      "manifest_id": "layer1.attn.v_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer1.attn.v_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.v_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.v_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer1.input_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.attn.v_proj-int.bin",
+        "1024",
+        "768",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.v_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 2.141
+    },
+    {
+      "manifest_id": "layer1.attn.v_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer1.attn.v_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.v_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.v_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.v_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.v_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 2.587
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "rope.q",
+      "seed_id": "layer1.attn.rope.q",
+      "cmd": [
+        "zkob_rope",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/rope.q",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rope.q",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.q_proj.rescaling.out.i32.bin",
+        "1024",
+        "768",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/rope-cos-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/rope-sin-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.rope.q.Y64.i64.bin"
+      ],
+      "seconds": 2.285
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "rope.q.rescale",
+      "seed_id": "layer1.attn.rope.q.rescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/rope.q.rescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rope.q.rescale",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.rope.q.Y64.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.rope.q.out.i32.bin"
+      ],
+      "seconds": 2.639
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "rope.k",
+      "seed_id": "layer1.attn.rope.k",
+      "cmd": [
+        "zkob_rope",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/rope.k",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rope.k",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.k_proj.rescaling.out.i32.bin",
+        "1024",
+        "768",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/rope-cos-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/rope-sin-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.rope.k.Y64.i64.bin"
+      ],
+      "seconds": 2.293
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "rope.k.rescale",
+      "seed_id": "layer1.attn.rope.k.rescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/rope.k.rescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rope.k.rescale",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.rope.k.Y64.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.rope.k.out.i32.bin"
+      ],
+      "seconds": 2.633
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "slice",
+      "seed_id": "layer1.attn.slice",
+      "cmd": [
+        "zkob_headslice",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/slice",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.slice",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.rope.q.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.rope.k.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.v_proj.rescaling.out.i32.bin",
+        "1024",
+        "768",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/"
+      ],
+      "seconds": 29.441
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h00",
+      "seed_id": "layer1.attn.scores.h00",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h00",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh00.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT00.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.z.i64.bin"
+      ],
+      "seconds": 1.553
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h00",
+      "seed_id": "layer1.attn.scores_rescale13.h00",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h00",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.z13.i32.bin"
+      ],
+      "seconds": 2.67
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h00",
+      "seed_id": "layer1.attn.scores_rescale10.h00",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h00",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.z_.i32.bin"
+      ],
+      "seconds": 2.651
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h00",
+      "seed_id": "layer1.attn.rowmax.h00",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h00",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.mx.i32.bin"
+      ],
+      "seconds": 5.6
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h00",
+      "seed_id": "layer1.attn.softmax8.h00",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h00",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h00.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h00.P.i32.bin"
+      ],
+      "seconds": 12.278
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h00",
+      "seed_id": "layer1.attn.values.h00",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h00",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h00.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh00.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h00.out64.i64.bin"
+      ],
+      "seconds": 1.316
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h00",
+      "seed_id": "layer1.attn.values_rescale.h00",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h00",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h00",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h00.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out00.i32.bin"
+      ],
+      "seconds": 0.994
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h01",
+      "seed_id": "layer1.attn.scores.h01",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h01",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh01.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT01.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.z.i64.bin"
+      ],
+      "seconds": 1.552
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h01",
+      "seed_id": "layer1.attn.scores_rescale13.h01",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h01",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.z13.i32.bin"
+      ],
+      "seconds": 2.72
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h01",
+      "seed_id": "layer1.attn.scores_rescale10.h01",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h01",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.z_.i32.bin"
+      ],
+      "seconds": 2.676
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h01",
+      "seed_id": "layer1.attn.rowmax.h01",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h01",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.mx.i32.bin"
+      ],
+      "seconds": 5.604
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h01",
+      "seed_id": "layer1.attn.softmax8.h01",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h01",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h01.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h01.P.i32.bin"
+      ],
+      "seconds": 12.316
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h01",
+      "seed_id": "layer1.attn.values.h01",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h01",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h01.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh01.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h01.out64.i64.bin"
+      ],
+      "seconds": 1.317
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h01",
+      "seed_id": "layer1.attn.values_rescale.h01",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h01",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h01",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h01.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out01.i32.bin"
+      ],
+      "seconds": 1.047
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h02",
+      "seed_id": "layer1.attn.scores.h02",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h02",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh02.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT02.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.z.i64.bin"
+      ],
+      "seconds": 1.611
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h02",
+      "seed_id": "layer1.attn.scores_rescale13.h02",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h02",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.z13.i32.bin"
+      ],
+      "seconds": 2.723
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h02",
+      "seed_id": "layer1.attn.scores_rescale10.h02",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h02",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.z_.i32.bin"
+      ],
+      "seconds": 2.707
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h02",
+      "seed_id": "layer1.attn.rowmax.h02",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h02",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.mx.i32.bin"
+      ],
+      "seconds": 5.561
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h02",
+      "seed_id": "layer1.attn.softmax8.h02",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h02",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h02.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h02.P.i32.bin"
+      ],
+      "seconds": 12.344
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h02",
+      "seed_id": "layer1.attn.values.h02",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h02",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h02.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh02.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h02.out64.i64.bin"
+      ],
+      "seconds": 1.308
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h02",
+      "seed_id": "layer1.attn.values_rescale.h02",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h02",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h02",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h02.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out02.i32.bin"
+      ],
+      "seconds": 1.045
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h03",
+      "seed_id": "layer1.attn.scores.h03",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h03",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh03.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT03.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.z.i64.bin"
+      ],
+      "seconds": 1.559
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h03",
+      "seed_id": "layer1.attn.scores_rescale13.h03",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h03",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.z13.i32.bin"
+      ],
+      "seconds": 2.729
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h03",
+      "seed_id": "layer1.attn.scores_rescale10.h03",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h03",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.z_.i32.bin"
+      ],
+      "seconds": 2.716
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h03",
+      "seed_id": "layer1.attn.rowmax.h03",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h03",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.mx.i32.bin"
+      ],
+      "seconds": 5.593
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h03",
+      "seed_id": "layer1.attn.softmax8.h03",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h03",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h03.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h03.P.i32.bin"
+      ],
+      "seconds": 12.267
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h03",
+      "seed_id": "layer1.attn.values.h03",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h03",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h03.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh03.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h03.out64.i64.bin"
+      ],
+      "seconds": 1.315
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h03",
+      "seed_id": "layer1.attn.values_rescale.h03",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h03",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h03",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h03.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out03.i32.bin"
+      ],
+      "seconds": 1.055
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h04",
+      "seed_id": "layer1.attn.scores.h04",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h04",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh04.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT04.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.z.i64.bin"
+      ],
+      "seconds": 1.607
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h04",
+      "seed_id": "layer1.attn.scores_rescale13.h04",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h04",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.z13.i32.bin"
+      ],
+      "seconds": 2.719
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h04",
+      "seed_id": "layer1.attn.scores_rescale10.h04",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h04",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.z_.i32.bin"
+      ],
+      "seconds": 2.654
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h04",
+      "seed_id": "layer1.attn.rowmax.h04",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h04",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.mx.i32.bin"
+      ],
+      "seconds": 5.556
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h04",
+      "seed_id": "layer1.attn.softmax8.h04",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h04",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h04.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h04.P.i32.bin"
+      ],
+      "seconds": 12.315
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h04",
+      "seed_id": "layer1.attn.values.h04",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h04",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h04.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh04.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h04.out64.i64.bin"
+      ],
+      "seconds": 1.31
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h04",
+      "seed_id": "layer1.attn.values_rescale.h04",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h04",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h04",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h04.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out04.i32.bin"
+      ],
+      "seconds": 1.048
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h05",
+      "seed_id": "layer1.attn.scores.h05",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h05",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh05.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT05.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.z.i64.bin"
+      ],
+      "seconds": 1.563
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h05",
+      "seed_id": "layer1.attn.scores_rescale13.h05",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h05",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.z13.i32.bin"
+      ],
+      "seconds": 2.71
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h05",
+      "seed_id": "layer1.attn.scores_rescale10.h05",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h05",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.z_.i32.bin"
+      ],
+      "seconds": 2.648
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h05",
+      "seed_id": "layer1.attn.rowmax.h05",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h05",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.mx.i32.bin"
+      ],
+      "seconds": 5.573
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h05",
+      "seed_id": "layer1.attn.softmax8.h05",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h05",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h05.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h05.P.i32.bin"
+      ],
+      "seconds": 12.328
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h05",
+      "seed_id": "layer1.attn.values.h05",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h05",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h05.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh05.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h05.out64.i64.bin"
+      ],
+      "seconds": 1.31
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h05",
+      "seed_id": "layer1.attn.values_rescale.h05",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h05",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h05",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h05.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out05.i32.bin"
+      ],
+      "seconds": 1.046
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h06",
+      "seed_id": "layer1.attn.scores.h06",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h06",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh06.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT06.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.z.i64.bin"
+      ],
+      "seconds": 1.57
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h06",
+      "seed_id": "layer1.attn.scores_rescale13.h06",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h06",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.z13.i32.bin"
+      ],
+      "seconds": 2.668
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h06",
+      "seed_id": "layer1.attn.scores_rescale10.h06",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h06",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.z_.i32.bin"
+      ],
+      "seconds": 2.704
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h06",
+      "seed_id": "layer1.attn.rowmax.h06",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h06",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.mx.i32.bin"
+      ],
+      "seconds": 5.564
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h06",
+      "seed_id": "layer1.attn.softmax8.h06",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h06",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h06.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h06.P.i32.bin"
+      ],
+      "seconds": 12.352
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h06",
+      "seed_id": "layer1.attn.values.h06",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h06",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h06.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh06.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h06.out64.i64.bin"
+      ],
+      "seconds": 1.358
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h06",
+      "seed_id": "layer1.attn.values_rescale.h06",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h06",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h06",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h06.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out06.i32.bin"
+      ],
+      "seconds": 0.992
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h07",
+      "seed_id": "layer1.attn.scores.h07",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h07",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh07.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT07.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.z.i64.bin"
+      ],
+      "seconds": 1.549
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h07",
+      "seed_id": "layer1.attn.scores_rescale13.h07",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h07",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.z13.i32.bin"
+      ],
+      "seconds": 2.72
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h07",
+      "seed_id": "layer1.attn.scores_rescale10.h07",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h07",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.z_.i32.bin"
+      ],
+      "seconds": 2.645
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h07",
+      "seed_id": "layer1.attn.rowmax.h07",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h07",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.mx.i32.bin"
+      ],
+      "seconds": 5.611
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h07",
+      "seed_id": "layer1.attn.softmax8.h07",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h07",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h07.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h07.P.i32.bin"
+      ],
+      "seconds": 12.359
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h07",
+      "seed_id": "layer1.attn.values.h07",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h07",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h07.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh07.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h07.out64.i64.bin"
+      ],
+      "seconds": 1.358
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h07",
+      "seed_id": "layer1.attn.values_rescale.h07",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h07",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h07",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h07.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out07.i32.bin"
+      ],
+      "seconds": 1.003
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h08",
+      "seed_id": "layer1.attn.scores.h08",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h08",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh08.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT08.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.z.i64.bin"
+      ],
+      "seconds": 1.542
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h08",
+      "seed_id": "layer1.attn.scores_rescale13.h08",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h08",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.z13.i32.bin"
+      ],
+      "seconds": 2.712
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h08",
+      "seed_id": "layer1.attn.scores_rescale10.h08",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h08",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.z_.i32.bin"
+      ],
+      "seconds": 2.664
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h08",
+      "seed_id": "layer1.attn.rowmax.h08",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h08",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.mx.i32.bin"
+      ],
+      "seconds": 5.567
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h08",
+      "seed_id": "layer1.attn.softmax8.h08",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h08",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h08.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h08.P.i32.bin"
+      ],
+      "seconds": 12.323
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h08",
+      "seed_id": "layer1.attn.values.h08",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h08",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h08.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh08.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h08.out64.i64.bin"
+      ],
+      "seconds": 1.318
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h08",
+      "seed_id": "layer1.attn.values_rescale.h08",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h08",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h08",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h08.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out08.i32.bin"
+      ],
+      "seconds": 0.995
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h09",
+      "seed_id": "layer1.attn.scores.h09",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h09",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh09.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT09.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.z.i64.bin"
+      ],
+      "seconds": 1.556
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h09",
+      "seed_id": "layer1.attn.scores_rescale13.h09",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h09",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.z13.i32.bin"
+      ],
+      "seconds": 2.661
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h09",
+      "seed_id": "layer1.attn.scores_rescale10.h09",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h09",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.z_.i32.bin"
+      ],
+      "seconds": 2.699
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h09",
+      "seed_id": "layer1.attn.rowmax.h09",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h09",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.mx.i32.bin"
+      ],
+      "seconds": 5.587
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h09",
+      "seed_id": "layer1.attn.softmax8.h09",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h09",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h09.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h09.P.i32.bin"
+      ],
+      "seconds": 12.458
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h09",
+      "seed_id": "layer1.attn.values.h09",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h09",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h09.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh09.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h09.out64.i64.bin"
+      ],
+      "seconds": 1.316
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h09",
+      "seed_id": "layer1.attn.values_rescale.h09",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h09",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h09",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h09.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out09.i32.bin"
+      ],
+      "seconds": 1.008
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h10",
+      "seed_id": "layer1.attn.scores.h10",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h10",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh10.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT10.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.z.i64.bin"
+      ],
+      "seconds": 1.556
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h10",
+      "seed_id": "layer1.attn.scores_rescale13.h10",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h10",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.z13.i32.bin"
+      ],
+      "seconds": 2.727
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h10",
+      "seed_id": "layer1.attn.scores_rescale10.h10",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h10",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.z_.i32.bin"
+      ],
+      "seconds": 2.662
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h10",
+      "seed_id": "layer1.attn.rowmax.h10",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h10",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.mx.i32.bin"
+      ],
+      "seconds": 5.612
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h10",
+      "seed_id": "layer1.attn.softmax8.h10",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h10",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h10.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h10.P.i32.bin"
+      ],
+      "seconds": 12.325
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h10",
+      "seed_id": "layer1.attn.values.h10",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h10",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h10.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh10.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h10.out64.i64.bin"
+      ],
+      "seconds": 1.303
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h10",
+      "seed_id": "layer1.attn.values_rescale.h10",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h10",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h10",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h10.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out10.i32.bin"
+      ],
+      "seconds": 0.992
+    },
+    {
+      "manifest_id": "layer1.attn.scores_matmul",
+      "sub": "fc.h11",
+      "seed_id": "layer1.attn.scores.h11",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.scores_matmul/fc.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores.h11",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Qh11.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/KhT11.i32.bin",
+        "1024",
+        "64",
+        "1024",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.z.i64.bin"
+      ],
+      "seconds": 1.562
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale13.h11",
+      "seed_id": "layer1.attn.scores_rescale13.h11",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale13.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale13.h11",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.z.i64.bin",
+        "1024",
+        "1024",
+        "13",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.z13.i32.bin"
+      ],
+      "seconds": 2.675
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rescale10.h11",
+      "seed_id": "layer1.attn.scores_rescale10.h11",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rescale10.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.scores_rescale10.h11",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.z13.i64.bin",
+        "1024",
+        "1024",
+        "10",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.z_.i32.bin"
+      ],
+      "seconds": 2.714
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "rowmax.h11",
+      "seed_id": "layer1.attn.rowmax.h11",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/rowmax.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.rowmax.h11",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.z_.i32.bin",
+        "1024",
+        "1024",
+        "causal",
+        "0",
+        "1048576",
+        "1",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.mx.i32.bin"
+      ],
+      "seconds": 5.567
+    },
+    {
+      "manifest_id": "layer1.attn.softmax",
+      "sub": "softmax8.h11",
+      "seed_id": "layer1.attn.softmax8.h11",
+      "cmd": [
+        "zkob_softmax8",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.softmax/softmax8.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.softmax8.h11",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.z_.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.scores.h11.mx.i32.bin",
+        "1024",
+        "1024",
+        "-1048574",
+        "1048576",
+        "/root/zkorch/stage3v2-fa/registration/softmax8-exp-table.bin",
+        "16384",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h11.P.i32.bin"
+      ],
+      "seconds": 12.287
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "fc.h11",
+      "seed_id": "layer1.attn.values.h11",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/fc.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values.h11",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.softmax.h11.P.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.slice/Vh11.i32.bin",
+        "1024",
+        "1024",
+        "64",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h11.out64.i64.bin"
+      ],
+      "seconds": 1.314
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "rescale.h11",
+      "seed_id": "layer1.attn.values_rescale.h11",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/rescale.h11",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.values_rescale.h11",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values.h11.out64.i64.bin",
+        "1024",
+        "64",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out11.i32.bin"
+      ],
+      "seconds": 1.047
+    },
+    {
+      "manifest_id": "layer1.attn.values_matmul",
+      "sub": "merge",
+      "seed_id": "layer1.attn.merge",
+      "cmd": [
+        "zkob_headmerge",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.values_matmul/merge",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.merge",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.values/out",
+        "1024",
+        "768",
+        "64",
+        "concat",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen64.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn_merge.i32.bin"
+      ],
+      "seconds": 3.781
+    },
+    {
+      "manifest_id": "layer1.attn.o_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer1.attn.o_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.o_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.o_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn_merge.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.attn.o_proj-int.bin",
+        "1024",
+        "768",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.o_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 2.154
+    },
+    {
+      "manifest_id": "layer1.attn.o_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer1.attn.o_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn.o_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.attn.o_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn.o_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn_out.i32.bin"
+      ],
+      "seconds": 2.599
+    },
+    {
+      "manifest_id": "layer1.attn_skip.add",
+      "sub": "commit-attn-out",
+      "seed_id": "layer1.attn_skip.add",
+      "cmd": [
+        "zkob_fc",
+        "commit",
+        "/root/zkorch/stage3v2-fa/data/layer1.attn_out.i32.bin",
+        "1024",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.attn_skip.add/com_attn_out.bin"
+      ],
+      "seconds": 0.495
+    },
+    {
+      "manifest_id": "layer1.post_attn_norm.rmsnorm",
+      "sub": "advice-R",
+      "seed_id": "-",
+      "cmd": [
+        "python:exact_R"
+      ],
+      "seconds": 0.003
+    },
+    {
+      "manifest_id": "layer1.post_attn_norm.rmsnorm",
+      "sub": "rmsnorm",
+      "seed_id": "layer1.post_attn_norm.rmsnorm",
+      "cmd": [
+        "zkob_rmsnorm",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.post_attn_norm.rmsnorm/rmsnorm",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.post_attn_norm.rmsnorm",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.X.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.R.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.post_attn_norm.g-int.bin",
+        "1024",
+        "768",
+        "3298535",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.W.i64.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.Y.i64.bin"
+      ],
+      "seconds": 9.247
+    },
+    {
+      "manifest_id": "layer1.post_attn_norm.rmsnorm",
+      "sub": "wrescale",
+      "seed_id": "layer1.post_attn_norm.rmsnorm.wrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.post_attn_norm.rmsnorm/wrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.post_attn_norm.rmsnorm.wrescale",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.W.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin"
+      ],
+      "seconds": 2.431
+    },
+    {
+      "manifest_id": "layer1.post_attn_norm.rmsnorm",
+      "sub": "yrescale",
+      "seed_id": "layer1.post_attn_norm.rmsnorm.yrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.post_attn_norm.rmsnorm/yrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.post_attn_norm.rmsnorm.yrescale",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.out.i32.bin"
+      ],
+      "seconds": 2.642
+    },
+    {
+      "manifest_id": "layer1.mlp.gate_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer1.mlp.gate_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp.gate_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.mlp.gate_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.mlp.gate_proj-int.bin",
+        "1024",
+        "768",
+        "3072",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.gate_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 3.938
+    },
+    {
+      "manifest_id": "layer1.mlp.gate_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer1.mlp.gate_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp.gate_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.mlp.gate_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.gate_proj.matmul.Y.i64.bin",
+        "1024",
+        "3072",
+        "20",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.gate_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 6.925
+    },
+    {
+      "manifest_id": "layer1.mlp.up_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer1.mlp.up_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp.up_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.mlp.up_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer1.post_attn_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.mlp.up_proj-int.bin",
+        "1024",
+        "768",
+        "3072",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.up_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 3.951
+    },
+    {
+      "manifest_id": "layer1.mlp.up_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer1.mlp.up_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp.up_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.mlp.up_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.up_proj.matmul.Y.i64.bin",
+        "1024",
+        "3072",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.up_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 6.856
+    },
+    {
+      "manifest_id": "layer1.mlp.swiglu",
+      "sub": "glu",
+      "seed_id": "layer1.mlp.swiglu",
+      "cmd": [
+        "zkob_glu",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp.swiglu/glu",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.mlp.swiglu",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.gate_proj.rescaling.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.up_proj.rescaling.out.i32.bin",
+        "1024",
+        "3072",
+        "-2097152",
+        "4194304",
+        "/root/zkorch/stage3v2-fa/registration/swiglu-table.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.swiglu.H.i64.bin"
+      ],
+      "seconds": 11.583
+    },
+    {
+      "manifest_id": "layer1.mlp.swiglu",
+      "sub": "hrescale",
+      "seed_id": "layer1.mlp.swiglu.hrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp.swiglu/hrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.mlp.swiglu.hrescale",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.swiglu.H.i64.bin",
+        "1024",
+        "3072",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.swiglu.Hr.i32.bin"
+      ],
+      "seconds": 6.877
+    },
+    {
+      "manifest_id": "layer1.mlp.down_proj.matmul",
+      "sub": "fc",
+      "seed_id": "layer1.mlp.down_proj.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp.down_proj.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.mlp.down_proj.matmul",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.swiglu.Hr.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/layer1.mlp.down_proj-int.bin",
+        "1024",
+        "3072",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen4096.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.down_proj.matmul.Y.i64.bin"
+      ],
+      "seconds": 3.828
+    },
+    {
+      "manifest_id": "layer1.mlp.down_proj.rescaling",
+      "sub": "rescale",
+      "seed_id": "layer1.mlp.down_proj.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp.down_proj.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:layer1.mlp.down_proj.rescaling",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.down_proj.matmul.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/layer1.mlp.down_proj.rescaling.out.i32.bin"
+      ],
+      "seconds": 2.652
+    },
+    {
+      "manifest_id": "layer1.mlp_skip.add",
+      "sub": "commit-Z",
+      "seed_id": "layer1.mlp_skip.add",
+      "cmd": [
+        "zkob_fc",
+        "commit",
+        "/root/zkorch/stage3v2-fa/data/final_output.i32.bin",
+        "1024",
+        "768",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/proofs/layer1.mlp_skip.add/com_Z.bin"
+      ],
+      "seconds": 0.536
+    },
+    {
+      "manifest_id": "final_norm.rmsnorm",
+      "sub": "advice-R",
+      "seed_id": "-",
+      "cmd": [
+        "python:exact_R"
+      ],
+      "seconds": 0.003
+    },
+    {
+      "manifest_id": "final_norm.rmsnorm",
+      "sub": "rmsnorm",
+      "seed_id": "final_norm.rmsnorm",
+      "cmd": [
+        "zkob_rmsnorm",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/final_norm.rmsnorm/rmsnorm",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:final_norm.rmsnorm",
+        "/root/zkorch/stage3v2-fa/data/final_norm.rmsnorm.X.i32.bin",
+        "/root/zkorch/stage3v2-fa/data/final_norm.rmsnorm.R.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/final_norm.g-int.bin",
+        "1024",
+        "768",
+        "3298535",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/final_norm.rmsnorm.W.i64.bin",
+        "/root/zkorch/stage3v2-fa/data/final_norm.rmsnorm.Y.i64.bin"
+      ],
+      "seconds": 9.245
+    },
+    {
+      "manifest_id": "final_norm.rmsnorm",
+      "sub": "wrescale",
+      "seed_id": "final_norm.rmsnorm.wrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/final_norm.rmsnorm/wrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:final_norm.rmsnorm.wrescale",
+        "/root/zkorch/stage3v2-fa/data/final_norm.rmsnorm.W.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin"
+      ],
+      "seconds": 2.48
+    },
+    {
+      "manifest_id": "final_norm.rmsnorm",
+      "sub": "yrescale",
+      "seed_id": "final_norm.rmsnorm.yrescale",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/final_norm.rmsnorm/yrescale",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:final_norm.rmsnorm.yrescale",
+        "/root/zkorch/stage3v2-fa/data/final_norm.rmsnorm.Y.i64.bin",
+        "1024",
+        "768",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/final_norm.rmsnorm.out.i32.bin"
+      ],
+      "seconds": 2.651
+    },
+    {
+      "manifest_id": "lm_head.matmul",
+      "sub": "fc",
+      "seed_id": "lm_head.matmul",
+      "cmd": [
+        "zkob_fc",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/lm_head.matmul",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:lm_head.matmul",
+        "/root/zkorch/stage3v2-fa/data/final_norm.rmsnorm.out.i32.bin",
+        "/root/zkorch/stage3v2-fa/registration/weights/lm_head-int.bin",
+        "1024",
+        "768",
+        "32000",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen32768.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/lm_head.logits64.i64.bin"
+      ],
+      "seconds": 21.665
+    },
+    {
+      "manifest_id": "lm_head.rescaling",
+      "sub": "rescale",
+      "seed_id": "lm_head.rescaling",
+      "cmd": [
+        "zkob_rescale",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/lm_head.rescaling",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:lm_head.rescaling",
+        "/root/zkorch/stage3v2-fa/data/lm_head.logits64.i64.bin",
+        "1024",
+        "32000",
+        "16",
+        "/root/zkorch/stage3v2-fa/registration/gen32768.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "/root/zkorch/stage3v2-fa/data/lm_head.logits.i32.bin"
+      ],
+      "seconds": 52.282
+    },
+    {
+      "manifest_id": "statement.logit_binding",
+      "sub": "rowmax",
+      "seed_id": "statement.logit_binding",
+      "cmd": [
+        "zkob_rowmax",
+        "prove",
+        "/root/zkorch/stage3v2-fa/proofs/statement.logit_binding/rowmax",
+        "3f7ae74d7448f8fbddc70a4107d3523a34ff8777f363f243833e358f4d6a3e75:statement.logit_binding",
+        "/root/zkorch/stage3v2-fa/data/lm_head.logits.i32.bin",
+        "1024",
+        "32768",
+        "vpad",
+        "32000",
+        "1048576",
+        "2",
+        "/root/zkorch/stage3v2-fa/registration/gen32768.bin",
+        "/root/zkorch/stage3v2-fa/registration/gen1024.bin",
+        "/root/zkorch/stage3v2-fa/registration/q.bin",
+        "-",
+        "/root/zkorch/stage3v2-fa/registration/tstar.i32.bin"
+      ],
+      "seconds": 43.98
+    }
+  ],
+  "totals": {
+    "prove_wall_s": 1062.47,
+    "driver_prove_s": 1061.76,
+    "proof_bytes": 175581196
+  }
+}

@@ -1,0 +1,50 @@
+=== selftest run: /root/zkorch/selftest-20260610-230244 ===
+== register: /root/zkorch/selftest-20260610-230244 ==
+-- gens (ppgen) --
+  [   0.31s] ppgen 1024
+  [   0.30s] ppgen 4096
+  [   0.28s] ppgen 1
+-- weights (pipeline semantics) --
+  exported layer0.mlp.gate_proj (768x3072) [matches pipeline dump]
+  exported layer0.mlp.up_proj (768x3072) [matches pipeline dump]
+  exported layer0.mlp.down_proj (3072x768) [matches pipeline dump]
+  exported layer0.attn.q_proj (768x768) [matches pipeline dump]
+  exported layer0.attn.k_proj (768x768) [matches pipeline dump]
+  exported layer0.attn.v_proj (768x768) [matches pipeline dump]
+  exported layer0.input_norm.g (1x768) [matches pipeline dump]
+  exported layer0.post_attn_norm.g (1x768) [matches pipeline dump]
+  exported layer1.mlp.gate_proj (768x3072) [matches pipeline dump]
+  exported layer1.mlp.up_proj (768x3072) [matches pipeline dump]
+  exported layer1.mlp.down_proj (3072x768) [matches pipeline dump]
+  exported layer1.attn.q_proj (768x768) [matches pipeline dump]
+  exported layer1.attn.k_proj (768x768) [matches pipeline dump]
+  exported layer1.attn.v_proj (768x768) [matches pipeline dump]
+  exported layer1.input_norm.g (1x768) [matches pipeline dump]
+  exported layer1.post_attn_norm.g (1x768) [matches pipeline dump]
+  rms_norm_eps=1e-06 -> C_eps=3298535
+-- registered commitments (zkob_fc commit) --
+  [   0.99s] commit layer0.mlp.gate_proj
+  [   0.90s] commit layer0.mlp.up_proj
+  [   0.97s] commit layer0.mlp.down_proj
+  [   0.50s] commit layer0.attn.q_proj
+  [   0.51s] commit layer0.attn.k_proj
+  [   0.45s] commit layer0.attn.v_proj
+  [   0.29s] commit layer0.input_norm.g
+  [   0.29s] commit layer0.post_attn_norm.g
+  [   0.90s] commit layer1.mlp.gate_proj
+  [   0.90s] commit layer1.mlp.up_proj
+  [   0.91s] commit layer1.mlp.down_proj
+  [   0.50s] commit layer1.attn.q_proj
+  [   0.50s] commit layer1.attn.k_proj
+  [   0.50s] commit layer1.attn.v_proj
+  [   0.29s] commit layer1.input_norm.g
+  [   0.29s] commit layer1.post_attn_norm.g
+-- input + commitment --
+  input: randn seed 31957113, (1024, 768), int32 @2^16
+  [   0.47s] commit input
+-- swiglu table --
+  swiglu table: len 4194304, low -2097152
+-- public.json --
+  run_seed = 1a4f289e9600568c00ab464b91b496c35486dbfde6e0e55fe6162d5a4c15f2c1
+REGISTERED /root/zkorch/selftest-20260610-230244
+PASS: register

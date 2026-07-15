@@ -1,0 +1,16 @@
+{
+  "verdict": "REJECT",
+  "checked": [],
+  "skipped": {},
+  "details": {
+    "statement.registered_weight_hash": {
+      "ok": false,
+      "reason": "hash mismatch: served_tokens.file"
+    }
+  },
+  "registration": {
+    "ok": false,
+    "n_hashes": 33
+  },
+  "note": "registration check failed (untrusted registration); obligation verifies not run"
+}

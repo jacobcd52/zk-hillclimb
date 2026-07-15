@@ -1,0 +1,2024 @@
+{
+  "verdict": "ACCEPT",
+  "submission": "faithful-arch-v1",
+  "transport": "batched",
+  "weight_privacy": "hiding",
+  "checked": [
+    "layer0.input_norm.rmsnorm",
+    "layer0.attn.q_proj.commitment_opening",
+    "layer0.attn.q_proj.matmul",
+    "layer0.attn.q_proj.rescaling",
+    "layer0.attn.k_proj.commitment_opening",
+    "layer0.attn.k_proj.matmul",
+    "layer0.attn.k_proj.rescaling",
+    "layer0.attn.v_proj.commitment_opening",
+    "layer0.attn.v_proj.matmul",
+    "layer0.attn.v_proj.rescaling",
+    "layer0.attn.scores_matmul",
+    "layer0.attn.softmax",
+    "layer0.attn.values_matmul",
+    "layer0.attn.o_proj.commitment_opening",
+    "layer0.attn.o_proj.matmul",
+    "layer0.attn.o_proj.rescaling",
+    "layer0.attn_skip.add",
+    "layer0.post_attn_norm.rmsnorm",
+    "layer0.mlp.gate_proj.commitment_opening",
+    "layer0.mlp.gate_proj.matmul",
+    "layer0.mlp.gate_proj.rescaling",
+    "layer0.mlp.up_proj.commitment_opening",
+    "layer0.mlp.up_proj.matmul",
+    "layer0.mlp.up_proj.rescaling",
+    "layer0.mlp.swiglu",
+    "layer0.mlp.down_proj.commitment_opening",
+    "layer0.mlp.down_proj.matmul",
+    "layer0.mlp.down_proj.rescaling",
+    "layer0.mlp_skip.add",
+    "layer1.input_norm.rmsnorm",
+    "layer1.attn.q_proj.commitment_opening",
+    "layer1.attn.q_proj.matmul",
+    "layer1.attn.q_proj.rescaling",
+    "layer1.attn.k_proj.commitment_opening",
+    "layer1.attn.k_proj.matmul",
+    "layer1.attn.k_proj.rescaling",
+    "layer1.attn.v_proj.commitment_opening",
+    "layer1.attn.v_proj.matmul",
+    "layer1.attn.v_proj.rescaling",
+    "layer1.attn.scores_matmul",
+    "layer1.attn.softmax",
+    "layer1.attn.values_matmul",
+    "layer1.attn.o_proj.commitment_opening",
+    "layer1.attn.o_proj.matmul",
+    "layer1.attn.o_proj.rescaling",
+    "layer1.attn_skip.add",
+    "layer1.post_attn_norm.rmsnorm",
+    "layer1.mlp.gate_proj.commitment_opening",
+    "layer1.mlp.gate_proj.matmul",
+    "layer1.mlp.gate_proj.rescaling",
+    "layer1.mlp.up_proj.commitment_opening",
+    "layer1.mlp.up_proj.matmul",
+    "layer1.mlp.up_proj.rescaling",
+    "layer1.mlp.swiglu",
+    "layer1.mlp.down_proj.commitment_opening",
+    "layer1.mlp.down_proj.matmul",
+    "layer1.mlp.down_proj.rescaling",
+    "layer1.mlp_skip.add",
+    "final_norm.rmsnorm",
+    "lm_head.commitment_opening",
+    "lm_head.matmul",
+    "lm_head.rescaling",
+    "statement.logit_binding",
+    "statement.registered_weight_hash",
+    "statement.prompt_binding"
+  ],
+  "rejected": [],
+  "skipped": {},
+  "details": {
+    "statement.registered_weight_hash": {
+      "ok": true,
+      "reason": "33 registered files re-hashed and matched public.json; q.bin is the 2-slot [Q, H] file (H = slot 1, hash-pinned); all 31 registration paths consumed by the walk are hash-pinned"
+    },
+    "layer0.input_norm.rmsnorm": {
+      "ok": true,
+      "reason": "rmsnorm: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); wrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); yrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0.input_norm.rmsnorm: com_g == registered; edge OK: layer0.input_norm.rmsnorm: com_W == wrescale com_X; edge OK: layer0.input_norm.rmsnorm: com_Wr == wrescale com_Xr; edge OK: layer0.input_norm.rmsnorm: com_Y == yrescale com_X; edge OK: layer0.input_norm.rmsnorm: com_X == registered com_input"
+    },
+    "layer0.attn.q_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A1q: layer0 q_proj fc com_X == input_norm yrescale com_Xr"
+    },
+    "layer0.attn.q_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A2q: layer0 q_proj fc com_Y == q_proj rescale com_X"
+    },
+    "layer0.attn.k_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A1k: layer0 k_proj fc com_X == input_norm yrescale com_Xr"
+    },
+    "layer0.attn.k_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A2k: layer0 k_proj fc com_Y == k_proj rescale com_X"
+    },
+    "layer0.attn.v_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A1v: layer0 v_proj fc com_X == input_norm yrescale com_Xr"
+    },
+    "layer0.attn.v_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A2v: layer0 v_proj fc com_Y == v_proj rescale com_X"
+    },
+    "layer0.attn.scores_matmul": {
+      "ok": true,
+      "reason": "rope.q: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rope.q.rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rope.k: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rope.k.rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); slice: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A3q: layer0 rope.q com_T == q_proj rescale com_Xr; edge OK: A4q: layer0 rope.q com_Y64 == rope.q.rescale com_X; edge OK: A5q: layer0 slice com_Q == rope.q.rescale com_Xr; edge OK: A3k: layer0 rope.k com_T == k_proj rescale com_Xr; edge OK: A4k: layer0 rope.k com_Y64 == rope.k.rescale com_X; edge OK: A5k: layer0 slice com_K == rope.k.rescale com_Xr; edge OK: A3v: layer0 slice com_V == v_proj rescale com_Xr; edge OK: A6.00: layer0 slice com_Qh00 == scores fc.h00 com_X; edge OK: A7.00: layer0 slice com_KhT00 IS scores fc.h00 com_W argv; edge OK: A8.00: layer0 scores fc.h00 com_Y == rescale13.h00 com_X; edge OK: A6.01: layer0 slice com_Qh01 == scores fc.h01 com_X; edge OK: A7.01: layer0 slice com_KhT01 IS scores fc.h01 com_W argv; edge OK: A8.01: layer0 scores fc.h01 com_Y == rescale13.h01 com_X; edge OK: A6.02: layer0 slice com_Qh02 == scores fc.h02 com_X; edge OK: A7.02: layer0 slice com_KhT02 IS scores fc.h02 com_W argv; edge OK: A8.02: layer0 scores fc.h02 com_Y == rescale13.h02 com_X; edge OK: A6.03: layer0 slice com_Qh03 == scores fc.h03 com_X; edge OK: A7.03: layer0 slice com_KhT03 IS scores fc.h03 com_W argv; edge OK: A8.03: layer0 scores fc.h03 com_Y == rescale13.h03 com_X; edge OK: A6.04: layer0 slice com_Qh04 == scores fc.h04 com_X; edge OK: A7.04: layer0 slice com_KhT04 IS scores fc.h04 com_W argv; edge OK: A8.04: layer0 scores fc.h04 com_Y == rescale13.h04 com_X; edge OK: A6.05: layer0 slice com_Qh05 == scores fc.h05 com_X; edge OK: A7.05: layer0 slice com_KhT05 IS scores fc.h05 com_W argv; edge OK: A8.05: layer0 scores fc.h05 com_Y == rescale13.h05 com_X; edge OK: A6.06: layer0 slice com_Qh06 == scores fc.h06 com_X; edge OK: A7.06: layer0 slice com_KhT06 IS scores fc.h06 com_W argv; edge OK: A8.06: layer0 scores fc.h06 com_Y == rescale13.h06 com_X; edge OK: A6.07: layer0 slice com_Qh07 == scores fc.h07 com_X; edge OK: A7.07: layer0 slice com_KhT07 IS scores fc.h07 com_W argv; edge OK: A8.07: layer0 scores fc.h07 com_Y == rescale13.h07 com_X; edge OK: A6.08: layer0 slice com_Qh08 == scores fc.h08 com_X; edge OK: A7.08: layer0 slice com_KhT08 IS scores fc.h08 com_W argv; edge OK: A8.08: layer0 scores fc.h08 com_Y == rescale13.h08 com_X; edge OK: A6.09: layer0 slice com_Qh09 == scores fc.h09 com_X; edge OK: A7.09: layer0 slice com_KhT09 IS scores fc.h09 com_W argv; edge OK: A8.09: layer0 scores fc.h09 com_Y == rescale13.h09 com_X; edge OK: A6.10: layer0 slice com_Qh10 == scores fc.h10 com_X; edge OK: A7.10: layer0 slice com_KhT10 IS scores fc.h10 com_W argv; edge OK: A8.10: layer0 scores fc.h10 com_Y == rescale13.h10 com_X; edge OK: A6.11: layer0 slice com_Qh11 == scores fc.h11 com_X; edge OK: A7.11: layer0 slice com_KhT11 IS scores fc.h11 com_W argv; edge OK: A8.11: layer0 scores fc.h11 com_Y == rescale13.h11 com_X"
+    },
+    "layer0.attn.softmax": {
+      "ok": true,
+      "reason": "rescale13.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A9.00: layer0 rescale13.h00 com_Xr == rescale10.h00 com_X; edge OK: RM1.00: layer0 rescale10.h00 com_Xr == rowmax.h00 com_z; edge OK: RM2.00: layer0 rowmax.h00 com_mx == softmax8.h00 com_mx; edge OK: SX8a.00: layer0 rescale10.h00 com_Xr == softmax8.h00 com_z; edge OK: SX8b.00: layer0 softmax8.h00 com_P == values fc.h00 com_X; edge OK: A9.01: layer0 rescale13.h01 com_Xr == rescale10.h01 com_X; edge OK: RM1.01: layer0 rescale10.h01 com_Xr == rowmax.h01 com_z; edge OK: RM2.01: layer0 rowmax.h01 com_mx == softmax8.h01 com_mx; edge OK: SX8a.01: layer0 rescale10.h01 com_Xr == softmax8.h01 com_z; edge OK: SX8b.01: layer0 softmax8.h01 com_P == values fc.h01 com_X; edge OK: A9.02: layer0 rescale13.h02 com_Xr == rescale10.h02 com_X; edge OK: RM1.02: layer0 rescale10.h02 com_Xr == rowmax.h02 com_z; edge OK: RM2.02: layer0 rowmax.h02 com_mx == softmax8.h02 com_mx; edge OK: SX8a.02: layer0 rescale10.h02 com_Xr == softmax8.h02 com_z; edge OK: SX8b.02: layer0 softmax8.h02 com_P == values fc.h02 com_X; edge OK: A9.03: layer0 rescale13.h03 com_Xr == rescale10.h03 com_X; edge OK: RM1.03: layer0 rescale10.h03 com_Xr == rowmax.h03 com_z; edge OK: RM2.03: layer0 rowmax.h03 com_mx == softmax8.h03 com_mx; edge OK: SX8a.03: layer0 rescale10.h03 com_Xr == softmax8.h03 com_z; edge OK: SX8b.03: layer0 softmax8.h03 com_P == values fc.h03 com_X; edge OK: A9.04: layer0 rescale13.h04 com_Xr == rescale10.h04 com_X; edge OK: RM1.04: layer0 rescale10.h04 com_Xr == rowmax.h04 com_z; edge OK: RM2.04: layer0 rowmax.h04 com_mx == softmax8.h04 com_mx; edge OK: SX8a.04: layer0 rescale10.h04 com_Xr == softmax8.h04 com_z; edge OK: SX8b.04: layer0 softmax8.h04 com_P == values fc.h04 com_X; edge OK: A9.05: layer0 rescale13.h05 com_Xr == rescale10.h05 com_X; edge OK: RM1.05: layer0 rescale10.h05 com_Xr == rowmax.h05 com_z; edge OK: RM2.05: layer0 rowmax.h05 com_mx == softmax8.h05 com_mx; edge OK: SX8a.05: layer0 rescale10.h05 com_Xr == softmax8.h05 com_z; edge OK: SX8b.05: layer0 softmax8.h05 com_P == values fc.h05 com_X; edge OK: A9.06: layer0 rescale13.h06 com_Xr == rescale10.h06 com_X; edge OK: RM1.06: layer0 rescale10.h06 com_Xr == rowmax.h06 com_z; edge OK: RM2.06: layer0 rowmax.h06 com_mx == softmax8.h06 com_mx; edge OK: SX8a.06: layer0 rescale10.h06 com_Xr == softmax8.h06 com_z; edge OK: SX8b.06: layer0 softmax8.h06 com_P == values fc.h06 com_X; edge OK: A9.07: layer0 rescale13.h07 com_Xr == rescale10.h07 com_X; edge OK: RM1.07: layer0 rescale10.h07 com_Xr == rowmax.h07 com_z; edge OK: RM2.07: layer0 rowmax.h07 com_mx == softmax8.h07 com_mx; edge OK: SX8a.07: layer0 rescale10.h07 com_Xr == softmax8.h07 com_z; edge OK: SX8b.07: layer0 softmax8.h07 com_P == values fc.h07 com_X; edge OK: A9.08: layer0 rescale13.h08 com_Xr == rescale10.h08 com_X; edge OK: RM1.08: layer0 rescale10.h08 com_Xr == rowmax.h08 com_z; edge OK: RM2.08: layer0 rowmax.h08 com_mx == softmax8.h08 com_mx; edge OK: SX8a.08: layer0 rescale10.h08 com_Xr == softmax8.h08 com_z; edge OK: SX8b.08: layer0 softmax8.h08 com_P == values fc.h08 com_X; edge OK: A9.09: layer0 rescale13.h09 com_Xr == rescale10.h09 com_X; edge OK: RM1.09: layer0 rescale10.h09 com_Xr == rowmax.h09 com_z; edge OK: RM2.09: layer0 rowmax.h09 com_mx == softmax8.h09 com_mx; edge OK: SX8a.09: layer0 rescale10.h09 com_Xr == softmax8.h09 com_z; edge OK: SX8b.09: layer0 softmax8.h09 com_P == values fc.h09 com_X; edge OK: A9.10: layer0 rescale13.h10 com_Xr == rescale10.h10 com_X; edge OK: RM1.10: layer0 rescale10.h10 com_Xr == rowmax.h10 com_z; edge OK: RM2.10: layer0 rowmax.h10 com_mx == softmax8.h10 com_mx; edge OK: SX8a.10: layer0 rescale10.h10 com_Xr == softmax8.h10 com_z; edge OK: SX8b.10: layer0 softmax8.h10 com_P == values fc.h10 com_X; edge OK: A9.11: layer0 rescale13.h11 com_Xr == rescale10.h11 com_X; edge OK: RM1.11: layer0 rescale10.h11 com_Xr == rowmax.h11 com_z; edge OK: RM2.11: layer0 rowmax.h11 com_mx == softmax8.h11 com_mx; edge OK: SX8a.11: layer0 rescale10.h11 com_Xr == softmax8.h11 com_z; edge OK: SX8b.11: layer0 softmax8.h11 com_P == values fc.h11 com_X"
+    },
+    "layer0.attn.values_matmul": {
+      "ok": true,
+      "reason": "fc.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); merge: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A12.00: layer0 slice com_Vh00 IS values fc.h00 com_W argv; edge OK: A13.00: layer0 values fc.h00 com_Y == rescale.h00 com_X; edge OK: A14.00: layer0 values rescale.h00 com_Xr == merge com_O00; edge OK: A12.01: layer0 slice com_Vh01 IS values fc.h01 com_W argv; edge OK: A13.01: layer0 values fc.h01 com_Y == rescale.h01 com_X; edge OK: A14.01: layer0 values rescale.h01 com_Xr == merge com_O01; edge OK: A12.02: layer0 slice com_Vh02 IS values fc.h02 com_W argv; edge OK: A13.02: layer0 values fc.h02 com_Y == rescale.h02 com_X; edge OK: A14.02: layer0 values rescale.h02 com_Xr == merge com_O02; edge OK: A12.03: layer0 slice com_Vh03 IS values fc.h03 com_W argv; edge OK: A13.03: layer0 values fc.h03 com_Y == rescale.h03 com_X; edge OK: A14.03: layer0 values rescale.h03 com_Xr == merge com_O03; edge OK: A12.04: layer0 slice com_Vh04 IS values fc.h04 com_W argv; edge OK: A13.04: layer0 values fc.h04 com_Y == rescale.h04 com_X; edge OK: A14.04: layer0 values rescale.h04 com_Xr == merge com_O04; edge OK: A12.05: layer0 slice com_Vh05 IS values fc.h05 com_W argv; edge OK: A13.05: layer0 values fc.h05 com_Y == rescale.h05 com_X; edge OK: A14.05: layer0 values rescale.h05 com_Xr == merge com_O05; edge OK: A12.06: layer0 slice com_Vh06 IS values fc.h06 com_W argv; edge OK: A13.06: layer0 values fc.h06 com_Y == rescale.h06 com_X; edge OK: A14.06: layer0 values rescale.h06 com_Xr == merge com_O06; edge OK: A12.07: layer0 slice com_Vh07 IS values fc.h07 com_W argv; edge OK: A13.07: layer0 values fc.h07 com_Y == rescale.h07 com_X; edge OK: A14.07: layer0 values rescale.h07 com_Xr == merge com_O07; edge OK: A12.08: layer0 slice com_Vh08 IS values fc.h08 com_W argv; edge OK: A13.08: layer0 values fc.h08 com_Y == rescale.h08 com_X; edge OK: A14.08: layer0 values rescale.h08 com_Xr == merge com_O08; edge OK: A12.09: layer0 slice com_Vh09 IS values fc.h09 com_W argv; edge OK: A13.09: layer0 values fc.h09 com_Y == rescale.h09 com_X; edge OK: A14.09: layer0 values rescale.h09 com_Xr == merge com_O09; edge OK: A12.10: layer0 slice com_Vh10 IS values fc.h10 com_W argv; edge OK: A13.10: layer0 values fc.h10 com_Y == rescale.h10 com_X; edge OK: A14.10: layer0 values rescale.h10 com_Xr == merge com_O10; edge OK: A12.11: layer0 slice com_Vh11 IS values fc.h11 com_W argv; edge OK: A13.11: layer0 values fc.h11 com_Y == rescale.h11 com_X; edge OK: A14.11: layer0 values rescale.h11 com_Xr == merge com_O11"
+    },
+    "layer0.attn.o_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: O1: layer0 merge com_O2 == o_proj fc com_X (plain head-concat M)"
+    },
+    "layer0.attn.o_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: O2: layer0 o_proj fc com_Y == o_proj rescale com_X; edge OK: O3: layer0 o_proj rescale com_Xr == attn_skip com_attn_out (the S1-closure edge, now through o_proj)"
+    },
+    "layer0.post_attn_norm.rmsnorm": {
+      "ok": true,
+      "reason": "rmsnorm: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); wrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); yrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0.post_attn_norm.rmsnorm: com_g == registered; edge OK: layer0.post_attn_norm.rmsnorm: com_W == wrescale com_X; edge OK: layer0.post_attn_norm.rmsnorm: com_Wr == wrescale com_Xr; edge OK: layer0.post_attn_norm.rmsnorm: com_Y == yrescale com_X"
+    },
+    "layer0.mlp.gate_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0: gate_fc com_X == post_attn_norm yrescale com_Xr"
+    },
+    "layer0.mlp.gate_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0: gate_fc com_Y == gate_rescale com_X"
+    },
+    "layer0.mlp.up_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0: up_fc com_X == post_attn_norm yrescale com_Xr"
+    },
+    "layer0.mlp.up_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0: up_fc com_Y == up_rescale com_X"
+    },
+    "layer0.mlp.swiglu": {
+      "ok": true,
+      "reason": "glu: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); hrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0: glu com_G == gate_rescale com_Xr; edge OK: layer0: glu com_U == up_rescale com_Xr; edge OK: layer0: glu com_H == hrescale com_X"
+    },
+    "layer0.mlp.down_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0: down_fc com_X == hrescale com_Xr"
+    },
+    "layer0.mlp.down_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer0: down_fc com_Y == down_rescale com_X"
+    },
+    "layer1.input_norm.rmsnorm": {
+      "ok": true,
+      "reason": "rmsnorm: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); wrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); yrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1.input_norm.rmsnorm: com_g == registered; edge OK: layer1.input_norm.rmsnorm: com_W == wrescale com_X; edge OK: layer1.input_norm.rmsnorm: com_Wr == wrescale com_Xr; edge OK: layer1.input_norm.rmsnorm: com_Y == yrescale com_X"
+    },
+    "layer1.attn.q_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A1q: layer1 q_proj fc com_X == input_norm yrescale com_Xr"
+    },
+    "layer1.attn.q_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A2q: layer1 q_proj fc com_Y == q_proj rescale com_X"
+    },
+    "layer1.attn.k_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A1k: layer1 k_proj fc com_X == input_norm yrescale com_Xr"
+    },
+    "layer1.attn.k_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A2k: layer1 k_proj fc com_Y == k_proj rescale com_X"
+    },
+    "layer1.attn.v_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A1v: layer1 v_proj fc com_X == input_norm yrescale com_Xr"
+    },
+    "layer1.attn.v_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A2v: layer1 v_proj fc com_Y == v_proj rescale com_X"
+    },
+    "layer1.attn.scores_matmul": {
+      "ok": true,
+      "reason": "rope.q: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rope.q.rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rope.k: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rope.k.rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); slice: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A3q: layer1 rope.q com_T == q_proj rescale com_Xr; edge OK: A4q: layer1 rope.q com_Y64 == rope.q.rescale com_X; edge OK: A5q: layer1 slice com_Q == rope.q.rescale com_Xr; edge OK: A3k: layer1 rope.k com_T == k_proj rescale com_Xr; edge OK: A4k: layer1 rope.k com_Y64 == rope.k.rescale com_X; edge OK: A5k: layer1 slice com_K == rope.k.rescale com_Xr; edge OK: A3v: layer1 slice com_V == v_proj rescale com_Xr; edge OK: A6.00: layer1 slice com_Qh00 == scores fc.h00 com_X; edge OK: A7.00: layer1 slice com_KhT00 IS scores fc.h00 com_W argv; edge OK: A8.00: layer1 scores fc.h00 com_Y == rescale13.h00 com_X; edge OK: A6.01: layer1 slice com_Qh01 == scores fc.h01 com_X; edge OK: A7.01: layer1 slice com_KhT01 IS scores fc.h01 com_W argv; edge OK: A8.01: layer1 scores fc.h01 com_Y == rescale13.h01 com_X; edge OK: A6.02: layer1 slice com_Qh02 == scores fc.h02 com_X; edge OK: A7.02: layer1 slice com_KhT02 IS scores fc.h02 com_W argv; edge OK: A8.02: layer1 scores fc.h02 com_Y == rescale13.h02 com_X; edge OK: A6.03: layer1 slice com_Qh03 == scores fc.h03 com_X; edge OK: A7.03: layer1 slice com_KhT03 IS scores fc.h03 com_W argv; edge OK: A8.03: layer1 scores fc.h03 com_Y == rescale13.h03 com_X; edge OK: A6.04: layer1 slice com_Qh04 == scores fc.h04 com_X; edge OK: A7.04: layer1 slice com_KhT04 IS scores fc.h04 com_W argv; edge OK: A8.04: layer1 scores fc.h04 com_Y == rescale13.h04 com_X; edge OK: A6.05: layer1 slice com_Qh05 == scores fc.h05 com_X; edge OK: A7.05: layer1 slice com_KhT05 IS scores fc.h05 com_W argv; edge OK: A8.05: layer1 scores fc.h05 com_Y == rescale13.h05 com_X; edge OK: A6.06: layer1 slice com_Qh06 == scores fc.h06 com_X; edge OK: A7.06: layer1 slice com_KhT06 IS scores fc.h06 com_W argv; edge OK: A8.06: layer1 scores fc.h06 com_Y == rescale13.h06 com_X; edge OK: A6.07: layer1 slice com_Qh07 == scores fc.h07 com_X; edge OK: A7.07: layer1 slice com_KhT07 IS scores fc.h07 com_W argv; edge OK: A8.07: layer1 scores fc.h07 com_Y == rescale13.h07 com_X; edge OK: A6.08: layer1 slice com_Qh08 == scores fc.h08 com_X; edge OK: A7.08: layer1 slice com_KhT08 IS scores fc.h08 com_W argv; edge OK: A8.08: layer1 scores fc.h08 com_Y == rescale13.h08 com_X; edge OK: A6.09: layer1 slice com_Qh09 == scores fc.h09 com_X; edge OK: A7.09: layer1 slice com_KhT09 IS scores fc.h09 com_W argv; edge OK: A8.09: layer1 scores fc.h09 com_Y == rescale13.h09 com_X; edge OK: A6.10: layer1 slice com_Qh10 == scores fc.h10 com_X; edge OK: A7.10: layer1 slice com_KhT10 IS scores fc.h10 com_W argv; edge OK: A8.10: layer1 scores fc.h10 com_Y == rescale13.h10 com_X; edge OK: A6.11: layer1 slice com_Qh11 == scores fc.h11 com_X; edge OK: A7.11: layer1 slice com_KhT11 IS scores fc.h11 com_W argv; edge OK: A8.11: layer1 scores fc.h11 com_Y == rescale13.h11 com_X"
+    },
+    "layer1.attn.softmax": {
+      "ok": true,
+      "reason": "rescale13.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale13.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale10.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rowmax.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); softmax8.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A9.00: layer1 rescale13.h00 com_Xr == rescale10.h00 com_X; edge OK: RM1.00: layer1 rescale10.h00 com_Xr == rowmax.h00 com_z; edge OK: RM2.00: layer1 rowmax.h00 com_mx == softmax8.h00 com_mx; edge OK: SX8a.00: layer1 rescale10.h00 com_Xr == softmax8.h00 com_z; edge OK: SX8b.00: layer1 softmax8.h00 com_P == values fc.h00 com_X; edge OK: A9.01: layer1 rescale13.h01 com_Xr == rescale10.h01 com_X; edge OK: RM1.01: layer1 rescale10.h01 com_Xr == rowmax.h01 com_z; edge OK: RM2.01: layer1 rowmax.h01 com_mx == softmax8.h01 com_mx; edge OK: SX8a.01: layer1 rescale10.h01 com_Xr == softmax8.h01 com_z; edge OK: SX8b.01: layer1 softmax8.h01 com_P == values fc.h01 com_X; edge OK: A9.02: layer1 rescale13.h02 com_Xr == rescale10.h02 com_X; edge OK: RM1.02: layer1 rescale10.h02 com_Xr == rowmax.h02 com_z; edge OK: RM2.02: layer1 rowmax.h02 com_mx == softmax8.h02 com_mx; edge OK: SX8a.02: layer1 rescale10.h02 com_Xr == softmax8.h02 com_z; edge OK: SX8b.02: layer1 softmax8.h02 com_P == values fc.h02 com_X; edge OK: A9.03: layer1 rescale13.h03 com_Xr == rescale10.h03 com_X; edge OK: RM1.03: layer1 rescale10.h03 com_Xr == rowmax.h03 com_z; edge OK: RM2.03: layer1 rowmax.h03 com_mx == softmax8.h03 com_mx; edge OK: SX8a.03: layer1 rescale10.h03 com_Xr == softmax8.h03 com_z; edge OK: SX8b.03: layer1 softmax8.h03 com_P == values fc.h03 com_X; edge OK: A9.04: layer1 rescale13.h04 com_Xr == rescale10.h04 com_X; edge OK: RM1.04: layer1 rescale10.h04 com_Xr == rowmax.h04 com_z; edge OK: RM2.04: layer1 rowmax.h04 com_mx == softmax8.h04 com_mx; edge OK: SX8a.04: layer1 rescale10.h04 com_Xr == softmax8.h04 com_z; edge OK: SX8b.04: layer1 softmax8.h04 com_P == values fc.h04 com_X; edge OK: A9.05: layer1 rescale13.h05 com_Xr == rescale10.h05 com_X; edge OK: RM1.05: layer1 rescale10.h05 com_Xr == rowmax.h05 com_z; edge OK: RM2.05: layer1 rowmax.h05 com_mx == softmax8.h05 com_mx; edge OK: SX8a.05: layer1 rescale10.h05 com_Xr == softmax8.h05 com_z; edge OK: SX8b.05: layer1 softmax8.h05 com_P == values fc.h05 com_X; edge OK: A9.06: layer1 rescale13.h06 com_Xr == rescale10.h06 com_X; edge OK: RM1.06: layer1 rescale10.h06 com_Xr == rowmax.h06 com_z; edge OK: RM2.06: layer1 rowmax.h06 com_mx == softmax8.h06 com_mx; edge OK: SX8a.06: layer1 rescale10.h06 com_Xr == softmax8.h06 com_z; edge OK: SX8b.06: layer1 softmax8.h06 com_P == values fc.h06 com_X; edge OK: A9.07: layer1 rescale13.h07 com_Xr == rescale10.h07 com_X; edge OK: RM1.07: layer1 rescale10.h07 com_Xr == rowmax.h07 com_z; edge OK: RM2.07: layer1 rowmax.h07 com_mx == softmax8.h07 com_mx; edge OK: SX8a.07: layer1 rescale10.h07 com_Xr == softmax8.h07 com_z; edge OK: SX8b.07: layer1 softmax8.h07 com_P == values fc.h07 com_X; edge OK: A9.08: layer1 rescale13.h08 com_Xr == rescale10.h08 com_X; edge OK: RM1.08: layer1 rescale10.h08 com_Xr == rowmax.h08 com_z; edge OK: RM2.08: layer1 rowmax.h08 com_mx == softmax8.h08 com_mx; edge OK: SX8a.08: layer1 rescale10.h08 com_Xr == softmax8.h08 com_z; edge OK: SX8b.08: layer1 softmax8.h08 com_P == values fc.h08 com_X; edge OK: A9.09: layer1 rescale13.h09 com_Xr == rescale10.h09 com_X; edge OK: RM1.09: layer1 rescale10.h09 com_Xr == rowmax.h09 com_z; edge OK: RM2.09: layer1 rowmax.h09 com_mx == softmax8.h09 com_mx; edge OK: SX8a.09: layer1 rescale10.h09 com_Xr == softmax8.h09 com_z; edge OK: SX8b.09: layer1 softmax8.h09 com_P == values fc.h09 com_X; edge OK: A9.10: layer1 rescale13.h10 com_Xr == rescale10.h10 com_X; edge OK: RM1.10: layer1 rescale10.h10 com_Xr == rowmax.h10 com_z; edge OK: RM2.10: layer1 rowmax.h10 com_mx == softmax8.h10 com_mx; edge OK: SX8a.10: layer1 rescale10.h10 com_Xr == softmax8.h10 com_z; edge OK: SX8b.10: layer1 softmax8.h10 com_P == values fc.h10 com_X; edge OK: A9.11: layer1 rescale13.h11 com_Xr == rescale10.h11 com_X; edge OK: RM1.11: layer1 rescale10.h11 com_Xr == rowmax.h11 com_z; edge OK: RM2.11: layer1 rowmax.h11 com_mx == softmax8.h11 com_mx; edge OK: SX8a.11: layer1 rescale10.h11 com_Xr == softmax8.h11 com_z; edge OK: SX8b.11: layer1 softmax8.h11 com_P == values fc.h11 com_X"
+    },
+    "layer1.attn.values_matmul": {
+      "ok": true,
+      "reason": "fc.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h00: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h01: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h02: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h03: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h04: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h05: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h06: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h07: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h08: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h09: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h10: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); fc.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); rescale.h11: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); merge: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: A12.00: layer1 slice com_Vh00 IS values fc.h00 com_W argv; edge OK: A13.00: layer1 values fc.h00 com_Y == rescale.h00 com_X; edge OK: A14.00: layer1 values rescale.h00 com_Xr == merge com_O00; edge OK: A12.01: layer1 slice com_Vh01 IS values fc.h01 com_W argv; edge OK: A13.01: layer1 values fc.h01 com_Y == rescale.h01 com_X; edge OK: A14.01: layer1 values rescale.h01 com_Xr == merge com_O01; edge OK: A12.02: layer1 slice com_Vh02 IS values fc.h02 com_W argv; edge OK: A13.02: layer1 values fc.h02 com_Y == rescale.h02 com_X; edge OK: A14.02: layer1 values rescale.h02 com_Xr == merge com_O02; edge OK: A12.03: layer1 slice com_Vh03 IS values fc.h03 com_W argv; edge OK: A13.03: layer1 values fc.h03 com_Y == rescale.h03 com_X; edge OK: A14.03: layer1 values rescale.h03 com_Xr == merge com_O03; edge OK: A12.04: layer1 slice com_Vh04 IS values fc.h04 com_W argv; edge OK: A13.04: layer1 values fc.h04 com_Y == rescale.h04 com_X; edge OK: A14.04: layer1 values rescale.h04 com_Xr == merge com_O04; edge OK: A12.05: layer1 slice com_Vh05 IS values fc.h05 com_W argv; edge OK: A13.05: layer1 values fc.h05 com_Y == rescale.h05 com_X; edge OK: A14.05: layer1 values rescale.h05 com_Xr == merge com_O05; edge OK: A12.06: layer1 slice com_Vh06 IS values fc.h06 com_W argv; edge OK: A13.06: layer1 values fc.h06 com_Y == rescale.h06 com_X; edge OK: A14.06: layer1 values rescale.h06 com_Xr == merge com_O06; edge OK: A12.07: layer1 slice com_Vh07 IS values fc.h07 com_W argv; edge OK: A13.07: layer1 values fc.h07 com_Y == rescale.h07 com_X; edge OK: A14.07: layer1 values rescale.h07 com_Xr == merge com_O07; edge OK: A12.08: layer1 slice com_Vh08 IS values fc.h08 com_W argv; edge OK: A13.08: layer1 values fc.h08 com_Y == rescale.h08 com_X; edge OK: A14.08: layer1 values rescale.h08 com_Xr == merge com_O08; edge OK: A12.09: layer1 slice com_Vh09 IS values fc.h09 com_W argv; edge OK: A13.09: layer1 values fc.h09 com_Y == rescale.h09 com_X; edge OK: A14.09: layer1 values rescale.h09 com_Xr == merge com_O09; edge OK: A12.10: layer1 slice com_Vh10 IS values fc.h10 com_W argv; edge OK: A13.10: layer1 values fc.h10 com_Y == rescale.h10 com_X; edge OK: A14.10: layer1 values rescale.h10 com_Xr == merge com_O10; edge OK: A12.11: layer1 slice com_Vh11 IS values fc.h11 com_W argv; edge OK: A13.11: layer1 values fc.h11 com_Y == rescale.h11 com_X; edge OK: A14.11: layer1 values rescale.h11 com_Xr == merge com_O11"
+    },
+    "layer1.attn.o_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: O1: layer1 merge com_O2 == o_proj fc com_X (plain head-concat M)"
+    },
+    "layer1.attn.o_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: O2: layer1 o_proj fc com_Y == o_proj rescale com_X; edge OK: O3: layer1 o_proj rescale com_Xr == attn_skip com_attn_out (the S1-closure edge, now through o_proj)"
+    },
+    "layer1.post_attn_norm.rmsnorm": {
+      "ok": true,
+      "reason": "rmsnorm: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); wrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); yrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1.post_attn_norm.rmsnorm: com_g == registered; edge OK: layer1.post_attn_norm.rmsnorm: com_W == wrescale com_X; edge OK: layer1.post_attn_norm.rmsnorm: com_Wr == wrescale com_Xr; edge OK: layer1.post_attn_norm.rmsnorm: com_Y == yrescale com_X"
+    },
+    "layer1.mlp.gate_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1: gate_fc com_X == post_attn_norm yrescale com_Xr"
+    },
+    "layer1.mlp.gate_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1: gate_fc com_Y == gate_rescale com_X"
+    },
+    "layer1.mlp.up_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1: up_fc com_X == post_attn_norm yrescale com_Xr"
+    },
+    "layer1.mlp.up_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1: up_fc com_Y == up_rescale com_X"
+    },
+    "layer1.mlp.swiglu": {
+      "ok": true,
+      "reason": "glu: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); hrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1: glu com_G == gate_rescale com_Xr; edge OK: layer1: glu com_U == up_rescale com_Xr; edge OK: layer1: glu com_H == hrescale com_X"
+    },
+    "layer1.mlp.down_proj.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1: down_fc com_X == hrescale com_Xr"
+    },
+    "layer1.mlp.down_proj.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: layer1: down_fc com_Y == down_rescale com_X"
+    },
+    "final_norm.rmsnorm": {
+      "ok": true,
+      "reason": "rmsnorm: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); wrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); yrescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: F0: final_norm rmsnorm com_X == layer1.mlp_skip com_Z (terminal residual); edge OK: F1: final_norm com_g == registered final_norm.g-com; edge OK: F2: final_norm com_W == wrescale com_X; edge OK: F3: final_norm com_Wr == wrescale com_Xr; edge OK: F4: final_norm com_Y == yrescale com_X"
+    },
+    "lm_head.matmul": {
+      "ok": true,
+      "reason": "fc: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: F5: final_norm yrescale com_Xr == lm_head fc com_X"
+    },
+    "lm_head.rescaling": {
+      "ok": true,
+      "reason": "rescale: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: F6: lm_head fc com_Y == lm_head rescale com_X"
+    },
+    "statement.logit_binding": {
+      "ok": true,
+      "reason": "rowmax: driver verify ACCEPT-conditional (claims recomputed; gated on opening_batch); edge OK: L1: lm_head rescale com_Xr == logit_binding rowmax com_z (committed logits grid); t*[i] = argmax_{v<32000} logits[i,v] bound at all 1024 positions (zkob_rowmax vpad T-BIND vs the verifier's own registered, hash-pinned tstar.i32.bin; logits grid chained by edge L1; t* pinned into run_seed via public.json \u2014 STAGE3 \u00a73.3)"
+    },
+    "opening_batch": {
+      "ok": true,
+      "reason": "b0: opening_batch ACCEPT (372 claims); b1: opening_batch ACCEPT (319 claims); b2: opening_batch ACCEPT (234 claims); b3: opening_batch ACCEPT (322 claims); b4: opening_batch ACCEPT (222 claims); b5: opening_batch ACCEPT (32 claims); b6: opening_batch ACCEPT (14 claims)"
+    },
+    "opening_batch_w": {
+      "ok": true,
+      "reason": "weight sub-batch ACCEPT (20 hidden claims, all Committed; committed-round sumcheck + ZK IPAs); all 20 registered weight commitments opened HIDDEN in the weight batch under their registered comrefs (commitment_opening discharge explicit), none in a public sub-batch"
+    },
+    "layer0.attn_skip.add": {
+      "ok": true,
+      "reason": "edge OK: layer0.attn_skip.add: com_X(input_norm) + com_attn_out == com_X(post_attn_norm) [boundary closed by O3]"
+    },
+    "layer0.mlp_skip.add": {
+      "ok": true,
+      "reason": "edge OK: layer0.mlp_skip.add: com_X(post_attn_norm) + com_Xr(down_rescale) == next com_X"
+    },
+    "layer1.attn_skip.add": {
+      "ok": true,
+      "reason": "edge OK: layer1.attn_skip.add: com_X(input_norm) + com_attn_out == com_X(post_attn_norm) [boundary closed by O3]"
+    },
+    "layer1.mlp_skip.add": {
+      "ok": true,
+      "reason": "edge OK: layer1.mlp_skip.add: com_X(post_attn_norm) + com_Xr(down_rescale) == next com_X"
+    },
+    "layer0.attn.q_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer0.attn.q_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer0.attn.k_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer0.attn.k_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer0.attn.v_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer0.attn.v_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer0.attn.o_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer0.attn.o_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer0.mlp.gate_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer0.mlp.gate_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer0.mlp.up_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer0.mlp.up_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer0.mlp.down_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer0.mlp.down_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer1.attn.q_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer1.attn.q_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer1.attn.k_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer1.attn.k_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer1.attn.v_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer1.attn.v_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer1.attn.o_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer1.attn.o_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer1.mlp.gate_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer1.mlp.gate_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer1.mlp.up_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer1.mlp.up_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "layer1.mlp.down_proj.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by layer1.mlp.down_proj.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "lm_head.commitment_opening": {
+      "ok": true,
+      "reason": "discharged by lm_head.matmul's W claim vs the registered commitment via opening_batch_w (hidden claim) (ACCEPT-conditional, gated on opening_batch_w (hidden claim))"
+    },
+    "statement.prompt_binding": {
+      "ok": true,
+      "reason": "run_seed = sha256(public.json) re-derived by this verifier (binds input digest, registered hashes, constants \u2014 prompt_token_ids analog for the random-input pipeline); every FS transcript above verified under seeds derived from it"
+    }
+  },
+  "chain_edges": [
+    {
+      "edge": "A1q: layer0 q_proj fc com_X == input_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A2q: layer0 q_proj fc com_Y == q_proj rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A3q: layer0 rope.q com_T == q_proj rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A4q: layer0 rope.q com_Y64 == rope.q.rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A5q: layer0 slice com_Q == rope.q.rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A1k: layer0 k_proj fc com_X == input_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A2k: layer0 k_proj fc com_Y == k_proj rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A3k: layer0 rope.k com_T == k_proj rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A4k: layer0 rope.k com_Y64 == rope.k.rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A5k: layer0 slice com_K == rope.k.rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A1v: layer0 v_proj fc com_X == input_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A2v: layer0 v_proj fc com_Y == v_proj rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A3v: layer0 slice com_V == v_proj rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A6.00: layer0 slice com_Qh00 == scores fc.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.00: layer0 slice com_KhT00 IS scores fc.h00 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.00: layer0 scores fc.h00 com_Y == rescale13.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.00: layer0 rescale13.h00 com_Xr == rescale10.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.00: layer0 rescale10.h00 com_Xr == rowmax.h00 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.00: layer0 rowmax.h00 com_mx == softmax8.h00 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.00: layer0 rescale10.h00 com_Xr == softmax8.h00 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.00: layer0 softmax8.h00 com_P == values fc.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.00: layer0 slice com_Vh00 IS values fc.h00 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.00: layer0 values fc.h00 com_Y == rescale.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.00: layer0 values rescale.h00 com_Xr == merge com_O00",
+      "ok": true
+    },
+    {
+      "edge": "A6.01: layer0 slice com_Qh01 == scores fc.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.01: layer0 slice com_KhT01 IS scores fc.h01 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.01: layer0 scores fc.h01 com_Y == rescale13.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.01: layer0 rescale13.h01 com_Xr == rescale10.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.01: layer0 rescale10.h01 com_Xr == rowmax.h01 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.01: layer0 rowmax.h01 com_mx == softmax8.h01 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.01: layer0 rescale10.h01 com_Xr == softmax8.h01 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.01: layer0 softmax8.h01 com_P == values fc.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.01: layer0 slice com_Vh01 IS values fc.h01 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.01: layer0 values fc.h01 com_Y == rescale.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.01: layer0 values rescale.h01 com_Xr == merge com_O01",
+      "ok": true
+    },
+    {
+      "edge": "A6.02: layer0 slice com_Qh02 == scores fc.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.02: layer0 slice com_KhT02 IS scores fc.h02 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.02: layer0 scores fc.h02 com_Y == rescale13.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.02: layer0 rescale13.h02 com_Xr == rescale10.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.02: layer0 rescale10.h02 com_Xr == rowmax.h02 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.02: layer0 rowmax.h02 com_mx == softmax8.h02 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.02: layer0 rescale10.h02 com_Xr == softmax8.h02 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.02: layer0 softmax8.h02 com_P == values fc.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.02: layer0 slice com_Vh02 IS values fc.h02 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.02: layer0 values fc.h02 com_Y == rescale.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.02: layer0 values rescale.h02 com_Xr == merge com_O02",
+      "ok": true
+    },
+    {
+      "edge": "A6.03: layer0 slice com_Qh03 == scores fc.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.03: layer0 slice com_KhT03 IS scores fc.h03 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.03: layer0 scores fc.h03 com_Y == rescale13.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.03: layer0 rescale13.h03 com_Xr == rescale10.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.03: layer0 rescale10.h03 com_Xr == rowmax.h03 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.03: layer0 rowmax.h03 com_mx == softmax8.h03 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.03: layer0 rescale10.h03 com_Xr == softmax8.h03 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.03: layer0 softmax8.h03 com_P == values fc.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.03: layer0 slice com_Vh03 IS values fc.h03 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.03: layer0 values fc.h03 com_Y == rescale.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.03: layer0 values rescale.h03 com_Xr == merge com_O03",
+      "ok": true
+    },
+    {
+      "edge": "A6.04: layer0 slice com_Qh04 == scores fc.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.04: layer0 slice com_KhT04 IS scores fc.h04 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.04: layer0 scores fc.h04 com_Y == rescale13.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.04: layer0 rescale13.h04 com_Xr == rescale10.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.04: layer0 rescale10.h04 com_Xr == rowmax.h04 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.04: layer0 rowmax.h04 com_mx == softmax8.h04 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.04: layer0 rescale10.h04 com_Xr == softmax8.h04 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.04: layer0 softmax8.h04 com_P == values fc.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.04: layer0 slice com_Vh04 IS values fc.h04 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.04: layer0 values fc.h04 com_Y == rescale.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.04: layer0 values rescale.h04 com_Xr == merge com_O04",
+      "ok": true
+    },
+    {
+      "edge": "A6.05: layer0 slice com_Qh05 == scores fc.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.05: layer0 slice com_KhT05 IS scores fc.h05 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.05: layer0 scores fc.h05 com_Y == rescale13.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.05: layer0 rescale13.h05 com_Xr == rescale10.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.05: layer0 rescale10.h05 com_Xr == rowmax.h05 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.05: layer0 rowmax.h05 com_mx == softmax8.h05 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.05: layer0 rescale10.h05 com_Xr == softmax8.h05 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.05: layer0 softmax8.h05 com_P == values fc.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.05: layer0 slice com_Vh05 IS values fc.h05 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.05: layer0 values fc.h05 com_Y == rescale.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.05: layer0 values rescale.h05 com_Xr == merge com_O05",
+      "ok": true
+    },
+    {
+      "edge": "A6.06: layer0 slice com_Qh06 == scores fc.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.06: layer0 slice com_KhT06 IS scores fc.h06 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.06: layer0 scores fc.h06 com_Y == rescale13.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.06: layer0 rescale13.h06 com_Xr == rescale10.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.06: layer0 rescale10.h06 com_Xr == rowmax.h06 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.06: layer0 rowmax.h06 com_mx == softmax8.h06 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.06: layer0 rescale10.h06 com_Xr == softmax8.h06 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.06: layer0 softmax8.h06 com_P == values fc.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.06: layer0 slice com_Vh06 IS values fc.h06 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.06: layer0 values fc.h06 com_Y == rescale.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.06: layer0 values rescale.h06 com_Xr == merge com_O06",
+      "ok": true
+    },
+    {
+      "edge": "A6.07: layer0 slice com_Qh07 == scores fc.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.07: layer0 slice com_KhT07 IS scores fc.h07 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.07: layer0 scores fc.h07 com_Y == rescale13.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.07: layer0 rescale13.h07 com_Xr == rescale10.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.07: layer0 rescale10.h07 com_Xr == rowmax.h07 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.07: layer0 rowmax.h07 com_mx == softmax8.h07 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.07: layer0 rescale10.h07 com_Xr == softmax8.h07 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.07: layer0 softmax8.h07 com_P == values fc.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.07: layer0 slice com_Vh07 IS values fc.h07 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.07: layer0 values fc.h07 com_Y == rescale.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.07: layer0 values rescale.h07 com_Xr == merge com_O07",
+      "ok": true
+    },
+    {
+      "edge": "A6.08: layer0 slice com_Qh08 == scores fc.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.08: layer0 slice com_KhT08 IS scores fc.h08 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.08: layer0 scores fc.h08 com_Y == rescale13.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.08: layer0 rescale13.h08 com_Xr == rescale10.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.08: layer0 rescale10.h08 com_Xr == rowmax.h08 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.08: layer0 rowmax.h08 com_mx == softmax8.h08 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.08: layer0 rescale10.h08 com_Xr == softmax8.h08 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.08: layer0 softmax8.h08 com_P == values fc.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.08: layer0 slice com_Vh08 IS values fc.h08 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.08: layer0 values fc.h08 com_Y == rescale.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.08: layer0 values rescale.h08 com_Xr == merge com_O08",
+      "ok": true
+    },
+    {
+      "edge": "A6.09: layer0 slice com_Qh09 == scores fc.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.09: layer0 slice com_KhT09 IS scores fc.h09 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.09: layer0 scores fc.h09 com_Y == rescale13.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.09: layer0 rescale13.h09 com_Xr == rescale10.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.09: layer0 rescale10.h09 com_Xr == rowmax.h09 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.09: layer0 rowmax.h09 com_mx == softmax8.h09 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.09: layer0 rescale10.h09 com_Xr == softmax8.h09 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.09: layer0 softmax8.h09 com_P == values fc.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.09: layer0 slice com_Vh09 IS values fc.h09 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.09: layer0 values fc.h09 com_Y == rescale.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.09: layer0 values rescale.h09 com_Xr == merge com_O09",
+      "ok": true
+    },
+    {
+      "edge": "A6.10: layer0 slice com_Qh10 == scores fc.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.10: layer0 slice com_KhT10 IS scores fc.h10 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.10: layer0 scores fc.h10 com_Y == rescale13.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.10: layer0 rescale13.h10 com_Xr == rescale10.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.10: layer0 rescale10.h10 com_Xr == rowmax.h10 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.10: layer0 rowmax.h10 com_mx == softmax8.h10 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.10: layer0 rescale10.h10 com_Xr == softmax8.h10 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.10: layer0 softmax8.h10 com_P == values fc.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.10: layer0 slice com_Vh10 IS values fc.h10 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.10: layer0 values fc.h10 com_Y == rescale.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.10: layer0 values rescale.h10 com_Xr == merge com_O10",
+      "ok": true
+    },
+    {
+      "edge": "A6.11: layer0 slice com_Qh11 == scores fc.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.11: layer0 slice com_KhT11 IS scores fc.h11 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.11: layer0 scores fc.h11 com_Y == rescale13.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.11: layer0 rescale13.h11 com_Xr == rescale10.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.11: layer0 rescale10.h11 com_Xr == rowmax.h11 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.11: layer0 rowmax.h11 com_mx == softmax8.h11 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.11: layer0 rescale10.h11 com_Xr == softmax8.h11 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.11: layer0 softmax8.h11 com_P == values fc.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.11: layer0 slice com_Vh11 IS values fc.h11 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.11: layer0 values fc.h11 com_Y == rescale.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.11: layer0 values rescale.h11 com_Xr == merge com_O11",
+      "ok": true
+    },
+    {
+      "edge": "O1: layer0 merge com_O2 == o_proj fc com_X (plain head-concat M)",
+      "ok": true
+    },
+    {
+      "edge": "O2: layer0 o_proj fc com_Y == o_proj rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "O3: layer0 o_proj rescale com_Xr == attn_skip com_attn_out (the S1-closure edge, now through o_proj)",
+      "ok": true
+    },
+    {
+      "edge": "layer0.input_norm.rmsnorm: com_g == registered",
+      "ok": true
+    },
+    {
+      "edge": "layer0.input_norm.rmsnorm: com_W == wrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer0.input_norm.rmsnorm: com_Wr == wrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer0.input_norm.rmsnorm: com_Y == yrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer0.post_attn_norm.rmsnorm: com_g == registered",
+      "ok": true
+    },
+    {
+      "edge": "layer0.post_attn_norm.rmsnorm: com_W == wrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer0.post_attn_norm.rmsnorm: com_Wr == wrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer0.post_attn_norm.rmsnorm: com_Y == yrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer0.input_norm.rmsnorm: com_X == registered com_input",
+      "ok": true
+    },
+    {
+      "edge": "layer0.attn_skip.add: com_X(input_norm) + com_attn_out == com_X(post_attn_norm) [boundary closed by O3]",
+      "ok": true
+    },
+    {
+      "edge": "layer0: gate_fc com_X == post_attn_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer0: up_fc com_X == post_attn_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer0: gate_fc com_Y == gate_rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer0: up_fc com_Y == up_rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer0: glu com_G == gate_rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer0: glu com_U == up_rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer0: glu com_H == hrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer0: down_fc com_X == hrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer0: down_fc com_Y == down_rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer0.mlp_skip.add: com_X(post_attn_norm) + com_Xr(down_rescale) == next com_X",
+      "ok": true
+    },
+    {
+      "edge": "A1q: layer1 q_proj fc com_X == input_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A2q: layer1 q_proj fc com_Y == q_proj rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A3q: layer1 rope.q com_T == q_proj rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A4q: layer1 rope.q com_Y64 == rope.q.rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A5q: layer1 slice com_Q == rope.q.rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A1k: layer1 k_proj fc com_X == input_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A2k: layer1 k_proj fc com_Y == k_proj rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A3k: layer1 rope.k com_T == k_proj rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A4k: layer1 rope.k com_Y64 == rope.k.rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A5k: layer1 slice com_K == rope.k.rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A1v: layer1 v_proj fc com_X == input_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A2v: layer1 v_proj fc com_Y == v_proj rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "A3v: layer1 slice com_V == v_proj rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "A6.00: layer1 slice com_Qh00 == scores fc.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.00: layer1 slice com_KhT00 IS scores fc.h00 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.00: layer1 scores fc.h00 com_Y == rescale13.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.00: layer1 rescale13.h00 com_Xr == rescale10.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.00: layer1 rescale10.h00 com_Xr == rowmax.h00 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.00: layer1 rowmax.h00 com_mx == softmax8.h00 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.00: layer1 rescale10.h00 com_Xr == softmax8.h00 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.00: layer1 softmax8.h00 com_P == values fc.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.00: layer1 slice com_Vh00 IS values fc.h00 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.00: layer1 values fc.h00 com_Y == rescale.h00 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.00: layer1 values rescale.h00 com_Xr == merge com_O00",
+      "ok": true
+    },
+    {
+      "edge": "A6.01: layer1 slice com_Qh01 == scores fc.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.01: layer1 slice com_KhT01 IS scores fc.h01 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.01: layer1 scores fc.h01 com_Y == rescale13.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.01: layer1 rescale13.h01 com_Xr == rescale10.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.01: layer1 rescale10.h01 com_Xr == rowmax.h01 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.01: layer1 rowmax.h01 com_mx == softmax8.h01 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.01: layer1 rescale10.h01 com_Xr == softmax8.h01 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.01: layer1 softmax8.h01 com_P == values fc.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.01: layer1 slice com_Vh01 IS values fc.h01 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.01: layer1 values fc.h01 com_Y == rescale.h01 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.01: layer1 values rescale.h01 com_Xr == merge com_O01",
+      "ok": true
+    },
+    {
+      "edge": "A6.02: layer1 slice com_Qh02 == scores fc.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.02: layer1 slice com_KhT02 IS scores fc.h02 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.02: layer1 scores fc.h02 com_Y == rescale13.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.02: layer1 rescale13.h02 com_Xr == rescale10.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.02: layer1 rescale10.h02 com_Xr == rowmax.h02 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.02: layer1 rowmax.h02 com_mx == softmax8.h02 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.02: layer1 rescale10.h02 com_Xr == softmax8.h02 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.02: layer1 softmax8.h02 com_P == values fc.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.02: layer1 slice com_Vh02 IS values fc.h02 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.02: layer1 values fc.h02 com_Y == rescale.h02 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.02: layer1 values rescale.h02 com_Xr == merge com_O02",
+      "ok": true
+    },
+    {
+      "edge": "A6.03: layer1 slice com_Qh03 == scores fc.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.03: layer1 slice com_KhT03 IS scores fc.h03 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.03: layer1 scores fc.h03 com_Y == rescale13.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.03: layer1 rescale13.h03 com_Xr == rescale10.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.03: layer1 rescale10.h03 com_Xr == rowmax.h03 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.03: layer1 rowmax.h03 com_mx == softmax8.h03 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.03: layer1 rescale10.h03 com_Xr == softmax8.h03 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.03: layer1 softmax8.h03 com_P == values fc.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.03: layer1 slice com_Vh03 IS values fc.h03 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.03: layer1 values fc.h03 com_Y == rescale.h03 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.03: layer1 values rescale.h03 com_Xr == merge com_O03",
+      "ok": true
+    },
+    {
+      "edge": "A6.04: layer1 slice com_Qh04 == scores fc.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.04: layer1 slice com_KhT04 IS scores fc.h04 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.04: layer1 scores fc.h04 com_Y == rescale13.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.04: layer1 rescale13.h04 com_Xr == rescale10.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.04: layer1 rescale10.h04 com_Xr == rowmax.h04 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.04: layer1 rowmax.h04 com_mx == softmax8.h04 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.04: layer1 rescale10.h04 com_Xr == softmax8.h04 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.04: layer1 softmax8.h04 com_P == values fc.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.04: layer1 slice com_Vh04 IS values fc.h04 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.04: layer1 values fc.h04 com_Y == rescale.h04 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.04: layer1 values rescale.h04 com_Xr == merge com_O04",
+      "ok": true
+    },
+    {
+      "edge": "A6.05: layer1 slice com_Qh05 == scores fc.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.05: layer1 slice com_KhT05 IS scores fc.h05 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.05: layer1 scores fc.h05 com_Y == rescale13.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.05: layer1 rescale13.h05 com_Xr == rescale10.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.05: layer1 rescale10.h05 com_Xr == rowmax.h05 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.05: layer1 rowmax.h05 com_mx == softmax8.h05 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.05: layer1 rescale10.h05 com_Xr == softmax8.h05 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.05: layer1 softmax8.h05 com_P == values fc.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.05: layer1 slice com_Vh05 IS values fc.h05 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.05: layer1 values fc.h05 com_Y == rescale.h05 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.05: layer1 values rescale.h05 com_Xr == merge com_O05",
+      "ok": true
+    },
+    {
+      "edge": "A6.06: layer1 slice com_Qh06 == scores fc.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.06: layer1 slice com_KhT06 IS scores fc.h06 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.06: layer1 scores fc.h06 com_Y == rescale13.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.06: layer1 rescale13.h06 com_Xr == rescale10.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.06: layer1 rescale10.h06 com_Xr == rowmax.h06 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.06: layer1 rowmax.h06 com_mx == softmax8.h06 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.06: layer1 rescale10.h06 com_Xr == softmax8.h06 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.06: layer1 softmax8.h06 com_P == values fc.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.06: layer1 slice com_Vh06 IS values fc.h06 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.06: layer1 values fc.h06 com_Y == rescale.h06 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.06: layer1 values rescale.h06 com_Xr == merge com_O06",
+      "ok": true
+    },
+    {
+      "edge": "A6.07: layer1 slice com_Qh07 == scores fc.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.07: layer1 slice com_KhT07 IS scores fc.h07 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.07: layer1 scores fc.h07 com_Y == rescale13.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.07: layer1 rescale13.h07 com_Xr == rescale10.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.07: layer1 rescale10.h07 com_Xr == rowmax.h07 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.07: layer1 rowmax.h07 com_mx == softmax8.h07 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.07: layer1 rescale10.h07 com_Xr == softmax8.h07 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.07: layer1 softmax8.h07 com_P == values fc.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.07: layer1 slice com_Vh07 IS values fc.h07 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.07: layer1 values fc.h07 com_Y == rescale.h07 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.07: layer1 values rescale.h07 com_Xr == merge com_O07",
+      "ok": true
+    },
+    {
+      "edge": "A6.08: layer1 slice com_Qh08 == scores fc.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.08: layer1 slice com_KhT08 IS scores fc.h08 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.08: layer1 scores fc.h08 com_Y == rescale13.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.08: layer1 rescale13.h08 com_Xr == rescale10.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.08: layer1 rescale10.h08 com_Xr == rowmax.h08 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.08: layer1 rowmax.h08 com_mx == softmax8.h08 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.08: layer1 rescale10.h08 com_Xr == softmax8.h08 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.08: layer1 softmax8.h08 com_P == values fc.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.08: layer1 slice com_Vh08 IS values fc.h08 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.08: layer1 values fc.h08 com_Y == rescale.h08 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.08: layer1 values rescale.h08 com_Xr == merge com_O08",
+      "ok": true
+    },
+    {
+      "edge": "A6.09: layer1 slice com_Qh09 == scores fc.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.09: layer1 slice com_KhT09 IS scores fc.h09 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.09: layer1 scores fc.h09 com_Y == rescale13.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.09: layer1 rescale13.h09 com_Xr == rescale10.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.09: layer1 rescale10.h09 com_Xr == rowmax.h09 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.09: layer1 rowmax.h09 com_mx == softmax8.h09 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.09: layer1 rescale10.h09 com_Xr == softmax8.h09 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.09: layer1 softmax8.h09 com_P == values fc.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.09: layer1 slice com_Vh09 IS values fc.h09 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.09: layer1 values fc.h09 com_Y == rescale.h09 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.09: layer1 values rescale.h09 com_Xr == merge com_O09",
+      "ok": true
+    },
+    {
+      "edge": "A6.10: layer1 slice com_Qh10 == scores fc.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.10: layer1 slice com_KhT10 IS scores fc.h10 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.10: layer1 scores fc.h10 com_Y == rescale13.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.10: layer1 rescale13.h10 com_Xr == rescale10.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.10: layer1 rescale10.h10 com_Xr == rowmax.h10 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.10: layer1 rowmax.h10 com_mx == softmax8.h10 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.10: layer1 rescale10.h10 com_Xr == softmax8.h10 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.10: layer1 softmax8.h10 com_P == values fc.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.10: layer1 slice com_Vh10 IS values fc.h10 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.10: layer1 values fc.h10 com_Y == rescale.h10 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.10: layer1 values rescale.h10 com_Xr == merge com_O10",
+      "ok": true
+    },
+    {
+      "edge": "A6.11: layer1 slice com_Qh11 == scores fc.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A7.11: layer1 slice com_KhT11 IS scores fc.h11 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A8.11: layer1 scores fc.h11 com_Y == rescale13.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A9.11: layer1 rescale13.h11 com_Xr == rescale10.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "RM1.11: layer1 rescale10.h11 com_Xr == rowmax.h11 com_z",
+      "ok": true
+    },
+    {
+      "edge": "RM2.11: layer1 rowmax.h11 com_mx == softmax8.h11 com_mx",
+      "ok": true
+    },
+    {
+      "edge": "SX8a.11: layer1 rescale10.h11 com_Xr == softmax8.h11 com_z",
+      "ok": true
+    },
+    {
+      "edge": "SX8b.11: layer1 softmax8.h11 com_P == values fc.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A12.11: layer1 slice com_Vh11 IS values fc.h11 com_W argv",
+      "ok": true
+    },
+    {
+      "edge": "A13.11: layer1 values fc.h11 com_Y == rescale.h11 com_X",
+      "ok": true
+    },
+    {
+      "edge": "A14.11: layer1 values rescale.h11 com_Xr == merge com_O11",
+      "ok": true
+    },
+    {
+      "edge": "O1: layer1 merge com_O2 == o_proj fc com_X (plain head-concat M)",
+      "ok": true
+    },
+    {
+      "edge": "O2: layer1 o_proj fc com_Y == o_proj rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "O3: layer1 o_proj rescale com_Xr == attn_skip com_attn_out (the S1-closure edge, now through o_proj)",
+      "ok": true
+    },
+    {
+      "edge": "layer1.input_norm.rmsnorm: com_g == registered",
+      "ok": true
+    },
+    {
+      "edge": "layer1.input_norm.rmsnorm: com_W == wrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer1.input_norm.rmsnorm: com_Wr == wrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer1.input_norm.rmsnorm: com_Y == yrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer1.post_attn_norm.rmsnorm: com_g == registered",
+      "ok": true
+    },
+    {
+      "edge": "layer1.post_attn_norm.rmsnorm: com_W == wrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer1.post_attn_norm.rmsnorm: com_Wr == wrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer1.post_attn_norm.rmsnorm: com_Y == yrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer1.attn_skip.add: com_X(input_norm) + com_attn_out == com_X(post_attn_norm) [boundary closed by O3]",
+      "ok": true
+    },
+    {
+      "edge": "layer1: gate_fc com_X == post_attn_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer1: up_fc com_X == post_attn_norm yrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer1: gate_fc com_Y == gate_rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer1: up_fc com_Y == up_rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer1: glu com_G == gate_rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer1: glu com_U == up_rescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer1: glu com_H == hrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer1: down_fc com_X == hrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "layer1: down_fc com_Y == down_rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "layer1.mlp_skip.add: com_X(post_attn_norm) + com_Xr(down_rescale) == next com_X",
+      "ok": true
+    },
+    {
+      "edge": "F0: final_norm rmsnorm com_X == layer1.mlp_skip com_Z (terminal residual)",
+      "ok": true
+    },
+    {
+      "edge": "F1: final_norm com_g == registered final_norm.g-com",
+      "ok": true
+    },
+    {
+      "edge": "F2: final_norm com_W == wrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "F3: final_norm com_Wr == wrescale com_Xr",
+      "ok": true
+    },
+    {
+      "edge": "F4: final_norm com_Y == yrescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "F5: final_norm yrescale com_Xr == lm_head fc com_X",
+      "ok": true
+    },
+    {
+      "edge": "F6: lm_head fc com_Y == lm_head rescale com_X",
+      "ok": true
+    },
+    {
+      "edge": "L1: lm_head rescale com_Xr == logit_binding rowmax com_z (committed logits grid)",
+      "ok": true
+    }
+  ],
+  "opening_batch": {
+    "ok": true,
+    "n_batches": 7,
+    "claims": 1515,
+    "batches": [
+      {
+        "batch": 0,
+        "ok": true,
+        "locus": "accept",
+        "claims": 372
+      },
+      {
+        "batch": 1,
+        "ok": true,
+        "locus": "accept",
+        "claims": 319
+      },
+      {
+        "batch": 2,
+        "ok": true,
+        "locus": "accept",
+        "claims": 234
+      },
+      {
+        "batch": 3,
+        "ok": true,
+        "locus": "accept",
+        "claims": 322
+      },
+      {
+        "batch": 4,
+        "ok": true,
+        "locus": "accept",
+        "claims": 222
+      },
+      {
+        "batch": 5,
+        "ok": true,
+        "locus": "accept",
+        "claims": 32
+      },
+      {
+        "batch": 6,
+        "ok": true,
+        "locus": "accept",
+        "claims": 14
+      }
+    ]
+  },
+  "opening_batch_w": {
+    "ok": true,
+    "locus": "accept",
+    "claims": 20
+  },
+  "registration": {
+    "ok": true,
+    "n_hashes": 33
+  },
+  "served_tokens_sha256": "5fe3251574f2306833a65afc26089a92928e6f84b5c1de02b8278ddb52ce2d97",
+  "timing": {
+    "layer0.input_norm.rmsnorm[rmsnorm]": 0.283,
+    "layer0.input_norm.rmsnorm[wrescale]": 0.188,
+    "layer0.input_norm.rmsnorm[yrescale]": 0.044,
+    "layer0.attn.q_proj.matmul[fc]": 0.375,
+    "layer0.attn.q_proj.rescaling[rescale]": 0.047,
+    "layer0.attn.k_proj.matmul[fc]": 0.166,
+    "layer0.attn.k_proj.rescaling[rescale]": 0.045,
+    "layer0.attn.v_proj.matmul[fc]": 0.165,
+    "layer0.attn.v_proj.rescaling[rescale]": 0.045,
+    "layer0.attn.scores_matmul[rope.q]": 0.19,
+    "layer0.attn.scores_matmul[rope.q.rescale]": 0.045,
+    "layer0.attn.scores_matmul[rope.k]": 0.04,
+    "layer0.attn.scores_matmul[rope.k.rescale]": 0.045,
+    "layer0.attn.scores_matmul[slice]": 0.251,
+    "layer0.attn.scores_matmul[fc.h00]": 0.011,
+    "layer0.attn.softmax[rescale13.h00]": 0.044,
+    "layer0.attn.softmax[rescale10.h00]": 0.043,
+    "layer0.attn.softmax[rowmax.h00]": 0.253,
+    "layer0.attn.softmax[softmax8.h00]": 0.372,
+    "layer0.attn.values_matmul[fc.h00]": 0.014,
+    "layer0.attn.values_matmul[rescale.h00]": 0.047,
+    "layer0.attn.scores_matmul[fc.h01]": 0.01,
+    "layer0.attn.softmax[rescale13.h01]": 0.044,
+    "layer0.attn.softmax[rescale10.h01]": 0.044,
+    "layer0.attn.softmax[rowmax.h01]": 0.106,
+    "layer0.attn.softmax[softmax8.h01]": 0.224,
+    "layer0.attn.values_matmul[fc.h01]": 0.019,
+    "layer0.attn.values_matmul[rescale.h01]": 0.048,
+    "layer0.attn.scores_matmul[fc.h02]": 0.011,
+    "layer0.attn.softmax[rescale13.h02]": 0.045,
+    "layer0.attn.softmax[rescale10.h02]": 0.044,
+    "layer0.attn.softmax[rowmax.h02]": 0.107,
+    "layer0.attn.softmax[softmax8.h02]": 0.225,
+    "layer0.attn.values_matmul[fc.h02]": 0.021,
+    "layer0.attn.values_matmul[rescale.h02]": 0.048,
+    "layer0.attn.scores_matmul[fc.h03]": 0.011,
+    "layer0.attn.softmax[rescale13.h03]": 0.045,
+    "layer0.attn.softmax[rescale10.h03]": 0.045,
+    "layer0.attn.softmax[rowmax.h03]": 0.104,
+    "layer0.attn.softmax[softmax8.h03]": 0.23,
+    "layer0.attn.values_matmul[fc.h03]": 0.036,
+    "layer0.attn.values_matmul[rescale.h03]": 0.049,
+    "layer0.attn.scores_matmul[fc.h04]": 0.012,
+    "layer0.attn.softmax[rescale13.h04]": 0.045,
+    "layer0.attn.softmax[rescale10.h04]": 0.045,
+    "layer0.attn.softmax[rowmax.h04]": 0.106,
+    "layer0.attn.softmax[softmax8.h04]": 0.234,
+    "layer0.attn.values_matmul[fc.h04]": 0.027,
+    "layer0.attn.values_matmul[rescale.h04]": 0.05,
+    "layer0.attn.scores_matmul[fc.h05]": 0.012,
+    "layer0.attn.softmax[rescale13.h05]": 0.046,
+    "layer0.attn.softmax[rescale10.h05]": 0.046,
+    "layer0.attn.softmax[rowmax.h05]": 0.108,
+    "layer0.attn.softmax[softmax8.h05]": 0.206,
+    "layer0.attn.values_matmul[fc.h05]": 0.018,
+    "layer0.attn.values_matmul[rescale.h05]": 0.046,
+    "layer0.attn.scores_matmul[fc.h06]": 0.009,
+    "layer0.attn.softmax[rescale13.h06]": 0.042,
+    "layer0.attn.softmax[rescale10.h06]": 0.042,
+    "layer0.attn.softmax[rowmax.h06]": 0.093,
+    "layer0.attn.softmax[softmax8.h06]": 0.205,
+    "layer0.attn.values_matmul[fc.h06]": 0.018,
+    "layer0.attn.values_matmul[rescale.h06]": 0.046,
+    "layer0.attn.scores_matmul[fc.h07]": 0.009,
+    "layer0.attn.softmax[rescale13.h07]": 0.043,
+    "layer0.attn.softmax[rescale10.h07]": 0.043,
+    "layer0.attn.softmax[rowmax.h07]": 0.095,
+    "layer0.attn.softmax[softmax8.h07]": 0.212,
+    "layer0.attn.values_matmul[fc.h07]": 0.019,
+    "layer0.attn.values_matmul[rescale.h07]": 0.047,
+    "layer0.attn.scores_matmul[fc.h08]": 0.01,
+    "layer0.attn.softmax[rescale13.h08]": 0.044,
+    "layer0.attn.softmax[rescale10.h08]": 0.044,
+    "layer0.attn.softmax[rowmax.h08]": 0.098,
+    "layer0.attn.softmax[softmax8.h08]": 0.212,
+    "layer0.attn.values_matmul[fc.h08]": 0.021,
+    "layer0.attn.values_matmul[rescale.h08]": 0.047,
+    "layer0.attn.scores_matmul[fc.h09]": 0.01,
+    "layer0.attn.softmax[rescale13.h09]": 0.044,
+    "layer0.attn.softmax[rescale10.h09]": 0.044,
+    "layer0.attn.softmax[rowmax.h09]": 0.099,
+    "layer0.attn.softmax[softmax8.h09]": 0.218,
+    "layer0.attn.values_matmul[fc.h09]": 0.019,
+    "layer0.attn.values_matmul[rescale.h09]": 0.048,
+    "layer0.attn.scores_matmul[fc.h10]": 0.011,
+    "layer0.attn.softmax[rescale13.h10]": 0.044,
+    "layer0.attn.softmax[rescale10.h10]": 0.044,
+    "layer0.attn.softmax[rowmax.h10]": 0.101,
+    "layer0.attn.softmax[softmax8.h10]": 0.222,
+    "layer0.attn.values_matmul[fc.h10]": 0.023,
+    "layer0.attn.values_matmul[rescale.h10]": 0.049,
+    "layer0.attn.scores_matmul[fc.h11]": 0.011,
+    "layer0.attn.softmax[rescale13.h11]": 0.045,
+    "layer0.attn.softmax[rescale10.h11]": 0.045,
+    "layer0.attn.softmax[rowmax.h11]": 0.103,
+    "layer0.attn.softmax[softmax8.h11]": 0.224,
+    "layer0.attn.values_matmul[fc.h11]": 0.021,
+    "layer0.attn.values_matmul[rescale.h11]": 0.049,
+    "layer0.attn.values_matmul[merge]": 0.301,
+    "layer0.attn.o_proj.matmul[fc]": 0.174,
+    "layer0.attn.o_proj.rescaling[rescale]": 0.049,
+    "layer0.post_attn_norm.rmsnorm[rmsnorm]": 0.088,
+    "layer0.post_attn_norm.rmsnorm[wrescale]": 0.044,
+    "layer0.post_attn_norm.rmsnorm[yrescale]": 0.043,
+    "layer0.mlp.gate_proj.matmul[fc]": 0.163,
+    "layer0.mlp.gate_proj.rescaling[rescale]": 0.055,
+    "layer0.mlp.up_proj.matmul[fc]": 0.165,
+    "layer0.mlp.up_proj.rescaling[rescale]": 0.045,
+    "layer0.mlp.swiglu[glu]": 0.339,
+    "layer0.mlp.swiglu[hrescale]": 0.047,
+    "layer0.mlp.down_proj.matmul[fc]": 0.201,
+    "layer0.mlp.down_proj.rescaling[rescale]": 0.044,
+    "layer1.input_norm.rmsnorm[rmsnorm]": 0.095,
+    "layer1.input_norm.rmsnorm[wrescale]": 0.044,
+    "layer1.input_norm.rmsnorm[yrescale]": 0.044,
+    "layer1.attn.q_proj.matmul[fc]": 0.164,
+    "layer1.attn.q_proj.rescaling[rescale]": 0.044,
+    "layer1.attn.k_proj.matmul[fc]": 0.164,
+    "layer1.attn.k_proj.rescaling[rescale]": 0.045,
+    "layer1.attn.v_proj.matmul[fc]": 0.164,
+    "layer1.attn.v_proj.rescaling[rescale]": 0.045,
+    "layer1.attn.scores_matmul[rope.q]": 0.042,
+    "layer1.attn.scores_matmul[rope.q.rescale]": 0.053,
+    "layer1.attn.scores_matmul[rope.k]": 0.037,
+    "layer1.attn.scores_matmul[rope.k.rescale]": 0.051,
+    "layer1.attn.scores_matmul[slice]": 0.131,
+    "layer1.attn.scores_matmul[fc.h00]": 0.011,
+    "layer1.attn.softmax[rescale13.h00]": 0.044,
+    "layer1.attn.softmax[rescale10.h00]": 0.043,
+    "layer1.attn.softmax[rowmax.h00]": 0.1,
+    "layer1.attn.softmax[softmax8.h00]": 0.217,
+    "layer1.attn.values_matmul[fc.h00]": 0.014,
+    "layer1.attn.values_matmul[rescale.h00]": 0.047,
+    "layer1.attn.scores_matmul[fc.h01]": 0.011,
+    "layer1.attn.softmax[rescale13.h01]": 0.044,
+    "layer1.attn.softmax[rescale10.h01]": 0.044,
+    "layer1.attn.softmax[rowmax.h01]": 0.1,
+    "layer1.attn.softmax[softmax8.h01]": 0.204,
+    "layer1.attn.values_matmul[fc.h01]": 0.012,
+    "layer1.attn.values_matmul[rescale.h01]": 0.045,
+    "layer1.attn.scores_matmul[fc.h02]": 0.009,
+    "layer1.attn.softmax[rescale13.h02]": 0.042,
+    "layer1.attn.softmax[rescale10.h02]": 0.042,
+    "layer1.attn.softmax[rowmax.h02]": 0.092,
+    "layer1.attn.softmax[softmax8.h02]": 0.207,
+    "layer1.attn.values_matmul[fc.h02]": 0.012,
+    "layer1.attn.values_matmul[rescale.h02]": 0.045,
+    "layer1.attn.scores_matmul[fc.h03]": 0.009,
+    "layer1.attn.softmax[rescale13.h03]": 0.042,
+    "layer1.attn.softmax[rescale10.h03]": 0.043,
+    "layer1.attn.softmax[rowmax.h03]": 0.095,
+    "layer1.attn.softmax[softmax8.h03]": 0.209,
+    "layer1.attn.values_matmul[fc.h03]": 0.017,
+    "layer1.attn.values_matmul[rescale.h03]": 0.046,
+    "layer1.attn.scores_matmul[fc.h04]": 0.01,
+    "layer1.attn.softmax[rescale13.h04]": 0.043,
+    "layer1.attn.softmax[rescale10.h04]": 0.043,
+    "layer1.attn.softmax[rowmax.h04]": 0.097,
+    "layer1.attn.softmax[softmax8.h04]": 0.211,
+    "layer1.attn.values_matmul[fc.h04]": 0.013,
+    "layer1.attn.values_matmul[rescale.h04]": 0.046,
+    "layer1.attn.scores_matmul[fc.h05]": 0.01,
+    "layer1.attn.softmax[rescale13.h05]": 0.044,
+    "layer1.attn.softmax[rescale10.h05]": 0.044,
+    "layer1.attn.softmax[rowmax.h05]": 0.098,
+    "layer1.attn.softmax[softmax8.h05]": 0.217,
+    "layer1.attn.values_matmul[fc.h05]": 0.014,
+    "layer1.attn.values_matmul[rescale.h05]": 0.047,
+    "layer1.attn.scores_matmul[fc.h06]": 0.011,
+    "layer1.attn.softmax[rescale13.h06]": 0.045,
+    "layer1.attn.softmax[rescale10.h06]": 0.045,
+    "layer1.attn.softmax[rowmax.h06]": 0.1,
+    "layer1.attn.softmax[softmax8.h06]": 0.22,
+    "layer1.attn.values_matmul[fc.h06]": 0.014,
+    "layer1.attn.values_matmul[rescale.h06]": 0.048,
+    "layer1.attn.scores_matmul[fc.h07]": 0.011,
+    "layer1.attn.softmax[rescale13.h07]": 0.045,
+    "layer1.attn.softmax[rescale10.h07]": 0.045,
+    "layer1.attn.softmax[rowmax.h07]": 0.103,
+    "layer1.attn.softmax[softmax8.h07]": 0.225,
+    "layer1.attn.values_matmul[fc.h07]": 0.015,
+    "layer1.attn.values_matmul[rescale.h07]": 0.048,
+    "layer1.attn.scores_matmul[fc.h08]": 0.012,
+    "layer1.attn.softmax[rescale13.h08]": 0.046,
+    "layer1.attn.softmax[rescale10.h08]": 0.045,
+    "layer1.attn.softmax[rowmax.h08]": 0.105,
+    "layer1.attn.softmax[softmax8.h08]": 0.203,
+    "layer1.attn.values_matmul[fc.h08]": 0.012,
+    "layer1.attn.values_matmul[rescale.h08]": 0.045,
+    "layer1.attn.scores_matmul[fc.h09]": 0.009,
+    "layer1.attn.softmax[rescale13.h09]": 0.042,
+    "layer1.attn.softmax[rescale10.h09]": 0.042,
+    "layer1.attn.softmax[rowmax.h09]": 0.092,
+    "layer1.attn.softmax[softmax8.h09]": 0.205,
+    "layer1.attn.values_matmul[fc.h09]": 0.012,
+    "layer1.attn.values_matmul[rescale.h09]": 0.047,
+    "layer1.attn.scores_matmul[fc.h10]": 0.009,
+    "layer1.attn.softmax[rescale13.h10]": 0.042,
+    "layer1.attn.softmax[rescale10.h10]": 0.042,
+    "layer1.attn.softmax[rowmax.h10]": 0.095,
+    "layer1.attn.softmax[softmax8.h10]": 0.21,
+    "layer1.attn.values_matmul[fc.h10]": 0.013,
+    "layer1.attn.values_matmul[rescale.h10]": 0.046,
+    "layer1.attn.scores_matmul[fc.h11]": 0.01,
+    "layer1.attn.softmax[rescale13.h11]": 0.043,
+    "layer1.attn.softmax[rescale10.h11]": 0.043,
+    "layer1.attn.softmax[rowmax.h11]": 0.097,
+    "layer1.attn.softmax[softmax8.h11]": 0.215,
+    "layer1.attn.values_matmul[fc.h11]": 0.013,
+    "layer1.attn.values_matmul[rescale.h11]": 0.047,
+    "layer1.attn.values_matmul[merge]": 0.138,
+    "layer1.attn.o_proj.matmul[fc]": 0.166,
+    "layer1.attn.o_proj.rescaling[rescale]": 0.046,
+    "layer1.post_attn_norm.rmsnorm[rmsnorm]": 0.097,
+    "layer1.post_attn_norm.rmsnorm[wrescale]": 0.045,
+    "layer1.post_attn_norm.rmsnorm[yrescale]": 0.045,
+    "layer1.mlp.gate_proj.matmul[fc]": 0.167,
+    "layer1.mlp.gate_proj.rescaling[rescale]": 0.056,
+    "layer1.mlp.up_proj.matmul[fc]": 0.166,
+    "layer1.mlp.up_proj.rescaling[rescale]": 0.047,
+    "layer1.mlp.swiglu[glu]": 0.178,
+    "layer1.mlp.swiglu[hrescale]": 0.049,
+    "layer1.mlp.down_proj.matmul[fc]": 0.2,
+    "layer1.mlp.down_proj.rescaling[rescale]": 0.043,
+    "final_norm.rmsnorm[rmsnorm]": 0.089,
+    "final_norm.rmsnorm[wrescale]": 0.044,
+    "final_norm.rmsnorm[yrescale]": 0.044,
+    "lm_head.matmul[fc]": 0.17,
+    "lm_head.rescaling[rescale]": 0.049,
+    "statement.logit_binding[rowmax]": 1.313,
+    "opening_batch[b0]": 1.603,
+    "opening_batch[b1]": 1.378,
+    "opening_batch[b2]": 1.079,
+    "opening_batch[b3]": 1.364,
+    "opening_batch[b4]": 1.162,
+    "opening_batch[b5]": 0.539,
+    "opening_batch[b6]": 0.335,
+    "opening_batch_w": 1.146,
+    "edge:layer0.attn_skip.add": 0.224,
+    "edge:layer0.mlp_skip.add": 0.06,
+    "edge:layer1.attn_skip.add": 0.06,
+    "edge:layer1.mlp_skip.add": 0.059,
+    "pool_spawn_total_s": 0.04,
+    "total_verify_wall_s": 29.74
+  }
+}
