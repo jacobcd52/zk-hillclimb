@@ -370,5 +370,38 @@
   "rss": 26.029,
   "fwd_native_ms": 0.03126,
   "int_layer_s": 16.201
+ },
+ {
+  "tag": "s2048",
+  "grp": "seq",
+  "seq": 2048,
+  "d": 64,
+  "params": 40960,
+  "batch": 1,
+  "fp8_s": null,
+  "int_layer_s": 48.383,
+  "fwd_native_ms": 0.736859375
+ },
+ {
+  "tag": "s4096",
+  "grp": "seq",
+  "seq": 4096,
+  "d": 64,
+  "params": 40960,
+  "batch": 1,
+  "fp8_s": null,
+  "int_layer_s": 162.951,
+  "fwd_native_ms": 2.87961875
+ },
+ {
+  "tag": "p1024",
+  "grp": "model",
+  "seq": 64,
+  "d": 1024,
+  "params": 16777216,
+  "batch": 1,
+  "fp8_s": null,
+  "int_layer_s": 53.849,
+  "fwd_native_ms": 0.085425
  }
 ]

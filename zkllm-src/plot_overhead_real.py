@@ -11,8 +11,8 @@ def nat(r): return r['fwd_native_ms']*r['batch']   # per-config native forward m
 def ovf(r): return r['fp8_s']*1000.0/nat(r)
 def ovi(r): return r['int_layer_s']*1000.0/nat(r)
 
-grp = {'seq': ['s64','s128','s256','s512','s1024'],
-       'model': ['p64','p128','p256','p512']}
+grp = {'seq': ['s64','s128','s256','s512','s1024','s2048','s4096'],
+       'model': ['p64','p128','p256','p512','p1024']}
 xget = {'seq': lambda r: r['seq'], 'model': lambda r: r['params']/1e6}
 byT = {r['tag']: r for r in rows}
 fig, ax = plt.subplots(1, 2, figsize=(14, 6.2), sharey=True)
@@ -21,8 +21,13 @@ PAN = [('seq','sequence length','vs sequence length\n(0.04 M params per layer)')
 for a,(g,xlab,title) in zip(ax, PAN):
     rs = [byT[t] for t in grp[g] if t in byT]
     xs = [xget[g](r) for r in rs]
-    a.plot(xs, [ovf(r) for r in rs], 'o-',  color='#c0392b', lw=3, ms=11, label='exact fp8')
+    # fp8 line only where it fits (fp8_s not None); integer runs the full range
+    fx = [x for x,r in zip(xs,rs) if r.get('fp8_s')]
+    fy = [ovf(r) for r in rs if r.get('fp8_s')]
+    a.plot(fx, fy, 'o-',  color='#c0392b', lw=3, ms=11, label='exact fp8')
     a.plot(xs, [ovi(r) for r in rs], 's--', color='#2980b9', lw=3, ms=10, label='integer')
+    a.annotate('fp8 OOMs\npast here', (fx[-1], fy[-1]), textcoords='offset points',
+               xytext=(6, 14), fontsize=12, color='#c0392b')
     a.set_xscale('log', base=(10 if g=='model' else 2)); a.set_yscale('log')
     a.set_xticks(xs); a.set_xticklabels([f'{x:.2f}' if g=='model' else str(int(x)) for x in xs])
     a.minorticks_off(); a.set_xlabel(xlab); a.set_title(title)
