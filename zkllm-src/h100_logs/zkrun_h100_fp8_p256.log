@@ -1,0 +1,209 @@
+# rss 0.0 GB at wit:rms1
+# rss 0.9 GB at wit:qkv
+# rss 1.3 GB at wit:wo
+# rss 3.5 GB at wit:ffn-gu
+# rss 4.6 GB at wit:wd
+# rss 4.8 GB at hwl prove enter B=64 K=256 N=256 (P=2^23)
+# rss 6.5 GB at sc5z_gpu hwl-scP N=2^24 x 12 cols
+# rss 5.6 GB at sc5z_gpu hwl-scS N=2^24 x 3 cols
+# rss 5.1 GB at hwl prove enter B=64 K=256 N=256 (P=2^23)
+# rss 6.6 GB at sc5z_gpu hwl-scP N=2^24 x 12 cols
+# rss 5.7 GB at sc5z_gpu hwl-scS N=2^24 x 3 cols
+# rss 5.3 GB at hwl prove enter B=64 K=256 N=256 (P=2^23)
+# rss 6.8 GB at sc5z_gpu hwl-scP N=2^24 x 12 cols
+# rss 5.9 GB at sc5z_gpu hwl-scS N=2^24 x 3 cols
+# rss 5.4 GB at hwl prove enter B=64 K=64 N=64 (P=2^19)
+# rss 5.4 GB at hwl prove enter B=64 K=64 N=64 (P=2^19)
+# rss 5.5 GB at hwl prove enter B=64 K=64 N=64 (P=2^19)
+# rss 5.6 GB at hwl prove enter B=64 K=64 N=64 (P=2^19)
+# rss 5.7 GB at hwl prove enter B=64 K=64 N=64 (P=2^19)
+# rss 5.8 GB at hwl prove enter B=64 K=64 N=64 (P=2^19)
+# rss 5.9 GB at hwl prove enter B=64 K=64 N=64 (P=2^19)
+# rss 6.0 GB at hwl prove enter B=64 K=64 N=64 (P=2^19)
+# rss 6.1 GB at hwl prove enter B=64 K=256 N=256 (P=2^23)
+# rss 7.7 GB at sc5z_gpu hwl-scP N=2^24 x 12 cols
+# rss 6.8 GB at sc5z_gpu hwl-scS N=2^24 x 3 cols
+# rss 6.2 GB at hwl prove enter B=64 K=256 N=1024 (P=2^25)
+# rss 7.8 GB at sc5z_gpu hwl-scP N=2^26 x 12 cols
+# rss 7.3 GB at sc5z_gpu hwl-scS N=2^26 x 3 cols
+# rss 6.4 GB at hwl prove enter B=64 K=256 N=1024 (P=2^25)
+# rss 7.9 GB at sc5z_gpu hwl-scP N=2^26 x 12 cols
+# rss 7.4 GB at sc5z_gpu hwl-scS N=2^26 x 3 cols
+# rss 6.6 GB at hwl prove enter B=64 K=1024 N=256 (P=2^25)
+# rss 8.1 GB at sc5z_gpu hwl-scP N=2^26 x 12 cols
+# rss 7.5 GB at sc5z_gpu hwl-scS N=2^26 x 3 cols
+# lu group rmsXEB: n=14 g=4 k=11 E=1 NM=2^19 (0.00 GB host Am)
+# lu group rmsGEB: n=8 g=1 k=2 E=2 NM=2^11 (0.00 GB host Am)
+# lu group qntEDIF: n=6 g=5 k=20 E=3 NM=2^14 (0.00 GB host Am)
+# lu group ropLU0: n=11 g=6 k=64 E=1 NM=2^18 (0.00 GB host Am)
+# lu group qntXEB: n=12 g=5 k=32 E=1 NM=2^18 (0.00 GB host Am)
+# lu group swgSGEB: n=16 g=2 k=3 E=1 NM=2^19 (0.00 GB host Am)
+# lu group rmsXMB: n=14 g=4 k=10 E=1 NM=2^19 (0.00 GB host Am)
+# lu group rmsGMB: n=8 g=1 k=2 E=2 NM=2^11 (0.00 GB host Am)
+# lu group ropLU1: n=11 g=7 k=80 E=1 NM=2^19 (0.00 GB host Am)
+# lu group smxLU3: n=12 g=5 k=20 E=1 NM=2^18 (0.00 GB host Am)
+# lu group swgSGMB: n=16 g=1 k=2 E=1 NM=2^18 (0.00 GB host Am)
+# lu group rmsSH: n=14 g=1 k=2 E=1 NM=2^16 (0.00 GB host Am)
+# lu group smxLU4: n=12 g=2 k=4 E=1 NM=2^15 (0.00 GB host Am)
+# lu group rmsRM: n=14 g=2 k=4 E=1 NM=2^17 (0.00 GB host Am)
+# lu group ropLU24: n=11 g=4 k=16 E=1 NM=2^16 (0.00 GB host Am)
+# lu group smxLU5: n=12 g=3 k=8 E=1 NM=2^16 (0.00 GB host Am)
+# lu group rmsQ: n=14 g=3 k=7 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlQ16: n=12 g=4 k=16 E=1 NM=2^17 (0.00 GB host Am)
+# lu group hwlQ16: n=16 g=1 k=2 E=1 NM=2^18 (0.00 GB host Am)
+# lu group rmsM1: n=14 g=2 k=4 E=1 NM=2^17 (0.00 GB host Am)
+# lu group ropLU4: n=11 g=5 k=32 E=1 NM=2^17 (0.00 GB host Am)
+# lu group smxLU7: n=12 g=2 k=4 E=1 NM=2^15 (0.00 GB host Am)
+# lu group swgMUL: n=16 g=0 k=1 E=1 NM=2^17 (0.00 GB host Am)
+# lu group rmsEO1: n=14 g=4 k=16 E=1 NM=2^19 (0.00 GB host Am)
+# lu group rmsTEB: n=6 g=3 k=6 E=3 NM=2^12 (0.00 GB host Am)
+# lu group ropLU8: n=11 g=6 k=48 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlM1E: n=12 g=5 k=24 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlM1E: n=16 g=3 k=5 E=1 NM=2^20 (0.01 GB host Am)
+# lu group rmsEPSA: n=6 g=1 k=2 E=3 NM=2^10 (0.00 GB host Am)
+# lu group rmsWD: n=6 g=1 k=2 E=3 NM=2^10 (0.00 GB host Am)
+# lu group rmsU1H: n=6 g=2 k=4 E=3 NM=2^11 (0.00 GB host Am)
+# lu group rmsU1L: n=6 g=6 k=35 E=3 NM=2^15 (0.00 GB host Am)
+# lu group hwlM1FL: n=14 g=4 k=15 E=1 NM=2^19 (0.00 GB host Am)
+# lu group hwlWSML: n=8 g=3 k=5 E=2 NM=2^13 (0.00 GB host Am)
+# lu group hwlM1FL: n=12 g=5 k=24 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlM1FL: n=16 g=3 k=6 E=1 NM=2^20 (0.01 GB host Am)
+# lu group hwlWSML: n=10 g=1 k=2 E=1 NM=2^12 (0.00 GB host Am)
+# lu group rmsNR: n=6 g=1 k=2 E=3 NM=2^10 (0.00 GB host Am)
+# lu group rmsRSQ: n=6 g=1 k=2 E=3 NM=2^10 (0.00 GB host Am)
+# lu group rmsEDIF: n=6 g=3 k=8 E=3 NM=2^12 (0.00 GB host Am)
+# lu group ropLU20: n=11 g=6 k=64 E=1 NM=2^18 (0.00 GB host Am)
+# lu group smxLU26: n=12 g=4 k=16 E=1 NM=2^17 (0.00 GB host Am)
+# lu group bfaLU8: n=14 g=3 k=8 E=1 NM=2^18 (0.00 GB host Am)
+# lu group qntQE: n=14 g=2 k=3 E=1 NM=2^17 (0.00 GB host Am)
+# lu group qntQE: n=12 g=4 k=16 E=1 NM=2^17 (0.00 GB host Am)
+# lu group qntQE: n=16 g=0 k=1 E=1 NM=2^17 (0.00 GB host Am)
+# lu group hwlDM: n=23 g=2 k=4 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlDM timing: am=1561 gkr=42 claims=1563 ms
+# lu group hwlDM: n=19 g=3 k=8 E=1 NM=2^23 (0.06 GB host Am)
+# lu group hwlDM timing: am=50 gkr=14 claims=49 ms
+# lu group hwlDM: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlDM timing: am=712 gkr=42 claims=495 ms
+# lu group hwlDM: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlDM timing: am=536 gkr=42 claims=414 ms
+# lu group hwlDM: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlDM timing: am=441 gkr=42 claims=509 ms
+# lu group hwlSH: n=23 g=2 k=4 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlSH timing: am=13 gkr=41 claims=15 ms
+# lu group hwlSH: n=19 g=3 k=8 E=1 NM=2^23 (0.06 GB host Am)
+# lu group hwlSH timing: am=15 gkr=14 claims=15 ms
+# lu group hwlSH: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlSH timing: am=36 gkr=42 claims=18 ms
+# lu group hwlSH: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlSH timing: am=36 gkr=42 claims=17 ms
+# lu group hwlSH: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlSH timing: am=36 gkr=42 claims=17 ms
+# lu group hwlRM: n=23 g=2 k=4 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlRM timing: am=17 gkr=41 claims=18 ms
+# lu group hwlARM: n=18 g=3 k=8 E=1 NM=2^22 (0.03 GB host Am)
+# lu group hwlARM timing: am=10 gkr=12 claims=9 ms
+# lu group hwlRM: n=19 g=3 k=8 E=1 NM=2^23 (0.06 GB host Am)
+# lu group hwlRM timing: am=21 gkr=18 claims=15 ms
+# lu group hwlARM: n=14 g=4 k=16 E=1 NM=2^19 (0.00 GB host Am)
+# lu group hwlRM: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlRM timing: am=32 gkr=42 claims=21 ms
+# lu group hwlRM: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlRM timing: am=31 gkr=42 claims=21 ms
+# lu group hwlRM: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlRM timing: am=31 gkr=45 claims=21 ms
+# lu group hwlARM: n=20 g=3 k=6 E=1 NM=2^24 (0.12 GB host Am)
+# lu group hwlARM timing: am=4 gkr=18 claims=3 ms
+# lu group hwlQ15: n=23 g=2 k=4 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlQ15 timing: am=20 gkr=47 claims=30 ms
+# lu group hwlAQ: n=18 g=4 k=12 E=1 NM=2^23 (0.06 GB host Am)
+# lu group hwlAQ timing: am=18 gkr=14 claims=6 ms
+# lu group hwlQ16H: n=14 g=6 k=39 E=1 NM=2^21 (0.02 GB host Am)
+# lu group hwlQ15: n=19 g=3 k=8 E=1 NM=2^23 (0.06 GB host Am)
+# lu group hwlQ15 timing: am=23 gkr=14 claims=8 ms
+# lu group hwlQ16H: n=12 g=5 k=24 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlQ15: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlQ15 timing: am=24 gkr=42 claims=13 ms
+# lu group hwlQ15: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlQ15 timing: am=23 gkr=42 claims=13 ms
+# lu group hwlQ15: n=25 g=0 k=1 E=1 NM=2^26 (0.50 GB host Am)
+# lu group hwlQ15 timing: am=23 gkr=42 claims=13 ms
+# lu group hwlAQ: n=20 g=4 k=9 E=1 NM=2^25 (0.25 GB host Am)
+# lu group hwlAQ timing: am=5 gkr=26 claims=3 ms
+# lu group hwlQ16H: n=16 g=3 k=6 E=1 NM=2^20 (0.01 GB host Am)
+# lu group hwlASH: n=18 g=2 k=4 E=1 NM=2^21 (0.02 GB host Am)
+# lu group hwlASH: n=14 g=3 k=8 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlASH: n=20 g=2 k=3 E=1 NM=2^23 (0.06 GB host Am)
+# lu group hwlASH timing: am=2 gkr=14 claims=2 ms
+# lu group hwlALO: n=18 g=5 k=20 E=1 NM=2^24 (0.12 GB host Am)
+# lu group hwlALO timing: am=31 gkr=18 claims=11 ms
+# lu group hwlALO: n=14 g=6 k=40 E=1 NM=2^21 (0.02 GB host Am)
+# lu group hwlALO: n=20 g=4 k=15 E=1 NM=2^25 (0.25 GB host Am)
+# lu group hwlALO timing: am=5 gkr=26 claims=4 ms
+# lu group hwlWD: n=18 g=2 k=4 E=1 NM=2^21 (0.02 GB host Am)
+# lu group hwlWD: n=14 g=3 k=8 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlWD: n=20 g=2 k=3 E=1 NM=2^23 (0.06 GB host Am)
+# lu group hwlWD timing: am=9 gkr=14 claims=6 ms
+# lu group hwlM1REM: n=14 g=3 k=5 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlM1REM: n=12 g=3 k=8 E=1 NM=2^16 (0.00 GB host Am)
+# lu group hwlM1REM: n=16 g=1 k=2 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlM1RT: n=14 g=3 k=5 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlM1RT: n=12 g=3 k=8 E=1 NM=2^16 (0.00 GB host Am)
+# lu group hwlM1RT: n=16 g=1 k=2 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlM1FH: n=14 g=4 k=10 E=1 NM=2^19 (0.00 GB host Am)
+# lu group hwlM1FH: n=12 g=4 k=16 E=1 NM=2^17 (0.00 GB host Am)
+# lu group hwlM1FH: n=16 g=2 k=4 E=1 NM=2^19 (0.00 GB host Am)
+# lu group hwlM1FLH: n=14 g=4 k=10 E=1 NM=2^19 (0.00 GB host Am)
+# lu group hwlXSMH: n=6 g=5 k=31 E=3 NM=2^14 (0.00 GB host Am)
+# lu group hwlWSMH: n=8 g=3 k=5 E=2 NM=2^13 (0.00 GB host Am)
+# lu group hwlM1FLH: n=12 g=4 k=16 E=1 NM=2^17 (0.00 GB host Am)
+# lu group hwlM1FLH: n=16 g=2 k=4 E=1 NM=2^19 (0.00 GB host Am)
+# lu group hwlWSMH: n=10 g=1 k=2 E=1 NM=2^12 (0.00 GB host Am)
+# lu group hwlM2TH: n=14 g=3 k=5 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlM2TH: n=12 g=3 k=8 E=1 NM=2^16 (0.00 GB host Am)
+# lu group hwlM2TH: n=16 g=1 k=2 E=1 NM=2^18 (0.00 GB host Am)
+# lu group hwlXSE: n=6 g=5 k=23 E=3 NM=2^14 (0.00 GB host Am)
+# lu group hwlWSE: n=8 g=3 k=5 E=2 NM=2^13 (0.00 GB host Am)
+# lu group hwlWSE: n=10 g=1 k=2 E=1 NM=2^12 (0.00 GB host Am)
+# lu group ropLU16: n=11 g=4 k=16 E=1 NM=2^16 (0.00 GB host Am)
+# lu group smxLU22: n=12 g=2 k=4 E=1 NM=2^15 (0.00 GB host Am)
+# lu group bfaLU4: n=14 g=1 k=2 E=1 NM=2^16 (0.00 GB host Am)
+# lu group ropLU19: n=11 g=4 k=16 E=1 NM=2^16 (0.00 GB host Am)
+# lu group smxLU25: n=12 g=2 k=4 E=1 NM=2^15 (0.00 GB host Am)
+# lu group bfaLU7: n=14 g=1 k=2 E=1 NM=2^16 (0.00 GB host Am)
+# lu group ropLU26: n=11 g=4 k=16 E=1 NM=2^16 (0.00 GB host Am)
+# lu group smxLU32: n=12 g=2 k=4 E=1 NM=2^15 (0.00 GB host Am)
+# lu group bfaLU14: n=14 g=1 k=2 E=1 NM=2^16 (0.00 GB host Am)
+# lu group smxLU1: n=12 g=2 k=4 E=1 NM=2^15 (0.00 GB host Am)
+# lu group smxLU10: n=6 g=2 k=4 E=3 NM=2^11 (0.00 GB host Am)
+# lu group smxLU15: n=6 g=2 k=4 E=3 NM=2^11 (0.00 GB host Am)
+# lu group smxLU16: n=6 g=2 k=4 E=3 NM=2^11 (0.00 GB host Am)
+# lu group swgSILU: n=16 g=0 k=1 E=1 NM=2^17 (0.00 GB host Am)
+# bo class tf-bo0: v=17 nc=192 k=255 T=71 colMB=1.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.1
+# bo class tf-bo1: v=15 nc=706 k=1209 T=164 colMB=0.2 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class tf-bo2: v=9 nc=359 k=768 T=147 colMB=0.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class tf-bo3: v=10 nc=97 k=149 T=48 colMB=0.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class tf-bo4: v=11 nc=82 k=98 T=65 colMB=0.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class tf-bo5: v=12 nc=1123 k=1683 T=33 colMB=0.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class tf-bo6: v=24 nc=45 k=89 T=15 colMB=128.0 strCol=1 strG=1 strGdev=1 devfreeGB=78.2 needGB=2.1
+# bo class tf-bo6 timing: G=203 red=36 ys+rlc=141 fold=339 q=717 ms
+# bo class tf-bo7: v=19 nc=144 k=276 T=42 colMB=4.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.2
+# bo class tf-bo7 timing: G=116 red=3 ys+rlc=4 fold=4 q=190 ms
+# bo class tf-bo8: v=21 nc=104 k=203 T=33 colMB=16.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.5
+# bo class tf-bo8 timing: G=180 red=7 ys+rlc=4 fold=7 q=360 ms
+# bo class tf-bo9: v=14 nc=34 k=66 T=47 colMB=0.1 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class tf-bo10: v=13 nc=843 k=1331 T=132 colMB=0.1 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class tf-bo11: v=22 nc=19 k=19 T=18 colMB=32.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.6
+# bo class tf-bo11 timing: G=101 red=7 ys+rlc=1 fold=64 q=144 ms
+# bo class tf-bo12: v=20 nc=90 k=178 T=27 colMB=8.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.2
+# bo class tf-bo12 timing: G=222 red=3 ys+rlc=2 fold=5 q=171 ms
+# bo class tf-bo13: v=26 nc=63 k=96 T=23 colMB=512.0 strCol=1 strG=1 strGdev=1 devfreeGB=78.2 needGB=12.5
+# bo class tf-bo13 timing: G=572 red=143 ys+rlc=464 fold=1260 q=2544 ms
+# bo class tf-bo14: v=23 nc=21 k=21 T=14 colMB=64.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=1.0
+# bo class tf-bo14 timing: G=13 red=11 ys+rlc=2 fold=118 q=232 ms
+# bo class tf-bo15: v=18 nc=49 k=51 T=26 colMB=2.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.1
+# bo class tf-bo16: v=16 nc=40 k=49 T=26 colMB=0.5 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class tf-bo17: v=25 nc=5 k=5 T=3 colMB=256.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=1.2
+# bo class tf-bo17 timing: G=2 red=10 ys+rlc=4 fold=573 q=280 ms
+# witness 23.26 s (try 0)
+BENCH seq=64 d=256 nh=4 dh=64 dff=1024 batch=1 tokens=64 zk=1 verify_ok=1 commit=0.231 prove=68.568 verify=1.019 proof_mb=70.207 rss_gb=8.121
+STAGES rms=0.378 qnt=0.990 mm=38.808 rope=1.325 smx=0.735 bfa=0.851 swg=0.091 lug=14.493 seam=0.172 batch=10.658

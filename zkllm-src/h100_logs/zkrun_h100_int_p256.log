@@ -1,0 +1,37 @@
+# rss 1.1 GB at sc5z_gpu imm-sc N=2^25 x 3 cols
+# rss 1.1 GB at sc5z_gpu imm-sc N=2^25 x 3 cols
+# rss 1.1 GB at sc5z_gpu imm-sc N=2^25 x 3 cols
+# lu group itfW0: n=16 g=3 k=7 E=1 NM=2^20 (0.01 GB host Am)
+# lu group itfW4: n=18 g=2 k=3 E=1 NM=2^21 (0.02 GB host Am)
+# lu group itfG1: n=8 g=1 k=2 E=2 NM=2^11 (0.00 GB host Am)
+# lu group itfX0: n=14 g=4 k=15 E=1 NM=2^19 (0.00 GB host Am)
+# lu group irms1E4: n=6 g=1 k=2 E=3 NM=2^10 (0.00 GB host Am)
+# lu group irms1m: n=6 g=5 k=24 E=3 NM=2^14 (0.00 GB host Am)
+# lu group irms1rw: n=14 g=4 k=15 E=1 NM=2^19 (0.00 GB host Am)
+# lu group irsgL0: n=16 g=2 k=3 E=1 NM=2^19 (0.00 GB host Am)
+# lu group irms1isq: n=6 g=1 k=2 E=3 NM=2^10 (0.00 GB host Am)
+# lu group irpqr: n=14 g=1 k=2 E=1 NM=2^16 (0.00 GB host Am)
+# lu group irszL1: n=14 g=0 k=1 E=1 NM=2^15 (0.00 GB host Am)
+# lu group irszY: n=14 g=0 k=1 E=1 NM=2^15 (0.00 GB host Am)
+# lu group ismxmx: n=8 g=0 k=1 E=2 NM=2^10 (0.00 GB host Am)
+# lu group ismxexp: n=14 g=0 k=1 E=1 NM=2^15 (0.00 GB host Am)
+# lu group iswgsil: n=16 g=0 k=1 E=1 NM=2^17 (0.00 GB host Am)
+# bo class itf-bo0: v=9 nc=40 k=78 T=11 colMB=0.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo1: v=17 nc=43 k=59 T=35 colMB=1.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo2: v=15 nc=55 k=142 T=65 colMB=0.2 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo3: v=11 nc=5 k=5 T=4 colMB=0.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo4: v=10 nc=18 k=22 T=16 colMB=0.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo5: v=21 nc=17 k=17 T=12 colMB=16.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.2
+# bo class itf-bo5 timing: G=19 red=3 ys+rlc=1 fold=6 q=111 ms
+# bo class itf-bo6: v=19 nc=13 k=16 T=11 colMB=4.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.1
+# bo class itf-bo6 timing: G=3 red=2 ys+rlc=0 fold=3 q=16 ms
+# bo class itf-bo7: v=20 nc=3 k=3 T=2 colMB=8.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo7 timing: G=1 red=1 ys+rlc=0 fold=4 q=7 ms
+# bo class itf-bo8: v=14 nc=3 k=3 T=2 colMB=0.1 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo9: v=16 nc=3 k=3 T=2 colMB=0.5 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo10: v=12 nc=4 k=4 T=2 colMB=0.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# bo class itf-bo11: v=18 nc=4 k=4 T=2 colMB=2.0 strCol=0 strG=0 strGdev=0 devfreeGB=0.0 needGB=0.0
+# tables 0.20 s
+# witness 1.24 s (try 0, wscale 0.90)
+BENCH seq=64 d=256 nh=4 dh=64 dff=1024 batch=1 tokens=64 zk=1 verify_ok=1 commit=1.691 prove=5.874 verify=0.168 proof_mb=6.133 rss_gb=1.167
+STAGES rms=0.156 qnt=0.404 mm=4.029 rope=0.094 smx=0.142 bfa=0.072 swg=0.038 lug=0.547 seam=0.008 batch=0.372

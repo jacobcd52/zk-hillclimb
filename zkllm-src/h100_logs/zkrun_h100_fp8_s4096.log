@@ -1,0 +1,17 @@
+# rss 0.1 GB at wit:rms1
+# rss 3.5 GB at wit:qkv
+# rss 113.3 GB at wit:wo
+# rss 113.6 GB at wit:ffn-gu
+# rss 113.8 GB at wit:wd
+# rss 118.2 GB at hwl prove enter B=4096 K=64 N=64 (P=2^25)
+# rss 118.7 GB at sc5z_gpu hwl-scP N=2^26 x 12 cols
+# rss 118.7 GB at sc5z_gpu hwl-scS N=2^26 x 3 cols
+# rss 117.8 GB at hwl prove enter B=4096 K=64 N=64 (P=2^25)
+# rss 118.4 GB at sc5z_gpu hwl-scP N=2^26 x 12 cols
+# rss 118.4 GB at sc5z_gpu hwl-scS N=2^26 x 3 cols
+# rss 117.5 GB at hwl prove enter B=4096 K=64 N=64 (P=2^25)
+# rss 118.1 GB at sc5z_gpu hwl-scP N=2^26 x 12 cols
+# rss 118.0 GB at sc5z_gpu hwl-scS N=2^26 x 3 cols
+# rss 117.5 GB at hwl prove enter B=4096 K=32 N=4096 (P=2^30)
+terminate called after throwing an instance of 'std::runtime_error'
+  what():  p3: CUDA error at salted_commit_root_dev: an illegal memory access was encountered
